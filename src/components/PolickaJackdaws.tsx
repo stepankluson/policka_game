@@ -9,6 +9,15 @@ import {
 } from '../game/pois';
 import { timeOfDayState } from '../game/timeOfDay';
 
+/** Zero-re-render runtime trigger for startling the St. James Church jackdaw flock on bell toll */
+const jackdawStartleState = {
+  triggeredAtMs: -99999,
+};
+
+export function triggerJackdawStartle(): void {
+  jackdawStartleState.triggeredAtMs = performance.now();
+}
+
 interface BirdSpec {
   id: number;
   flock: 'tower' | 'town';
@@ -180,25 +189,52 @@ export function PolickaJackdaws() {
     const pNext = pNextRef.current;
     const eps = 0.08;
 
+    const elapsedSinceStartle = (performance.now() - jackdawStartleState.triggeredAtMs) / 1000;
+    const isStartled = elapsedSinceStartle >= 0 && elapsedSinceStartle < 7.5;
+    // Smooth burst-upward envelope (fast rise over 0.6s, gradual settle over 7s)
+    const startleEnv = isStartled
+      ? Math.sin(Math.min(1, elapsedSinceStartle / 0.7) * (Math.PI / 2)) *
+        Math.max(0, 1 - Math.max(0, elapsedSinceStartle - 1.5) / 6.0)
+      : 0;
+
     for (let i = 0; i < birds.length; i++) {
       const b = birds[i];
       const rig = rigsRef.current[i];
       if (!rig || !rig.root) continue;
 
-      // Smoothly roost jackdaws as deep night settles in
-      if (nf > b.roostThreshold + 0.09) {
+      const towerStartle = b.flock === 'tower' ? startleEnv : 0;
+
+      // Smoothly roost jackdaws as deep night settles in (unless startled by the tower bell!)
+      if (towerStartle < 0.05 && nf > b.roostThreshold + 0.09) {
         rig.root.visible = false;
         continue;
       }
-      const visScale =
+      const baseVis =
         nf > b.roostThreshold
           ? Math.max(0.01, 1 - (nf - b.roostThreshold) / 0.09)
           : 1;
+      const visScale = Math.max(baseVis, towerStartle);
       rig.root.visible = true;
 
-      sampleBirdPath(b, t - eps, pPrev);
-      sampleBirdPath(b, t, pCur);
-      sampleBirdPath(b, t + eps, pNext);
+      // Accelerate circling & lift dramatically upward around the spire when startled
+      const tEff = t + towerStartle * 2.4;
+      sampleBirdPath(b, tEff - eps, pPrev);
+      sampleBirdPath(b, tEff, pCur);
+      sampleBirdPath(b, tEff + eps, pNext);
+
+      if (towerStartle > 0.001) {
+        const climb = towerStartle * (6.5 + (i % 3) * 2.2);
+        const expand = 1 + towerStartle * 0.35;
+        pPrev.x = b.cx + (pPrev.x - b.cx) * expand;
+        pPrev.z = b.cz + (pPrev.z - b.cz) * expand;
+        pPrev.y += climb;
+        pCur.x = b.cx + (pCur.x - b.cx) * expand;
+        pCur.z = b.cz + (pCur.z - b.cz) * expand;
+        pCur.y += climb;
+        pNext.x = b.cx + (pNext.x - b.cx) * expand;
+        pNext.z = b.cz + (pNext.z - b.cz) * expand;
+        pNext.y += climb;
+      }
 
       const vx = (pNext.x - pPrev.x) / (2 * eps);
       const vy = (pNext.y - pPrev.y) / (2 * eps);
@@ -216,19 +252,22 @@ export function PolickaJackdaws() {
       while (dYaw < -Math.PI) dYaw += Math.PI * 2;
       const bank = Math.max(-0.55, Math.min(0.55, -(dYaw / eps) * 0.95));
 
-      // Organic flight cycle: rapid 3–5 beat flapping bursts alternating with arched glides
+      // Organic flight cycle: energetic rapid wingbeats when startled, calm bursts + glides otherwise
       const cycleU = ((t / b.flapCycleSec) + b.phase * 0.15) % 1;
-      let wingAngle = 0.14; // slight arched glide dihedral
+      let wingAngle = 0.14;
       let bodyLift = 0;
 
-      if (cycleU < b.flapBurstFrac) {
+      if (towerStartle > 0.25) {
+        const flap = Math.sin(t * (b.flapFreq * 1.45) * Math.PI * 2 + b.phase);
+        wingAngle = flap * 0.82;
+        bodyLift = -flap * 0.035;
+      } else if (cycleU < b.flapBurstFrac) {
         const burstU = cycleU / b.flapBurstFrac;
         const envelope = Math.sin(burstU * Math.PI);
         const flap = Math.sin(t * b.flapFreq * Math.PI * 2 + b.phase);
         wingAngle = flap * 0.72 * envelope + 0.12 * (1 - envelope);
         bodyLift = -flap * 0.025 * envelope;
       } else {
-        // Gentle micro-trim during gliding stretch
         wingAngle = 0.14 + Math.sin(t * 2.2 + b.phase) * 0.05;
       }
 

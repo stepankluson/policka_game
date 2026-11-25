@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { fireWatchRuntime, type FireWatchState } from '../game/fireWatch';
+import { fireWatchRuntime, type BurnedBuildingSpec, type FireWatchState } from '../game/fireWatch';
 import type { RoadGraph } from '../game/osmGeometry';
 import { REAL_LANDMARKS, TOWN_Y } from '../game/pois';
 import { NIGHT_MATERIALS, timeOfDayState } from '../game/timeOfDay';
@@ -15,11 +15,283 @@ interface FireWatchWorldProps {
 
 const FLAME_COUNT = 14;
 const SMOKE_COUNT = 20;
-const SMOLDER_COUNT = 18;
+const SMOLDER_COUNT = 24;
 const WATER_DROP_COUNT = 32;
 const ROAD_SURFACE_Y = TOWN_Y + 0.45;
 const FIRE_ENGINE_SPEED = 29.0; // brisk galloping speed (m/s)
 const EXTINGUISH_DURATION_SEC = 4.4;
+
+// Shared low-poly geometries & materials for realistic open-top charred building ruins (ZERO per-frame allocs)
+const RUIN_UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+const RUIN_RUBBLE_GEOM = new THREE.DodecahedronGeometry(0.5, 0);
+const RUIN_MAT_CHAR = new THREE.MeshStandardMaterial({
+  color: '#262220',
+  roughness: 0.96,
+  flatShading: true,
+});
+const RUIN_MAT_SOOT = new THREE.MeshStandardMaterial({
+  color: '#1c1917',
+  roughness: 0.98,
+  flatShading: true,
+});
+const RUIN_MAT_ASH = new THREE.MeshStandardMaterial({
+  color: '#3a3532',
+  roughness: 0.98,
+  flatShading: true,
+});
+const RUIN_MAT_EMBER = new THREE.MeshStandardMaterial({
+  color: '#5a1a08',
+  emissive: '#ff4500',
+  emissiveIntensity: 1.5,
+  roughness: 0.85,
+  toneMapped: false,
+});
+
+function hashStringSeed(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function makeSeededRand(seed: number) {
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Stylized low-poly open-top charred ruin matching the burned building's exact footprint & rotation:
+ * - No roof (collapsed open to the sky)
+ * - Uneven, jagged/stepped perimeter masonry walls (~35–60% of original height) in charcoal & ash tones
+ * - Charred interior ash floor & uneven rubble heap
+ * - 3–4 tilted blackened roof beams/rafters jutting out across the open interior
+ * - Tiny glowing orange-red embers nestled inside the ash pile
+ */
+function CharredBuildingRuin({ ruin }: { ruin: BurnedBuildingSpec }) {
+  const layout = useMemo(() => {
+    const rand = makeSeededRand(hashStringSeed(ruin.id));
+    const [w, origH, d] = ruin.ruinSize;
+    const wallT = Math.max(0.52, Math.min(0.92, Math.min(w, d) * 0.085));
+    const baseWallH = Math.max(2.1, Math.min(origH * 0.52, 6.2));
+    const innerW = Math.max(1.5, w - wallT * 1.9);
+    const innerD = Math.max(1.5, d - wallT * 1.9);
+
+    type BlockSpec = {
+      pos: [number, number, number];
+      scale: [number, number, number];
+      rot?: [number, number, number];
+      mat: THREE.MeshStandardMaterial;
+    };
+
+    const walls: BlockSpec[] = [];
+    const wallMats = [RUIN_MAT_CHAR, RUIN_MAT_ASH, RUIN_MAT_SOOT];
+
+    // Pick one wall face & middle segment to have a deeper collapsed breach (~26–34% height)
+    const breachSide = Math.floor(rand() * 4);
+
+    // Helper to split one perimeter edge into 3 stepped/jagged masonry segments
+    const addSteppedWall = (
+      sideIdx: number,
+      length: number,
+      fixedAxis: 'x' | 'z',
+      fixedCoord: number,
+    ) => {
+      const segs = 3;
+      const segLen = length / segs;
+      for (let i = 0; i < segs; i++) {
+        const isBreach = sideIdx === breachSide && i === 1;
+        // 35–60% of original wall height (or lower collapsed breach)
+        const frac = isBreach ? 0.24 + rand() * 0.1 : 0.36 + rand() * 0.23;
+        const h = Math.max(1.15, Math.min(origH * frac, 6.8));
+        const offsetAlong = -length / 2 + segLen * (i + 0.5);
+        const pos: [number, number, number] =
+          fixedAxis === 'z'
+            ? [offsetAlong, h * 0.5, fixedCoord]
+            : [fixedCoord, h * 0.5, offsetAlong];
+        const scale: [number, number, number] =
+          fixedAxis === 'z'
+            ? [segLen + 0.08, h, wallT]
+            : [wallT, h, segLen + 0.08];
+        walls.push({
+          pos,
+          scale,
+          mat: wallMats[(sideIdx + i) % wallMats.length],
+        });
+
+        // Stepped jagged stone tooth on top of occasional non-breach wall sections
+        if (!isBreach && rand() > 0.35) {
+          const toothH = 0.35 + rand() * 0.65;
+          const toothLen = segLen * (0.35 + rand() * 0.3);
+          const toothOff = offsetAlong + (rand() - 0.5) * segLen * 0.25;
+          walls.push({
+            pos:
+              fixedAxis === 'z'
+                ? [toothOff, h + toothH * 0.45, fixedCoord]
+                : [fixedCoord, h + toothH * 0.45, toothOff],
+            scale:
+              fixedAxis === 'z'
+                ? [toothLen, toothH, wallT * 0.92]
+                : [wallT * 0.92, toothH, toothLen],
+            mat: RUIN_MAT_SOOT,
+          });
+        }
+      }
+    };
+
+    const hz = d * 0.5 - wallT * 0.5;
+    const hx = w * 0.5 - wallT * 0.5;
+    addSteppedWall(0, w, 'z', -hz);
+    addSteppedWall(1, w, 'z', hz);
+    addSteppedWall(2, Math.max(1, d - wallT * 1.6), 'x', -hx);
+    addSteppedWall(3, Math.max(1, d - wallT * 1.6), 'x', hx);
+
+    // 4 slightly taller jagged corner piers for strong ruined silhouette readability
+    for (const sx of [-1, 1] as const) {
+      for (const sz of [-1, 1] as const) {
+        const ch = Math.max(1.8, Math.min(origH * (0.5 + rand() * 0.12), 7.2));
+        walls.push({
+          pos: [sx * hx, ch * 0.5, sz * hz],
+          scale: [wallT * 1.18, ch, wallT * 1.18],
+          mat: rand() > 0.45 ? RUIN_MAT_CHAR : RUIN_MAT_ASH,
+        });
+      }
+    }
+
+    // Uneven low-poly charcoal & ash rubble mounds filling the interior floor
+    const rubble: Array<{
+      pos: [number, number, number];
+      scale: [number, number, number];
+      rot: [number, number, number];
+      mat: THREE.MeshStandardMaterial;
+    }> = [];
+    const rubbleCount = 6;
+    for (let i = 0; i < rubbleCount; i++) {
+      const rx = (rand() - 0.5) * innerW * 0.68;
+      const rz = (rand() - 0.5) * innerD * 0.68;
+      const sx = Math.max(1.6, innerW * (0.26 + rand() * 0.24));
+      const sz = Math.max(1.6, innerD * (0.26 + rand() * 0.24));
+      const sy = 0.65 + rand() * 1.05;
+      rubble.push({
+        pos: [rx, sy * 0.36 + 0.15, rz],
+        scale: [sx, sy, sz],
+        rot: [rand() * 0.4, rand() * Math.PI, rand() * 0.4],
+        mat: i % 2 === 0 ? RUIN_MAT_ASH : RUIN_MAT_CHAR,
+      });
+    }
+
+    // 4 tilted blackened timber roof beams / rafters jutting out at collapse angles
+    const beams: BlockSpec[] = [];
+    const beamLen = Math.max(3.2, Math.min(Math.max(w, d) * 0.62, 11.0));
+    const beamThick = Math.max(0.24, Math.min(0.42, Math.min(w, d) * 0.032));
+    for (let i = 0; i < 4; i++) {
+      const bx = (rand() - 0.5) * innerW * 0.52;
+      const bz = (rand() - 0.5) * innerD * 0.52;
+      const by = Math.min(baseWallH * 0.62, 1.45 + rand() * 1.45);
+      const tiltX = (rand() > 0.5 ? 1 : -1) * (0.26 + rand() * 0.34);
+      const tiltZ = (rand() > 0.5 ? 1 : -1) * (0.2 + rand() * 0.32);
+      const yaw = rand() * Math.PI;
+      beams.push({
+        pos: [bx, by, bz],
+        scale: [beamLen * (0.72 + rand() * 0.35), beamThick, beamThick * 1.15],
+        rot: [tiltX, yaw, tiltZ],
+        mat: RUIN_MAT_SOOT,
+      });
+    }
+
+    // 5 tiny glowing orange-red embers nestled inside the interior ash pile
+    const embers: Array<{
+      pos: [number, number, number];
+      scale: [number, number, number];
+      rot: [number, number, number];
+    }> = [];
+    for (let i = 0; i < 5; i++) {
+      const ex = (rand() - 0.5) * innerW * 0.52;
+      const ez = (rand() - 0.5) * innerD * 0.52;
+      const s = 0.34 + rand() * 0.34;
+      embers.push({
+        pos: [ex, 0.55 + rand() * 0.45, ez],
+        scale: [s * 1.25, s * 0.65, s],
+        rot: [rand() * 0.5, rand() * Math.PI, rand() * 0.5],
+      });
+    }
+
+    return { innerW, innerD, walls, rubble, beams, embers };
+  }, [ruin.id, ruin.ruinSize]);
+
+  return (
+    <group
+      position={[ruin.position[0], TOWN_Y, ruin.position[2]]}
+      rotation={[0, ruin.rotY, 0]}
+    >
+      {/* Scorched interior ash floor slab (prevents grass showing through the open ruin) */}
+      <mesh
+        geometry={RUIN_UNIT_BOX}
+        material={RUIN_MAT_SOOT}
+        position={[0, 0.16, 0]}
+        scale={[layout.innerW + 0.4, 0.32, layout.innerD + 0.4]}
+        receiveShadow
+      />
+
+      {/* Jagged, shortened perimeter masonry walls (open to the sky) */}
+      {layout.walls.map((seg, idx) => (
+        <mesh
+          key={`w-${idx}`}
+          geometry={RUIN_UNIT_BOX}
+          material={seg.mat}
+          position={seg.pos}
+          scale={seg.scale}
+          castShadow
+          receiveShadow
+        />
+      ))}
+
+      {/* Uneven charcoal & ash rubble pile inside the collapsed shell */}
+      {layout.rubble.map((r, idx) => (
+        <mesh
+          key={`r-${idx}`}
+          geometry={RUIN_RUBBLE_GEOM}
+          material={r.mat}
+          position={r.pos}
+          rotation={r.rot}
+          scale={r.scale}
+          receiveShadow
+        />
+      ))}
+
+      {/* Tilted blackened timber roof rafters */}
+      {layout.beams.map((b, idx) => (
+        <mesh
+          key={`b-${idx}`}
+          geometry={RUIN_UNIT_BOX}
+          material={b.mat}
+          position={b.pos}
+          rotation={b.rot}
+          scale={b.scale}
+          castShadow
+        />
+      ))}
+
+      {/* Tiny glowing orange-red embers nestled in the interior ash */}
+      {layout.embers.map((e, idx) => (
+        <mesh
+          key={`e-${idx}`}
+          geometry={RUIN_RUBBLE_GEOM}
+          material={RUIN_MAT_EMBER}
+          position={e.pos}
+          rotation={e.rot}
+          scale={e.scale}
+        />
+      ))}
+    </group>
+  );
+}
 
 /**
  * Strict road-only shortest-path routing (weighted Dijkstra) on the unified 2D road graph:
@@ -232,7 +504,7 @@ export function FireWatchWorld({
     const dt = Math.min(rawDelta, 0.05);
     const t = state.clock.elapsedTime;
 
-    // 0. Lingering smoldering smoke rising above any burned-down charred ruins
+    // 0. Thin, lazy translucent grey smoldering smoke wisps rising from open charred ruins
     const smolderMesh = smolderMeshRef.current;
     if (smolderMesh) {
       const burned = fireWatch.burnedBuildings;
@@ -246,14 +518,15 @@ export function FireWatchWorld({
           continue;
         }
         const b = burned[i % bCount];
-        const life = (t * 0.12 + i / SMOLDER_COUNT) % 1;
-        const px = b.position[0] + Math.sin(t * 0.7 + i * 1.3) * 1.4 + life * 6.5;
-        const py = b.position[1] + 0.5 + life * 16.0;
-        const pz = b.position[2] + Math.cos(t * 0.6 + i * 1.1) * 1.4 - life * 3.5;
-        const sc = (0.75 + life * 2.1) * (1 - life * 0.35);
+        const life = (t * 0.085 + i / SMOLDER_COUNT) % 1;
+        const baseH = Math.min(b.ruinSize[1] * 0.35, 2.4);
+        const px = b.position[0] + Math.sin(t * 0.55 + i * 1.4) * 1.1 + life * 4.8;
+        const py = TOWN_Y + baseH + life * 13.0;
+        const pz = b.position[2] + Math.cos(t * 0.48 + i * 1.15) * 1.1 - life * 2.6;
+        const sc = (0.42 + life * 1.18) * (1 - life * 0.45);
         _dummy.position.set(px, py, pz);
-        _dummy.rotation.set(t * 0.15 + i, t * 0.18, 0);
-        _dummy.scale.setScalar(sc);
+        _dummy.rotation.set(t * 0.12 + i, t * 0.14, 0);
+        _dummy.scale.setScalar(Math.max(0.01, sc));
         _dummy.updateMatrix();
         smolderMesh.setMatrixAt(i, _dummy.matrix);
       }
@@ -429,33 +702,9 @@ export function FireWatchWorld({
 
   return (
     <group name="fire-watch-world">
-      {/* === 0. CHARRED, BLACKENED RUINS OF BURNED-DOWN BUILDINGS + SMOLDERING SMOKE === */}
+      {/* === 0. OPEN-TOP LOW-POLY CHARRED RUINS OF BURNED-DOWN BUILDINGS + LAZY SMOLDER WISPS === */}
       {fireWatch.burnedBuildings.map((ruin) => (
-        <group
-          key={ruin.id}
-          position={[ruin.position[0], TOWN_Y, ruin.position[2]]}
-        >
-          {/* Blackened, scorched ruin shell */}
-          <mesh position={[0, ruin.ruinSize[1] * 0.44, 0]}>
-            <boxGeometry args={[ruin.ruinSize[0], ruin.ruinSize[1] * 0.88, ruin.ruinSize[2]]} />
-            <meshStandardMaterial color="#1f1b19" roughness={0.98} />
-          </mesh>
-          {/* Collapsed charred roof timbers & ash cap */}
-          <mesh position={[0, ruin.ruinSize[1] * 0.9, 0]} rotation={[0.06, 0.15, -0.05]}>
-            <boxGeometry args={[ruin.ruinSize[0] * 0.96, 1.0, ruin.ruinSize[2] * 0.96]} />
-            <meshStandardMaterial color="#141110" roughness={1.0} />
-          </mesh>
-          {/* Glowing dying embers inside the charred ruin */}
-          <mesh position={[0, ruin.ruinSize[1] * 0.94, 0]}>
-            <boxGeometry args={[ruin.ruinSize[0] * 0.55, 0.22, ruin.ruinSize[2] * 0.55]} />
-            <meshStandardMaterial
-              color="#3d170c"
-              emissive="#c43812"
-              emissiveIntensity={0.9}
-              roughness={0.95}
-            />
-          </mesh>
-        </group>
+        <CharredBuildingRuin key={ruin.id} ruin={ruin} />
       ))}
 
       <instancedMesh
@@ -463,12 +712,12 @@ export function FireWatchWorld({
         args={[undefined, undefined, SMOLDER_COUNT]}
         frustumCulled={false}
       >
-        <icosahedronGeometry args={[0.85, 0]} />
+        <icosahedronGeometry args={[0.72, 0]} />
         <meshStandardMaterial
-          color="#524d49"
+          color="#8a847e"
           roughness={0.98}
           transparent
-          opacity={0.48}
+          opacity={0.28}
           depthWrite={false}
         />
       </instancedMesh>

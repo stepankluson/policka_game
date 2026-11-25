@@ -6,6 +6,7 @@ import { NIGHT_MATERIALS } from '../game/timeOfDay';
 interface PolickaBreweryProps {
   position: [number, number, number];
   rotationY?: number;
+  burnedIds?: ReadonlySet<string>;
 }
 
 const COLORS = {
@@ -132,7 +133,7 @@ function BeerBarrel({
  *   ground with square plinth base and decorative corbelled crown ring.
  * - Cobblestone courtyard with wooden beer barrels, crates, and low stone/brick perimeter wall.
  */
-export function PolickaBrewery({ position, rotationY = 0 }: PolickaBreweryProps) {
+export function PolickaBrewery({ position, rotationY = 0, burnedIds }: PolickaBreweryProps) {
   const mainRoofGeom = usePitchedGableGeometry(15.2, 26.2, 5.4);
   const frontWingRoofGeom = usePitchedGableGeometry(12.2, 15.6, 4.2);
 
@@ -164,7 +165,7 @@ export function PolickaBrewery({ position, rotationY = 0 }: PolickaBreweryProps)
       </mesh>
 
       {/* === 2. MAIN HISTORIC 1865 BREWHOUSE BUILDING (MULTI-STORY) === */}
-      <group position={[2.0, 0, 4.5]}>
+      <group position={[2.0, 0, 4.5]} visible={!(burnedIds?.has('brewery-main') ?? false)}>
         {/* Stone foundation plinth */}
         <mesh position={[0, 0.85, 0]} castShadow receiveShadow>
           <boxGeometry args={[25.6, 1.7, 14.4]} />
@@ -262,7 +263,7 @@ export function PolickaBrewery({ position, rotationY = 0 }: PolickaBreweryProps)
       </group>
 
       {/* === 3. FRONT GABLED COURTYARD WING (MATCHES ATTACHED HISTORIC PHOTO) === */}
-      <group position={[-4.5, 0, -6.5]}>
+      <group position={[-4.5, 0, -6.5]} visible={!(burnedIds?.has('brewery-front') ?? false)}>
         <mesh position={[0, 0.7, 0]} castShadow receiveShadow>
           <boxGeometry args={[11.6, 1.4, 14.8]} />
           <meshStandardMaterial color={COLORS.stonePlinth} roughness={0.95} />
@@ -333,7 +334,7 @@ export function PolickaBrewery({ position, rotationY = 0 }: PolickaBreweryProps)
       </group>
 
       {/* === 4. MALT HOUSE & KILN WING (SLADOVNA A HVOZD) WITH PYRAMIDAL KILN ROOF === */}
-      <group position={[-14.2, 0, 3.8]}>
+      <group position={[-14.2, 0, 3.8]} visible={!(burnedIds?.has('brewery-malt') ?? false)}>
         {/* Lower stone/brick kiln base */}
         <mesh position={[0, 0.9, 0]} castShadow receiveShadow>
           <boxGeometry args={[10.6, 1.8, 11.4]} />

@@ -9,7 +9,7 @@ import {
   WATERMILL_1839,
 } from '../game/cadastral1839';
 import { TOWN_Y } from '../game/pois';
-import { NIGHT_MATERIALS, timeOfDayState } from '../game/timeOfDay';
+import { NIGHT_MATERIALS } from '../game/timeOfDay';
 
 // Shared unit pitched gable prism: width = 1 along Z, length = 1 along X, height = 1 along +Y
 const UNIT_GABLE_ROOF = (() => {
@@ -54,8 +54,6 @@ const SHARED_MATS = {
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   }),
-  ruralDoor: new THREE.MeshStandardMaterial({ color: '#6e4c30', roughness: 0.9 }),
-  ruralWindow: new THREE.MeshStandardMaterial({ color: '#393e46', roughness: 0.65 }),
   foam: new THREE.MeshStandardMaterial({
     color: '#eef6fa',
     roughness: 0.6,
@@ -64,14 +62,6 @@ const SHARED_MATS = {
     depthWrite: false,
   }),
 };
-
-interface CottageWindowInstance {
-  x: number;
-  y: number;
-  z: number;
-  rotY: number;
-  threshold: number;
-}
 
 /**
  * 1. Historic Czech Masonry Watermill (Mlýn pod Synským rybníkem, red arrow on 1839 map)
@@ -398,73 +388,18 @@ function MillStreamAndBridge1839() {
   );
 }
 
+interface PolickaCadastral1839Props {
+  burnedIds?: ReadonlySet<string>;
+}
+
 /**
  * Historic 1839 Imperial Cadastral Map additions:
  * - Historic Watermill at the red arrow (Mlýn pod Synským rybníkem) with rotating waterwheel
  * - Row of 12 wooden barns (Stodoly) along the south bank of Synský rybník
  * - 20 suburban cottages of Horní předměstí (SW road below St. Michael + Mill Approach road)
- *   with staggered emissive night windows in a single InstancedMesh.
+ *   (doors, barn gates & day/night windows rendered in unified InstancedMesh batches in TownNightLights)
  */
-export function PolickaCadastral1839() {
-  const windowInstRef = useRef<THREE.InstancedMesh>(null);
-  const lastAppliedProgressRef = useRef(-1);
-  const dummyRef = useRef(new THREE.Object3D());
-
-  // Precompute all world-space staggered night windows for the 20 suburban cottages
-  const cottageWindows = useMemo<CottageWindowInstance[]>(() => {
-    const list: CottageWindowInstance[] = [];
-    for (const h of HORNI_PREDMESTI_HOUSES_1839) {
-      if (h.nightThreshold > 1.0) continue;
-      const cos = Math.cos(h.rotY);
-      const sin = Math.sin(h.rotY);
-      const halfD = h.depth * 0.5 + 0.06;
-      const winY = TOWN_Y + Math.min(h.wallHeight - 1.15, 2.25);
-
-      // Two front windows facing the street (local -Z) and one side/rear window
-      const localSpots: readonly [number, number, number][] = [
-        [-h.width * 0.24, -halfD, Math.PI],
-        [h.width * 0.24, -halfD, Math.PI],
-        [0, halfD, 0],
-      ];
-      for (const [lx, lz, localRot] of localSpots) {
-        const wx = h.x + lx * cos + lz * sin;
-        const wz = h.z - lx * sin + lz * cos;
-        list.push({
-          x: wx,
-          y: winY,
-          z: wz,
-          rotY: h.rotY + localRot,
-          threshold: h.nightThreshold,
-        });
-      }
-    }
-    return list;
-  }, []);
-
-  useFrame(() => {
-    const p = timeOfDayState.progress;
-    const mesh = windowInstRef.current;
-    if (mesh && Math.abs(p - lastAppliedProgressRef.current) > 0.002) {
-      lastAppliedProgressRef.current = p;
-      const dummy = dummyRef.current;
-      for (let i = 0; i < cottageWindows.length; i++) {
-        const w = cottageWindows[i];
-        const onT = Math.max(0, Math.min(1, (p - w.threshold) / 0.06));
-        if (onT <= 0.01) {
-          dummy.position.set(0, -999, 0);
-          dummy.scale.set(0.001, 0.001, 0.001);
-        } else {
-          dummy.position.set(w.x, w.y, w.z);
-          dummy.rotation.set(0, w.rotY, 0);
-          dummy.scale.set(onT, onT, 1);
-        }
-        dummy.updateMatrix();
-        mesh.setMatrixAt(i, dummy.matrix);
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-    }
-  });
-
+export function PolickaCadastral1839({ burnedIds }: PolickaCadastral1839Props) {
   return (
     <group name="policka-1839-cadastral-suburbs">
       {/* 1. Continuous Meandering Mill Stream & Dam Road Stone Bridge Parapets */}
@@ -479,6 +414,7 @@ export function PolickaCadastral1839() {
           key={b.id}
           position={[b.x, TOWN_Y, b.z]}
           rotation={[0, b.rotY, 0]}
+          visible={!(burnedIds?.has(b.id) ?? false)}
         >
           {/* Low stone sill */}
           <mesh
@@ -508,25 +444,6 @@ export function PolickaCadastral1839() {
           >
             <meshStandardMaterial color={b.roofColor} roughness={0.88} flatShading />
           </mesh>
-          {/* Subtle rural wooden door & two small windows facing the southern road (local -Z) */}
-          <mesh
-            geometry={UNIT_BOX}
-            material={SHARED_MATS.ruralDoor}
-            position={[0, 1.15, -b.depth / 2 - 0.05]}
-            scale={[1.15, 1.95, 0.08]}
-          />
-          <mesh
-            geometry={UNIT_BOX}
-            material={SHARED_MATS.ruralWindow}
-            position={[-b.width * 0.28, Math.min(b.wallHeight - 0.9, 2.05), -b.depth / 2 - 0.05]}
-            scale={[0.85, 1.05, 0.06]}
-          />
-          <mesh
-            geometry={UNIT_BOX}
-            material={SHARED_MATS.ruralWindow}
-            position={[b.width * 0.28, Math.min(b.wallHeight - 0.9, 2.05), -b.depth / 2 - 0.05]}
-            scale={[0.85, 1.05, 0.06]}
-          />
         </group>
       ))}
 
@@ -536,6 +453,7 @@ export function PolickaCadastral1839() {
           key={h.id}
           position={[h.x, TOWN_Y, h.z]}
           rotation={[0, h.rotY, 0]}
+          visible={!(burnedIds?.has(h.id) ?? false)}
         >
           {/* Stone plinth */}
           <mesh
@@ -586,23 +504,6 @@ export function PolickaCadastral1839() {
           )}
         </group>
       ))}
-
-      {/* Single InstancedMesh for staggered warm emissive night windows on Horní předměstí cottages */}
-      {cottageWindows.length > 0 && (
-        <instancedMesh
-          ref={windowInstRef}
-          args={[undefined, undefined, cottageWindows.length]}
-          frustumCulled={false}
-        >
-          <planeGeometry args={[0.95, 1.15]} />
-          <meshStandardMaterial
-            color="#ffe5a3"
-            emissive="#ffcf70"
-            emissiveIntensity={1.6}
-            roughness={0.35}
-          />
-        </instancedMesh>
-      )}
     </group>
   );
 }

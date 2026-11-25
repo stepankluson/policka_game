@@ -40,8 +40,8 @@ export function smoothstep(edge0: number, edge1: number, x: number): number {
  */
 export const timeOfDayState = {
   /** Smoothly interpolated continuous time progress [0 = Day, 0.35 = Sunset, 0.70 = Twilight, 1.0 = Night] */
-  progress: 0.15,
-  targetProgress: 0.15,
+  progress: 0.30,
+  targetProgress: 0.30,
   /** 0 during day/sunset (< 0.45), ramping smoothly to 1 by 0.90 */
   nightFactor: 0,
   /** 0 before 0.55, ramping smoothly to 1 by 0.92 for moon & stars */

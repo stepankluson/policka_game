@@ -144,26 +144,29 @@ export function FollowCamera({
   const lastPointerRef = useRef({ x: 0, y: 0 });
   const initializedRef = useRef(false);
 
-  // Snap camera to initial third-person orbit on mount
+  // Initialize orbit pivot on mount (only snap camera position if FollowCamera is immediately active)
   useEffect(() => {
     const p = playerPosRef.current;
     currentPivotRef.current.set(p.x, p.y + CAMERA_CONFIG.targetHeight, p.z);
 
-    const yaw = currentYawRef.current;
-    const pitch = currentPitchRef.current;
-    const dist = actualDistanceRef.current;
+    if (active) {
+      const yaw = currentYawRef.current;
+      const pitch = currentPitchRef.current;
+      const dist = actualDistanceRef.current;
 
-    const horizDist = Math.cos(pitch) * dist;
-    camera.position.set(
-      currentPivotRef.current.x + Math.sin(yaw) * horizDist,
-      Math.max(
-        CAMERA_CONFIG.minCameraYClose,
-        currentPivotRef.current.y + Math.sin(pitch) * dist,
-      ),
-      currentPivotRef.current.z + Math.cos(yaw) * horizDist,
-    );
-    camera.lookAt(currentPivotRef.current);
+      const horizDist = Math.cos(pitch) * dist;
+      camera.position.set(
+        currentPivotRef.current.x + Math.sin(yaw) * horizDist,
+        Math.max(
+          CAMERA_CONFIG.minCameraYClose,
+          currentPivotRef.current.y + Math.sin(pitch) * dist,
+        ),
+        currentPivotRef.current.z + Math.cos(yaw) * horizDist,
+      );
+      camera.lookAt(currentPivotRef.current);
+    }
     initializedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, playerPosRef]);
 
   // Mouse-drag orbit & proportional scroll-wheel zoom listeners while third-person mode is active

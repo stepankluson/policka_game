@@ -11,6 +11,7 @@ const WHISTLE_COOLDOWN_MS = 18_000;
 class PolickaSoundEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private masterLimiter: DynamicsCompressorNode | null = null;
 
   // Continuous exterior wind chain
   private windSource: AudioBufferSourceNode | null = null;
@@ -62,8 +63,19 @@ class PolickaSoundEngine {
 
       const master = ctx.createGain();
       master.gain.setValueAtTime(this.isMuted ? 0 : DEFAULT_MASTER_VOLUME, ctx.currentTime);
-      master.connect(ctx.destination);
+
+      // Gentle master dynamics compressor / soft limiter so boosted bronze church bells stay rich & clip-free
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.setValueAtTime(-6, ctx.currentTime);
+      limiter.knee.setValueAtTime(12, ctx.currentTime);
+      limiter.ratio.setValueAtTime(6, ctx.currentTime);
+      limiter.attack.setValueAtTime(0.004, ctx.currentTime);
+      limiter.release.setValueAtTime(0.14, ctx.currentTime);
+
+      master.connect(limiter);
+      limiter.connect(ctx.destination);
       this.masterGain = master;
+      this.masterLimiter = limiter;
 
       this.setupNoiseAndAmbience(ctx, master);
       this.startSchedulers();
@@ -72,6 +84,78 @@ class PolickaSoundEngine {
 
     if (this.ctx && this.ctx.state === 'suspended') {
       void this.ctx.resume();
+    }
+  }
+
+  /**
+   * Unlocks Web Audio on clicking "Vstoupit na ochoz", fades in the tower wind & town ambience
+   * smoothly over ~1.5s, sounds one deep majestic St. James bronze church bell toll, and follows
+   * with a brief distant jackdaw chorus as the camera swoops onto the gallery.
+   */
+  public playTitleIntroSequence(): void {
+    this.ensureStarted();
+    if (this.isMuted || !this.ctx || !this.masterGain) return;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // Smooth ~1.5s ambience fade-in on wind & town murmur so the world breathes in warmly
+    if (this.windGain && this.murmurGain) {
+      this.windGain.gain.cancelScheduledValues(now);
+      this.windGain.gain.setValueAtTime(0.0001, now);
+      this.windGain.gain.linearRampToValueAtTime(0.24, now + 1.5);
+
+      this.murmurGain.gain.cancelScheduledValues(now);
+      this.murmurGain.gain.setValueAtTime(0.0001, now);
+      this.murmurGain.gain.linearRampToValueAtTime(0.14, now + 1.6);
+    }
+
+    // One deep, authoritative resonant bronze toll of St. James Church bell (boosted presence)
+    const triggerBell = () => {
+      if (!this.ctx || !this.masterGain || this.isMuted) return;
+      const t0 = this.ctx.currentTime + 0.04;
+      const f0 = 185.0; // F#3 grand tower bell fundamental
+      const partials: readonly { ratio: number; amp: number; decay: number }[] = [
+        { ratio: 0.5, amp: 0.34, decay: 5.2 },   // Deep bronze hum
+        { ratio: 1.0, amp: 0.42, decay: 4.6 },   // Prime
+        { ratio: 1.183, amp: 0.25, decay: 3.4 }, // Minor third tierce
+        { ratio: 1.506, amp: 0.17, decay: 2.6 }, // Quint
+        { ratio: 2.0, amp: 0.14, decay: 2.0 },   // Nominal
+        { ratio: 2.514, amp: 0.07, decay: 1.3 }, // Shimmer
+      ];
+
+      const bus = this.ctx.createGain();
+      bus.gain.setValueAtTime(0.76, t0);
+      bus.connect(this.masterGain);
+
+      for (const p of partials) {
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(f0 * p.ratio, t0);
+
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.linearRampToValueAtTime(p.amp, t0 + 0.014);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + p.decay);
+
+        osc.connect(g);
+        g.connect(bus);
+        osc.start(t0);
+        osc.stop(t0 + p.decay + 0.1);
+      }
+
+      // Subtle distant jackdaw calls ~0.65s into the swoop
+      window.setTimeout(() => {
+        if (!this.isMuted && this.viewMode === 'exterior') {
+          this.playJackdawCaws();
+        }
+      }, 650);
+    };
+
+    if (ctx.state === 'suspended') {
+      void ctx.resume().then(triggerBell);
+    } else {
+      triggerBell();
     }
   }
 
@@ -513,7 +597,7 @@ class PolickaSoundEngine {
     ];
 
     const bellBus = ctx.createGain();
-    bellBus.gain.setValueAtTime(0.42, now);
+    bellBus.gain.setValueAtTime(0.68, now);
     bellBus.connect(this.masterGain);
 
     for (const p of partials) {
@@ -689,6 +773,86 @@ class PolickaSoundEngine {
     }
   }
 
+  /** Rich, resonant double bronze church bell toll for free-roam tower bell ringing */
+  public playChurchBellToll(): void {
+    if (this.isMuted) return;
+    this.ensureStarted();
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+
+    const ctx = this.ctx;
+    const baseNow = ctx.currentTime;
+    const f0 = 196.0; // G3 deep warm St. James tower bell fundamental
+    const partials: readonly { ratio: number; amp: number; decay: number }[] = [
+      { ratio: 0.5, amp: 0.26, decay: 4.4 },
+      { ratio: 1.0, amp: 0.34, decay: 3.9 },
+      { ratio: 1.183, amp: 0.21, decay: 3.0 },
+      { ratio: 1.506, amp: 0.14, decay: 2.3 },
+      { ratio: 2.0, amp: 0.11, decay: 1.8 },
+    ];
+
+    // Two stately resonant tolls spaced 1.35s apart (boosted +65% bronze presence)
+    for (const offset of [0, 1.35]) {
+      const t0 = baseNow + offset;
+      const bus = ctx.createGain();
+      bus.gain.setValueAtTime(0.72, t0);
+      bus.connect(this.masterGain);
+
+      for (const p of partials) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(f0 * p.ratio, t0);
+
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.linearRampToValueAtTime(p.amp, t0 + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + p.decay);
+
+        osc.connect(g);
+        g.connect(bus);
+        osc.start(t0);
+        osc.stop(t0 + p.decay + 0.08);
+      }
+    }
+  }
+
+  /** Short burst of startled jackdaw (kavka) caws when the tower bell rings */
+  public playJackdawCaws(): void {
+    if (this.isMuted) return;
+    this.ensureStarted();
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+
+    const ctx = this.ctx;
+    const baseNow = ctx.currentTime + 0.18;
+    const cawOffsets = [0, 0.22, 0.48, 0.78, 1.15];
+
+    for (let i = 0; i < cawOffsets.length; i++) {
+      const t0 = baseNow + cawOffsets[i];
+      const baseF = 1120 + ((i * 197) % 360);
+      const dur = 0.14 + (i % 2) * 0.04;
+
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(baseF * 1.12, t0);
+      osc.frequency.exponentialRampToValueAtTime(baseF * 0.78, t0 + dur);
+
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(baseF * 1.25, t0);
+      bp.Q.setValueAtTime(3.6, t0);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.055, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur + 0.02);
+
+      osc.connect(bp);
+      bp.connect(g);
+      g.connect(this.masterGain);
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.04);
+    }
+  }
+
   /** Urgent rapid bronze fire alarm bell strikes (5 quick clangs with authentic partials) */
   public playFireAlarmBell(): void {
     if (this.isMuted) return;
@@ -711,7 +875,7 @@ class PolickaSoundEngine {
     for (let s = 0; s < strikeOffsets.length; s++) {
       const t0 = baseNow + strikeOffsets[s];
       const bus = ctx.createGain();
-      bus.gain.setValueAtTime(0.38, t0);
+      bus.gain.setValueAtTime(0.64, t0);
       bus.connect(this.masterGain);
 
       for (const p of partials) {
@@ -835,6 +999,7 @@ class PolickaSoundEngine {
     this.murmurLfoGain?.disconnect();
     this.violinBus?.disconnect();
     this.masterGain?.disconnect();
+    this.masterLimiter?.disconnect();
 
     if (this.ctx) {
       void this.ctx.close();
@@ -842,6 +1007,7 @@ class PolickaSoundEngine {
     }
 
     this.masterGain = null;
+    this.masterLimiter = null;
     this.windSource = null;
     this.windBandpass = null;
     this.windMuffle = null;

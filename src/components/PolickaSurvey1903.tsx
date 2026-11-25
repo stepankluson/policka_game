@@ -13,7 +13,7 @@ import {
   type EasternMillSpec,
 } from '../game/survey1903';
 import { TOWN_Y } from '../game/pois';
-import { NIGHT_MATERIALS, timeOfDayState } from '../game/timeOfDay';
+import { NIGHT_MATERIALS } from '../game/timeOfDay';
 
 // Shared unit geometries for smooth 60 FPS rendering
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
@@ -98,7 +98,7 @@ const ORCHARD_COLORS = [
 ];
 
 /** 1. Eastern Suburban Factory (`Fb.` — Fabrik on the 1903 map) */
-function EasternSuburbanFactory1903() {
+function EasternSuburbanFactory1903({ burnedIds }: { burnedIds?: ReadonlySet<string> }) {
   const [sx, sTopY, sz] = EASTERN_FACTORY_1903.smokestackLocal;
   const plinthH = 4.6;
   const shaftH = sTopY - plinthH - 0.9;
@@ -110,6 +110,7 @@ function EasternSuburbanFactory1903() {
       rotation={[0, EASTERN_FACTORY_1903.rotationY, 0]}
     >
       {/* Main 2-story rectangular brick-and-plaster factory hall */}
+      <group visible={!(burnedIds?.has('east-factory-main') ?? false)}>
       <mesh
         geometry={UNIT_BOX}
         material={MATS.brickDark}
@@ -185,9 +186,10 @@ function EasternSuburbanFactory1903() {
           ))}
         </group>
       ))}
+      </group>
 
       {/* Connected side annex / boiler room */}
-      <group position={[-9.5, 0, 9.2]}>
+      <group position={[-9.5, 0, 9.2]} visible={!(burnedIds?.has('east-factory-annex') ?? false)}>
         <mesh
           geometry={UNIT_BOX}
           material={MATS.factoryPlaster}
@@ -231,14 +233,16 @@ function EasternWatermillMesh({
   spec,
   wheelRef,
   foamRef,
+  visible = true,
 }: {
   spec: EasternMillSpec;
   wheelRef: (el: THREE.Group | null) => void;
   foamRef: (el: THREE.Mesh | null) => void;
+  visible?: boolean;
 }) {
   const [wx, wy, wz] = spec.wheelLocalPos;
   return (
-    <group position={[spec.x, TOWN_Y, spec.z]} rotation={[0, spec.rotY, 0]}>
+    <group position={[spec.x, TOWN_Y, spec.z]} rotation={[0, spec.rotY, 0]} visible={visible}>
       {/* Stone plinth & plastered masonry body */}
       <mesh
         geometry={UNIT_BOX}
@@ -450,6 +454,10 @@ function EasternStreamAndBridge1903() {
   );
 }
 
+interface PolickaSurvey1903Props {
+  burnedIds?: ReadonlySet<string>;
+}
+
 /**
  * Complete 1903 Third Military Survey Additions:
  * 1. Eastern Suburban Factory (`Fb.`) with smokestack
@@ -458,14 +466,11 @@ function EasternStreamAndBridge1903() {
  * 4. Narrow Agricultural Strip Fields (`lánová plužina`) south of Synský rybník + Western Orchards
  * 5. Suburban plastered house ribbons (`Obere Vorstadt` NE road & Western approach) with night windows
  */
-export function PolickaSurvey1903() {
+export function PolickaSurvey1903({ burnedIds }: PolickaSurvey1903Props) {
   const wheelRefs = useRef<(THREE.Group | null)[]>([]);
   const foamRefs = useRef<(THREE.Mesh | null)[]>([]);
   const orchardTrunkRef = useRef<THREE.InstancedMesh>(null);
   const orchardCanopyRef = useRef<THREE.InstancedMesh>(null);
-  const houseWindowRef = useRef<THREE.InstancedMesh>(null);
-  const lastAppliedProgressRef = useRef(-1);
-  const dummyRef = useRef(new THREE.Object3D());
 
   // Populate western orchard rounded fruit trees once
   useEffect(() => {
@@ -493,33 +498,6 @@ export function PolickaSurvey1903() {
     if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
   }, []);
 
-  // Precompute staggered night windows for all 20 suburban houses
-  const suburbanWindows = useMemo(() => {
-    const list: Array<{ x: number; y: number; z: number; rotY: number; threshold: number }> = [];
-    for (const h of SUBURBAN_HOUSES_1903) {
-      if (h.nightThreshold > 1.0) continue;
-      const cos = Math.cos(h.rotY);
-      const sin = Math.sin(h.rotY);
-      const halfD = h.depth * 0.5 + 0.06;
-      const winY = TOWN_Y + Math.min(h.wallHeight - 1.1, 2.25);
-
-      for (const [lx, lz, localRot] of [
-        [-h.width * 0.24, -halfD, Math.PI],
-        [h.width * 0.24, -halfD, Math.PI],
-        [0, halfD, 0],
-      ] as const) {
-        list.push({
-          x: h.x + lx * cos + lz * sin,
-          y: winY,
-          z: h.z - lx * sin + lz * cos,
-          rotY: h.rotY + localRot,
-          threshold: h.nightThreshold,
-        });
-      }
-    }
-    return list;
-  }, []);
-
   useFrame((state, rawDelta) => {
     const dt = Math.min(rawDelta, 0.05);
     const t = state.clock.getElapsedTime();
@@ -534,35 +512,12 @@ export function PolickaSurvey1903() {
         foam.scale.set(s, s, 1);
       }
     }
-
-    // Update staggered night windows only when timeProgress moves
-    const p = timeOfDayState.progress;
-    const wMesh = houseWindowRef.current;
-    if (wMesh && Math.abs(p - lastAppliedProgressRef.current) > 0.002) {
-      lastAppliedProgressRef.current = p;
-      const dummy = dummyRef.current;
-      for (let i = 0; i < suburbanWindows.length; i++) {
-        const w = suburbanWindows[i];
-        const onT = Math.max(0, Math.min(1, (p - w.threshold) / 0.06));
-        if (onT <= 0.01) {
-          dummy.position.set(0, -999, 0);
-          dummy.scale.set(0.001, 0.001, 0.001);
-        } else {
-          dummy.position.set(w.x, w.y, w.z);
-          dummy.rotation.set(0, w.rotY, 0);
-          dummy.scale.set(onT, onT, 1);
-        }
-        dummy.updateMatrix();
-        wMesh.setMatrixAt(i, dummy.matrix);
-      }
-      wMesh.instanceMatrix.needsUpdate = true;
-    }
   });
 
   return (
     <group name="policka-1903-third-military-survey">
       {/* 1. Eastern Suburban Factory (`Fb.`) */}
-      <EasternSuburbanFactory1903 />
+      <EasternSuburbanFactory1903 burnedIds={burnedIds} />
 
       {/* 2. Continuous Eastern Stream & Two Animated Eastern Watermills */}
       <EasternStreamAndBridge1903 />
@@ -570,6 +525,7 @@ export function PolickaSurvey1903() {
         <EasternWatermillMesh
           key={spec.id}
           spec={spec}
+          visible={!(burnedIds?.has(spec.id) ?? false)}
           wheelRef={(el) => {
             wheelRefs.current[idx] = el;
           }}
@@ -725,7 +681,12 @@ export function PolickaSurvey1903() {
 
       {/* 5. Suburban Plastered House Rows (`Obere Vorstadt` NE Road & Western Approach) */}
       {SUBURBAN_HOUSES_1903.map((h) => (
-        <group key={h.id} position={[h.x, TOWN_Y, h.z]} rotation={[0, h.rotY, 0]}>
+        <group
+          key={h.id}
+          position={[h.x, TOWN_Y, h.z]}
+          rotation={[0, h.rotY, 0]}
+          visible={!(burnedIds?.has(h.id) ?? false)}
+        >
           <mesh
             geometry={UNIT_BOX}
             material={MATS.plinth}
@@ -762,23 +723,6 @@ export function PolickaSurvey1903() {
           )}
         </group>
       ))}
-
-      {/* Instanced Staggered Warm Emissive Night Windows for 1903 Suburban Houses */}
-      {suburbanWindows.length > 0 && (
-        <instancedMesh
-          ref={houseWindowRef}
-          args={[undefined, undefined, suburbanWindows.length]}
-          frustumCulled={false}
-        >
-          <planeGeometry args={[0.95, 1.15]} />
-          <meshStandardMaterial
-            color="#ffe5a3"
-            emissive="#ffcf70"
-            emissiveIntensity={1.6}
-            roughness={0.35}
-          />
-        </instancedMesh>
-      )}
     </group>
   );
 }

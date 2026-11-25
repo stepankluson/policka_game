@@ -27,11 +27,10 @@ export function FireWatchGalleryProps({ fireWatch }: FireWatchGalleryPropsProps)
   const activeFire = fireWatch.active ? fireWatch.rounds[fireWatch.roundIndex] ?? null : null;
 
   useFrame((state, rawDelta) => {
-    if (!fireWatch.active) return;
     const dt = Math.min(rawDelta, 0.05);
     const t = state.clock.elapsedTime;
 
-    // 1. Animate bell rope pull-down & elastic rebound
+    // 1. Always animate bell rope pull-down & elastic rebound (free roam & Fire Watch)
     if (fireWatchRuntime.bellPullAnim > 0) {
       fireWatchRuntime.bellPullAnim = Math.max(0, fireWatchRuntime.bellPullAnim - dt * 1.9);
     }
@@ -39,6 +38,8 @@ export function FireWatchGalleryProps({ fireWatch }: FireWatchGalleryPropsProps)
       const pull = Math.sin(fireWatchRuntime.bellPullAnim * Math.PI);
       ropeGroupRef.current.position.y = -pull * 0.32;
     }
+
+    if (!fireWatch.active) return;
 
     // 2. Pulsing gold ring around bell rope handle during Step 2
     if (bellRingRef.current) {
@@ -68,12 +69,11 @@ export function FireWatchGalleryProps({ fireWatch }: FireWatchGalleryPropsProps)
     }
   });
 
-  if (!fireWatch.active) return null;
-
   const targetDir = activeFire?.direction ?? null;
-  const showBellBeacon = fireWatch.step === 'ring-bell';
-  const showHookBeacon = fireWatch.step === 'hang-signal' && targetDir !== null;
+  const showBellBeacon = fireWatch.active && fireWatch.step === 'ring-bell';
+  const showHookBeacon = fireWatch.active && fireWatch.step === 'hang-signal' && targetDir !== null;
   const showMountedSignal =
+    fireWatch.active &&
     fireWatch.signalMounted &&
     targetDir !== null &&
     (fireWatch.step === 'dispatching' || fireWatch.step === 'extinguishing');
@@ -125,8 +125,8 @@ export function FireWatchGalleryProps({ fireWatch }: FireWatchGalleryPropsProps)
         )}
       </group>
 
-      {/* === 2. FOUR RAILING SIGNAL HOOKS + MOUNTED RED FLAG / RED LANTERN === */}
-      {DIRECTIONS.map((dir) => {
+      {/* === 2. FOUR RAILING SIGNAL HOOKS + MOUNTED RED FLAG / RED LANTERN (Fire Watch only) === */}
+      {fireWatch.active && DIRECTIONS.map((dir) => {
         const hook = SIGNAL_HOOK_POSITIONS[dir];
         const isTarget = dir === targetDir;
         return (

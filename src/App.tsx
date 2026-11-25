@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { soundEngine } from './audio/soundEngine';
 import {
+  COMPASS_PX_PER_DEG,
+  COMPASS_VIEWPORT_W,
   GameScene,
+  compassHudRefs,
   type GalleryCameraMode,
+  type GamePhase,
   type ViewMode,
 } from './components/GameScene';
+import { triggerJackdawStartle } from './components/PolickaJackdaws';
 import type { ScanState } from './components/TelescopeCamera';
 import { TelescopeOverlay } from './components/TelescopeOverlay';
 import {
@@ -32,11 +37,39 @@ import {
 
 const DEFAULT_ZOOM = TELESCOPE_CONFIG.maxFov / TELESCOPE_CONFIG.defaultZoomFov;
 
+const COMPASS_CARDINALS: Record<number, string> = {
+  0: 'S',
+  45: 'SV',
+  90: 'V',
+  135: 'JV',
+  180: 'J',
+  225: 'JZ',
+  270: 'Z',
+  315: 'SZ',
+};
+
+/** Precomputed 3-cycle (-360°..+720°) Czech compass ticks at 15° intervals for seamless wrapping */
+const COMPASS_TICKS: readonly { key: number; leftPx: number; label: string | null; isMajor: boolean }[] = (() => {
+  const ticks = [];
+  for (let deg = -360; deg <= 720; deg += 15) {
+    const norm = ((deg % 360) + 360) % 360;
+    const label = COMPASS_CARDINALS[norm] ?? null;
+    ticks.push({
+      key: deg,
+      leftPx: (deg + 360) * COMPASS_PX_PER_DEG,
+      label,
+      isMajor: norm % 90 === 0,
+    });
+  }
+  return ticks;
+})();
+
 export function App() {
+  const [gamePhase, setGamePhase] = useState<GamePhase>('title');
   const [viewMode, setViewMode] = useState<ViewMode>('exterior');
   const [galleryCameraMode, setGalleryCameraMode] = useState<GalleryCameraMode>('third');
   const [timeOfDayMode, setTimeOfDayMode] = useState<TimeOfDayMode>('auto');
-  const [isMuted, setIsMuted] = useState(false);
+  const [, setIsMuted] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [isPointerLocked, setIsPointerLocked] = useState(false);
   const [isFading, setIsFading] = useState(false);
@@ -65,6 +98,7 @@ export function App() {
   const [nearSignalHook, setNearSignalHook] = useState(false);
   const nextRoundTimerRef = useRef<number | null>(null);
   const alertTimerRef = useRef<number | null>(null);
+  const lastFreeBellTollMsRef = useRef(0);
 
   const exitPointerLockIfActive = useCallback(() => {
     if (document.pointerLockElement) {
@@ -209,7 +243,10 @@ export function App() {
       const roundLoc = prev.rounds[prev.roundIndex];
       const burnedEntry = {
         id: `${prev.roundIndex}-${prev.chainJumpsInRound}-${prev.currentTarget.id}`,
+        sourceId: prev.currentTarget.sourceId,
+        osmId: prev.currentTarget.osmId,
         position: prev.currentTarget.position,
+        rotY: prev.currentTarget.rotY,
         ruinSize: prev.currentTarget.ruinSize,
       };
       const nextBurned = [...prev.burnedBuildings, burnedEntry];
@@ -273,9 +310,21 @@ export function App() {
     });
   }, [exitPointerLockIfActive, scheduleNextFireWatchRound]);
 
+  const handleFreeRoamBellToll = useCallback(() => {
+    const now = performance.now();
+    if (now - lastFreeBellTollMsRef.current < 4000) return; // 4s anti-spam cooldown
+    lastFreeBellTollMsRef.current = now;
+    fireWatchRuntime.bellPullAnim = 1;
+    soundEngine.playChurchBellToll();
+    soundEngine.playJackdawCaws();
+    triggerJackdawStartle();
+  }, []);
+
   const handleRingFireBell = useCallback(() => {
     fireWatchRuntime.bellPullAnim = 1;
     soundEngine.playFireAlarmBell();
+    soundEngine.playJackdawCaws();
+    triggerJackdawStartle();
     setFireWatch((prev) => {
       if (!prev.active || prev.step !== 'ring-bell') return prev;
       return {
@@ -394,17 +443,21 @@ export function App() {
     [isFading, viewMode, exitPointerLockIfActive],
   );
 
-  // Lazily start Web Audio on first user interaction & dispose cleanly on unmount
-  useEffect(() => {
-    const startAudio = () => {
-      soundEngine.ensureStarted();
-    };
-    window.addEventListener('pointerdown', startAudio, { once: true });
-    window.addEventListener('keydown', startAudio, { once: true });
+  const handleEnterGallery = useCallback(() => {
+    setGamePhase((prev) => {
+      if (prev !== 'title') return prev;
+      soundEngine.playTitleIntroSequence();
+      return 'transitioning';
+    });
+  }, []);
 
+  const handleTitleTransitionComplete = useCallback(() => {
+    setGamePhase('playing');
+  }, []);
+
+  // Dispose audio & pending timers cleanly on unmount
+  useEffect(() => {
     return () => {
-      window.removeEventListener('pointerdown', startAudio);
-      window.removeEventListener('keydown', startAudio);
       if (fadeTimerRef.current !== null) {
         window.clearTimeout(fadeTimerRef.current);
       }
@@ -418,10 +471,19 @@ export function App() {
     };
   }, []);
 
-  // Keyboard shortcuts: [V] exterior 1st/3rd person, [E] interact/enter/exit, [Escape] close/exit
+  // Keyboard shortcuts: Title [Enter]/[Space], [M] Mute, [H] Controls, [V] 1st/3rd person, [E] interact, [F] bell/fire watch
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
+
+      if (gamePhase === 'title') {
+        if (event.code === 'Enter' || event.code === 'Space') {
+          event.preventDefault();
+          handleEnterGallery();
+        }
+        return;
+      }
+      if (gamePhase !== 'playing') return;
 
       if (event.code === 'KeyM') {
         handleToggleMute();
@@ -453,13 +515,17 @@ export function App() {
       }
 
       // Exterior mode shortcuts
-      if (event.code === 'KeyF' && fireWatch.active) {
-        if (fireWatch.step === 'spot' && aimingAtFire) {
-          handleFireSpotted();
-        } else if (fireWatch.step === 'ring-bell' && nearBellRope && activeTelescope === null) {
-          handleRingFireBell();
-        } else if (fireWatch.step === 'hang-signal' && nearSignalHook && activeTelescope === null) {
-          handleHangFireSignal();
+      if (event.code === 'KeyF') {
+        if (fireWatch.active) {
+          if (fireWatch.step === 'spot' && aimingAtFire) {
+            handleFireSpotted();
+          } else if (fireWatch.step === 'ring-bell' && nearBellRope && activeTelescope === null) {
+            handleRingFireBell();
+          } else if (fireWatch.step === 'hang-signal' && nearSignalHook && activeTelescope === null) {
+            handleHangFireSignal();
+          }
+        } else if (nearBellRope && activeTelescope === null) {
+          handleFreeRoamBellToll();
         }
         return;
       }
@@ -490,6 +556,8 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
+    gamePhase,
+    handleEnterGallery,
     viewMode,
     activeTelescope,
     nearbyTelescope,
@@ -505,6 +573,7 @@ export function App() {
     nearSignalHook,
     handleFireSpotted,
     handleRingFireBell,
+    handleFreeRoamBellToll,
     handleHangFireSignal,
     handleSelectHotspot,
     handleExitTelescope,
@@ -526,21 +595,29 @@ export function App() {
     ? BIRTH_ROOM_HOTSPOTS.find((h) => h.id === aimedHotspotId) ?? null
     : null;
 
+  const isPlaying = gamePhase === 'playing';
+
   const showFpsCrosshair =
+    isPlaying &&
     isPointerLocked &&
     activeTelescope === null &&
     (viewMode === 'interior' || galleryCameraMode === 'first');
 
   const showClickToLookHint =
+    isPlaying &&
     !isPointerLocked &&
     activeTelescope === null &&
     activeHotspot === null &&
     !(fireWatch.active && fireWatch.step === 'summary') &&
     (viewMode === 'interior' || galleryCameraMode === 'first');
 
-  const targetTimeProgress = fireWatch.active
-    ? fireWatch.roundTimeProgress
-    : computeTargetTimeProgress(timeOfDayMode, unlockedPois.size, POIS.length);
+  // Picturesque warm Golden Hour on Title Screen & fly-in; dynamic progression during gameplay
+  const targetTimeProgress =
+    gamePhase !== 'playing'
+      ? 0.30
+      : fireWatch.active
+        ? fireWatch.roundTimeProgress
+        : computeTargetTimeProgress(timeOfDayMode, unlockedPois.size, POIS.length);
   const timeModeMeta = TIME_MODE_LABELS[timeOfDayMode];
   const activeFire = fireWatch.active ? fireWatch.rounds[fireWatch.roundIndex] ?? null : null;
   const showAllPoisFireOffer =
@@ -553,6 +630,8 @@ export function App() {
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-slate-950">
       <GameScene
+        gamePhase={gamePhase}
+        onTitleTransitionComplete={handleTitleTransitionComplete}
         viewMode={viewMode}
         galleryCameraMode={galleryCameraMode}
         targetTimeProgress={targetTimeProgress}
@@ -581,12 +660,61 @@ export function App() {
         onExtinguishComplete={handleExtinguishComplete}
       />
 
+      {/* Cinematic Minimalist Title Screen Overlay (fades out smoothly during 1.65s fly-in) */}
+      {gamePhase !== 'playing' && (
+        <div
+          className={`fixed inset-0 z-40 flex flex-col items-center justify-center px-6 text-center transition-opacity duration-500 ${
+            gamePhase === 'title' ? 'opacity-100' : 'pointer-events-none opacity-0'
+          }`}
+          style={{
+            background:
+              'radial-gradient(circle at center, rgba(16, 12, 9, 0.14) 0%, rgba(14, 10, 7, 0.42) 55%, rgba(10, 7, 5, 0.82) 100%)',
+          }}
+        >
+          <div className="flex max-w-xl flex-col items-center">
+            <span className="text-[11px] font-semibold tracking-[0.34em] text-amber-300/90 uppercase drop-shadow-[0_1px_6px_rgba(0,0,0,0.85)]">
+              Polička · kolem roku 1900
+            </span>
+
+            <h1 className="mt-3 font-serif text-5xl font-semibold tracking-wide text-amber-50 drop-shadow-[0_4px_24px_rgba(0,0,0,0.85)] sm:text-6xl">
+              The Tower Keeper
+            </h1>
+
+            <div className="mt-3.5 h-px w-28 bg-gradient-to-r from-transparent via-amber-300/65 to-transparent" />
+
+            <p className="mt-3.5 text-sm tracking-[0.14em] text-amber-100/90 drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)] sm:text-base">
+              Věž kostela sv. Jakuba · Strážce města
+            </p>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEnterGallery();
+              }}
+              className="mt-8 cursor-pointer rounded-full border border-amber-300/55 bg-stone-950/75 px-8 py-3 text-sm font-semibold tracking-[0.16em] text-amber-100 uppercase shadow-[0_0_28px_rgba(245,180,75,0.22)] transition duration-300 hover:border-amber-200/85 hover:bg-amber-400/20 hover:text-amber-50 hover:shadow-[0_0_38px_rgba(245,180,75,0.42)]"
+            >
+              Vstoupit na ochoz
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Smooth 300ms Fade-to-Black Transition Overlay */}
       <div
         className={`pointer-events-none fixed inset-0 z-50 bg-stone-950 transition-opacity duration-150 ${
           isFading ? 'opacity-100' : 'opacity-0'
         }`}
       />
+
+      {/* All Gameplay HUD Elements (hidden during Title & Fly-In, fade in smoothly once playing) */}
+      <div
+        className={`transition-opacity duration-500 ${
+          isPlaying ? 'opacity-100' : 'pointer-events-none opacity-0'
+        }`}
+      >
+        {isPlaying && (
+          <>
 
       {/* Subtle First-Person Center Dot Crosshair (active during Pointer Lock) */}
       {showFpsCrosshair && (
@@ -657,10 +785,61 @@ export function App() {
         </div>
       </section>
 
-      {/* Fire Watch Top-Center Objective & Spread Tracker */}
-      {fireWatch.active && fireWatch.step !== 'summary' && activeFire && (
-        <div className="pointer-events-none fixed top-20 left-1/2 z-30 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 sm:top-5">
-          <div className="rounded-xl border border-amber-300/30 bg-stone-950/80 px-4 py-2.5 text-amber-50 shadow-xl backdrop-blur-md">
+      {/* Top-Center Stack: Sleek Compass Bar (exterior) + Fire Watch Objective Bar cleanly below it */}
+      {viewMode === 'exterior' && (
+        <div className="pointer-events-none fixed top-4 left-1/2 z-30 flex w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 flex-col items-center gap-2">
+          {/* Sleek Minimal Czech Compass Tape (updated directly via DOM ref — zero React re-renders) */}
+          <div
+            className="relative h-8 overflow-hidden rounded-full border border-amber-200/25 bg-stone-950/75 shadow-lg"
+            style={{ width: `${COMPASS_VIEWPORT_W}px` }}
+          >
+            {/* Center Gold Indicator Arrow */}
+            <div className="pointer-events-none absolute top-0 left-1/2 z-10 -translate-x-1/2 text-[9px] leading-none text-amber-300">
+              ▾
+            </div>
+            {/* Soft side fade masks */}
+            <div
+              className="pointer-events-none absolute inset-0 z-10"
+              style={{
+                background:
+                  'linear-gradient(90deg, rgba(12,10,9,0.92) 0%, transparent 18%, transparent 82%, rgba(12,10,9,0.92) 100%)',
+              }}
+            />
+            {/* Scrolling 3-cycle horizontal compass tape */}
+            <div
+              ref={(el) => {
+                compassHudRefs.tape = el;
+              }}
+              className="relative h-full will-change-transform"
+              style={{ width: `${1080 * COMPASS_PX_PER_DEG}px` }}
+            >
+              {COMPASS_TICKS.map((tk) => (
+                <div
+                  key={tk.key}
+                  className="absolute top-0 flex h-full -translate-x-1/2 flex-col items-center justify-end pb-1"
+                  style={{ left: `${tk.leftPx}px` }}
+                >
+                  {tk.label ? (
+                    <span
+                      className={
+                        tk.isMajor
+                          ? 'text-[11px] font-bold tracking-wider text-amber-200'
+                          : 'text-[9.5px] font-medium tracking-wider text-amber-200/65'
+                      }
+                    >
+                      {tk.label}
+                    </span>
+                  ) : (
+                    <span className="mb-1 h-1.5 w-px bg-amber-200/30" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Fire Watch Objective & Spread Tracker (stacked cleanly below Compass Bar) */}
+          {fireWatch.active && fireWatch.step !== 'summary' && activeFire && (
+            <div className="w-full rounded-xl border border-amber-300/30 bg-stone-950/80 px-4 py-2.5 text-amber-50 shadow-xl backdrop-blur-md">
             <div className="flex items-center justify-between gap-2 text-[11px] font-semibold tracking-wider text-amber-300 uppercase">
               <span>
                 🔥 Požár {fireWatch.roundIndex + 1} / {fireWatch.totalRounds}
@@ -772,6 +951,7 @@ export function App() {
               )}
             </div>
           </div>
+          )}
         </div>
       )}
 
@@ -833,6 +1013,13 @@ export function App() {
               </span>
               Vyvěsit {fireWatch.signalKind === 'flag' ? 'červený prapor' : 'červenou lucernu'} ({COMPASS_LABELS_CZ[activeFire.direction]})
             </div>
+          ) : !fireWatch.active && nearBellRope ? (
+            <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/80 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
+              <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
+                [F]
+              </span>
+              Zazvonit na kostelní zvon
+            </div>
           ) : isNearDoor && !fireWatch.active ? (
             <div className="max-w-full rounded-full border border-amber-300/45 bg-stone-950/80 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
               <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
@@ -851,156 +1038,143 @@ export function App() {
         </div>
       )}
 
-      {/* Unified Bottom-Right Stack: Collapsible "Ovládání" (above) + Main Panel (below) */}
+      {/* Top-Left Unified Compact Horizontal Main Panel (no Mute button; [M] shortcut stays active) */}
+      {activeTelescope === null && (
+        <header
+          onPointerDown={(e) => e.stopPropagation()}
+          className="fixed top-4 left-4 z-30 flex w-fit items-center gap-3 rounded-xl border border-amber-200/25 bg-stone-950/65 px-3.5 py-2 shadow-lg backdrop-blur-md"
+        >
+          {/* Left: Eyebrow + Title */}
+          <div className="leading-tight">
+            <span className="block text-[9.5px] font-semibold tracking-[0.24em] text-amber-300/85 uppercase">
+              {viewMode === 'interior' ? 'Polička · cca 1900' : 'Polička · Ochoz'}
+            </span>
+            <h1 className="whitespace-nowrap text-[15px] font-semibold tracking-wide text-amber-50">
+              {viewMode === 'interior' ? 'Rodná světnička' : 'The Tower Keeper'}
+            </h1>
+          </div>
+
+          {/* Middle: [E] Zpět na ochoz (inside Birth Room) OR Time-of-Day toggle (outside) */}
+          {viewMode === 'interior' ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                transitionToMode('exterior');
+              }}
+              className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-300/35 bg-amber-400/15 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-400/25"
+            >
+              [E] Zpět na ochoz
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCycleTimeOfDay();
+              }}
+              title="Přepnout denní dobu (Auto → Den → Západ → Noc)"
+              className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
+            >
+              <span className="mr-1 text-amber-300">{timeModeMeta.icon}</span>
+              {timeModeMeta.label}
+            </button>
+          )}
+
+          {/* Right: Fire Watch Toggle */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (fireWatch.active) handleExitFireWatch();
+              else handleStartFireWatch();
+            }}
+            className={`cursor-pointer whitespace-nowrap rounded-lg border px-3 py-1 text-xs font-semibold transition ${
+              fireWatch.active
+                ? 'border-rose-400/50 bg-rose-500/25 text-rose-100 hover:bg-rose-500/35'
+                : 'border-orange-300/40 bg-orange-400/15 text-amber-100 hover:bg-orange-400/25'
+            }`}
+          >
+            {fireWatch.active ? '✕ Ukončit hlídku' : '🔥 Požární hlídka'}
+          </button>
+        </header>
+      )}
+
+      {/* Bottom-Left Collapsible "Ovládání" (Controls) Popover (expands upward, left-aligned) */}
       {activeTelescope === null && (
         <div
           onPointerDown={(e) => e.stopPropagation()}
-          className="fixed right-4 bottom-4 z-30 flex flex-col items-end gap-2"
+          className="fixed bottom-4 left-4 z-30 flex flex-col items-start"
         >
-          {/* 1. Top Item: Collapsible "Ovládání" Button + Upward-Expanding Popover */}
-          <div className="flex flex-col items-end">
-            {controlsOpen && (
-              <div className="mb-1.5 w-64 rounded-xl border border-amber-200/25 bg-stone-950/85 p-3 text-xs text-amber-50 shadow-2xl backdrop-blur-md">
-                <div className="mb-2 flex items-center justify-between border-b border-amber-200/15 pb-1.5">
-                  <span className="text-[10px] font-semibold tracking-[0.2em] text-amber-300/90 uppercase">
-                    Ovládání
-                  </span>
-                  <span className="text-[10px] text-amber-200/60">[H]</span>
-                </div>
-                <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5">
-                  <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                    WASD / Šipky
-                  </dt>
-                  <dd className="text-right text-amber-100/85">Pohyb po ochozu</dd>
-
-                  <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                    Myš
-                  </dt>
-                  <dd className="text-right text-amber-100/85">Rozhlížení</dd>
-
-                  <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                    E
-                  </dt>
-                  <dd className="text-right text-amber-100/85">Dalekohled / Dveře</dd>
-
-                  <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                    V
-                  </dt>
-                  <dd className="text-right text-amber-100/85">Přepnout 1. / 3. osobu</dd>
-
-                  <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                    F
-                  </dt>
-                  <dd className="text-right text-amber-100/85">Interakce (zvon, prapor)</dd>
-
-                  <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                    M
-                  </dt>
-                  <dd className="text-right text-amber-100/85">Ztlumit zvuk</dd>
-
-                  <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                    Esc
-                  </dt>
-                  <dd className="text-right text-amber-100/85">Uvolnit myš</dd>
-                </dl>
+          {controlsOpen && (
+            <div className="mb-1.5 w-64 rounded-xl border border-amber-200/25 bg-stone-950/85 p-3 text-xs text-amber-50 shadow-2xl backdrop-blur-md">
+              <div className="mb-2 flex items-center justify-between border-b border-amber-200/15 pb-1.5">
+                <span className="text-[10px] font-semibold tracking-[0.2em] text-amber-300/90 uppercase">
+                  Ovládání
+                </span>
+                <span className="text-[10px] text-amber-200/60">[H]</span>
               </div>
-            )}
+              <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5">
+                <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
+                  WASD / Šipky
+                </dt>
+                <dd className="text-right text-amber-100/85">Pohyb po ochozu</dd>
 
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setControlsOpen((prev) => !prev);
-              }}
-              aria-expanded={controlsOpen}
-              title="Zobrazit nebo skrýt ovládání [H]"
-              className="flex cursor-pointer items-center gap-1.5 rounded-full border border-amber-200/25 bg-stone-950/65 px-3.5 py-1.5 text-xs font-medium text-amber-100 shadow-lg backdrop-blur-md transition hover:border-amber-200/45 hover:bg-stone-950/80"
-            >
-              <span className="text-amber-300">⌨</span>
-              <span>Ovládání</span>
-              <span className="ml-0.5 text-[10px] text-amber-300/80">
-                {controlsOpen ? '▾' : '▴'}
-              </span>
-            </button>
-          </div>
+                <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
+                  Myš
+                </dt>
+                <dd className="text-right text-amber-100/85">Rozhlížení</dd>
 
-          {/* 2. Bottom Item: Unified Main Panel ("The Tower Keeper" / "Rodná světnička") */}
-          <aside className="flex w-fit flex-col gap-2 rounded-xl border border-amber-200/25 bg-stone-950/65 px-3.5 py-2.5 shadow-lg backdrop-blur-md">
-            {/* Row 1: Compact Header */}
-            <div className="leading-tight">
-              <span className="block text-[9.5px] font-semibold tracking-[0.24em] text-amber-300/85 uppercase">
-                {viewMode === 'interior' ? 'Polička · cca 1900' : 'Polička · Ochoz'}
-              </span>
-              <h1 className="text-[15px] font-semibold tracking-wide text-amber-50">
-                {viewMode === 'interior' ? 'Rodná světnička' : 'The Tower Keeper'}
-              </h1>
+                <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
+                  E
+                </dt>
+                <dd className="text-right text-amber-100/85">Dalekohled / Dveře</dd>
+
+                <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
+                  V
+                </dt>
+                <dd className="text-right text-amber-100/85">Přepnout 1. / 3. osobu</dd>
+
+                <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
+                  F
+                </dt>
+                <dd className="text-right text-amber-100/85">Interakce (zvon, prapor)</dd>
+
+                <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
+                  M
+                </dt>
+                <dd className="text-right text-amber-100/85">Ztlumit zvuk</dd>
+
+                <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
+                  Esc
+                </dt>
+                <dd className="text-right text-amber-100/85">Uvolnit myš</dd>
+              </dl>
             </div>
+          )}
 
-            {/* Row 2: [E] Zpět na ochoz (interior) OR Time-of-Day Toggle (exterior) + Mute */}
-            <div className="flex items-center gap-1.5">
-              {viewMode === 'interior' ? (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    transitionToMode('exterior');
-                  }}
-                  className="flex-1 cursor-pointer whitespace-nowrap rounded-lg border border-amber-300/35 bg-amber-400/15 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-400/25"
-                >
-                  [E] Zpět na ochoz
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCycleTimeOfDay();
-                  }}
-                  title="Přepnout denní dobu (Auto → Den → Západ → Noc)"
-                  className="flex-1 cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
-                >
-                  <span className="mr-1 text-amber-300">{timeModeMeta.icon}</span>
-                  {timeModeMeta.label}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleToggleMute();
-                }}
-                title={isMuted ? 'Zapnout zvuk [M]' : 'Ztlumit zvuk [M]'}
-                aria-label={isMuted ? 'Zapnout zvuk' : 'Ztlumit zvuk'}
-                className="cursor-pointer rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
-              >
-                <span className="mr-1 text-amber-300">{isMuted ? '🔇' : '🔊'}</span>
-                <span className="text-[10px] opacity-80">[M]</span>
-              </button>
-            </div>
-
-            {/* Row 3: Full-Width Fire Watch Mode Toggle */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (fireWatch.active) handleExitFireWatch();
-                else handleStartFireWatch();
-              }}
-              className={`w-full cursor-pointer rounded-lg border px-3 py-1.5 text-center text-xs font-semibold transition ${
-                fireWatch.active
-                  ? 'border-rose-400/50 bg-rose-500/25 text-rose-100 hover:bg-rose-500/35'
-                  : 'border-orange-300/40 bg-orange-400/15 text-amber-100 hover:bg-orange-400/25'
-              }`}
-            >
-              {fireWatch.active ? '✕ Ukončit hlídku' : '🔥 Požární hlídka'}
-            </button>
-          </aside>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setControlsOpen((prev) => !prev);
+            }}
+            aria-expanded={controlsOpen}
+            title="Zobrazit nebo skrýt ovládání [H]"
+            className="flex cursor-pointer items-center gap-1.5 rounded-full border border-amber-200/25 bg-stone-950/65 px-3.5 py-1.5 text-xs font-medium text-amber-100 shadow-lg backdrop-blur-md transition hover:border-amber-200/45 hover:bg-stone-950/80"
+          >
+            <span className="text-amber-300">⌨</span>
+            <span>Ovládání</span>
+            <span className="ml-0.5 text-[10px] text-amber-300/80">
+              {controlsOpen ? '▾' : '▴'}
+            </span>
+          </button>
         </div>
       )}
 
-      {/* Subtle Unobtrusive Birth Room Caption for Young Bohuslav Martinů (Bottom-Left) */}
+      {/* Subtle Unobtrusive Birth Room Caption for Young Bohuslav Martinů (Bottom-Right while indoors) */}
       {viewMode === 'interior' && activeHotspot === null && (
-        <div className="pointer-events-none fixed bottom-4 left-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
+        <div className="pointer-events-none fixed right-4 bottom-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
           <span className="mr-1.5 text-amber-300">♪</span>
           Mladý Bohuslav Martinů cvičí na housle
         </div>
@@ -1157,6 +1331,9 @@ export function App() {
           onCloseStory={() => setActiveStoryPoiId(null)}
         />
       )}
+          </>
+        )}
+      </div>
     </main>
   );
 }

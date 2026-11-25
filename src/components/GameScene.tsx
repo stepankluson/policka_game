@@ -2,7 +2,7 @@ import { useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { DOOR_INTERACTION, type BirthRoomHotspot } from '../game/birthRoomData';
-import { INITIAL_PLAYER_POSITION, RING_BOUNDS } from '../game/constants';
+import { CAMERA_CONFIG, INITIAL_PLAYER_POSITION, RING_BOUNDS } from '../game/constants';
 import {
   CHURCH_TRANSFORM,
   churchLocalToWorld,
@@ -36,10 +36,144 @@ import { Telescopes } from './Telescopes';
 import { Tower } from './Tower';
 import { TownDiorama } from './TownDiorama';
 
+export type GamePhase = 'title' | 'transitioning' | 'playing';
 export type ViewMode = 'exterior' | 'interior';
 export type GalleryCameraMode = 'third' | 'first';
 
+/** Pixels per degree on the top-center compass tape (576px per full 360° cycle) */
+export const COMPASS_PX_PER_DEG = 1.6;
+export const COMPASS_VIEWPORT_W = 272;
+
+/** Direct DOM ref for zero-React-re-render compass tape scrolling inside useFrame */
+export const compassHudRefs: {
+  tape: HTMLDivElement | null;
+} = {
+  tape: null,
+};
+
+const _compassDir = new THREE.Vector3();
+const _titleStartPos = new THREE.Vector3();
+const _titleStartTarget = new THREE.Vector3();
+const _titleEndPos = new THREE.Vector3();
+const _titleEndTarget = new THREE.Vector3();
+const _titleCurTarget = new THREE.Vector3();
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+/**
+ * Live-3D Golden Hour cinematic orbit camera for the Title Screen ('title') and
+ * seamless 1.65s easeInOutCubic fly-in transition ('transitioning' -> 'playing')
+ * straight into the exact FollowCamera starting offset on St. James Church gallery.
+ * Zero per-frame allocations inside useFrame.
+ */
+function TitleOrbitCamera({
+  gamePhase,
+  playerWorldPosRef,
+  onTransitionComplete,
+}: {
+  gamePhase: GamePhase;
+  playerWorldPosRef: RefObject<THREE.Vector3>;
+  onTransitionComplete: () => void;
+}) {
+  const { camera } = useThree();
+  const stateRef = useRef({
+    angle: 0.42,
+    transitionStarted: false,
+    transitionDone: false,
+    elapsed: 0,
+  });
+
+  useFrame((_, rawDelta) => {
+    if (gamePhase === 'playing') return;
+    const dt = Math.min(rawDelta, 0.05);
+    const st = stateRef.current;
+
+    const orbitRadius = 45;
+    const orbitY = 9.5;
+    const lookX = CHURCH_TRANSFORM.x;
+    const lookY = 4.2;
+    const lookZ = CHURCH_TRANSFORM.z;
+
+    if (gamePhase === 'title') {
+      st.transitionStarted = false;
+      st.transitionDone = false;
+      st.elapsed = 0;
+      st.angle += dt * 0.068;
+
+      camera.position.set(
+        lookX + Math.sin(st.angle) * orbitRadius,
+        orbitY + Math.sin(st.angle * 1.4) * 1.2,
+        lookZ + Math.cos(st.angle) * orbitRadius,
+      );
+      _titleCurTarget.set(lookX, lookY, lookZ);
+      camera.lookAt(_titleCurTarget);
+      return;
+    }
+
+    // 'transitioning': smooth 1.65s cubic ease-in-out swoop straight into FollowCamera's exact starting pose
+    if (!st.transitionStarted) {
+      st.transitionStarted = true;
+      st.elapsed = 0;
+      _titleStartPos.copy(camera.position);
+      _titleStartTarget.set(lookX, lookY, lookZ);
+
+      const p = playerWorldPosRef.current;
+      _titleEndTarget.set(p.x, p.y + CAMERA_CONFIG.targetHeight, p.z);
+      const yaw = CAMERA_CONFIG.defaultYaw;
+      const pitch = CAMERA_CONFIG.defaultPitch;
+      const dist = CAMERA_CONFIG.defaultDistance;
+      const horizDist = Math.cos(pitch) * dist;
+      _titleEndPos.set(
+        _titleEndTarget.x + Math.sin(yaw) * horizDist,
+        Math.max(
+          CAMERA_CONFIG.minCameraYClose,
+          _titleEndTarget.y + Math.sin(pitch) * dist,
+        ),
+        _titleEndTarget.z + Math.cos(yaw) * horizDist,
+      );
+    }
+
+    const duration = 1.65;
+    st.elapsed = Math.min(duration, st.elapsed + dt);
+    const e = easeInOutCubic(st.elapsed / duration);
+
+    camera.position.lerpVectors(_titleStartPos, _titleEndPos, e);
+    _titleCurTarget.lerpVectors(_titleStartTarget, _titleEndTarget, e);
+    camera.lookAt(_titleCurTarget);
+
+    if (st.elapsed >= duration && !st.transitionDone) {
+      st.transitionDone = true;
+      camera.position.copy(_titleEndPos);
+      camera.lookAt(_titleEndTarget);
+      onTransitionComplete();
+    }
+  });
+
+  return null;
+}
+
+/** Drives the top-center compass tape directly via DOM transform inside useFrame (zero React re-renders) */
+function CompassDriver({ active }: { active: boolean }) {
+  const { camera } = useThree();
+  useFrame(() => {
+    if (!active) return;
+    const tape = compassHudRefs.tape;
+    if (!tape) return;
+    camera.getWorldDirection(_compassDir);
+    // Geographic azimuth: North (-Z) = 0°, East (+X) = 90°, South (+Z) = 180°, West (-X) = 270°
+    const deg = ((Math.atan2(_compassDir.x, -_compassDir.z) * 180) / Math.PI + 360) % 360;
+    // Tape holds 3 full 360° cycles starting at -360°; center the middle cycle [0..360°]
+    const xPos = (deg + 360) * COMPASS_PX_PER_DEG - COMPASS_VIEWPORT_W * 0.5;
+    tape.style.transform = `translate3d(${-xPos.toFixed(1)}px, 0, 0)`;
+  });
+  return null;
+}
+
 interface GameSceneProps {
+  gamePhase: GamePhase;
+  onTitleTransitionComplete: () => void;
   viewMode: ViewMode;
   galleryCameraMode: GalleryCameraMode;
   targetTimeProgress: number;
@@ -278,6 +412,17 @@ function FireWatchDriver({
       ? `${fireWatch.roundIndex}-${fireWatch.chainJumpsInRound}-${activeTarget.id}`
       : '';
 
+    // Always evaluate bell rope proximity on the gallery (for BOTH free-roam bell tolling & Fire Watch Step 2)
+    const pLocal = playerLocalPosRef.current;
+    const canRingBell = !fireWatch.active || fireWatch.step === 'ring-bell';
+    const nearBell =
+      canRingBell &&
+      Math.hypot(pLocal.x - BELL_ROPE_LOCAL_POS[0], pLocal.z - BELL_ROPE_LOCAL_POS[2]) <= 2.4;
+    if (nearBell !== st.lastNearBell) {
+      st.lastNearBell = nearBell;
+      onNearBellRopeChange(nearBell);
+    }
+
     if (
       !fireWatch.active ||
       !roundLoc ||
@@ -288,10 +433,6 @@ function FireWatchDriver({
       if (st.lastAiming) {
         st.lastAiming = false;
         onAimingAtFireChange(false);
-      }
-      if (st.lastNearBell) {
-        st.lastNearBell = false;
-        onNearBellRopeChange(false);
       }
       if (st.lastNearHook) {
         st.lastNearHook = false;
@@ -380,16 +521,6 @@ function FireWatchDriver({
       onAimingAtFireChange(aiming);
     }
 
-    // Step 2: Bell rope proximity
-    const pLocal = playerLocalPosRef.current;
-    const nearBell =
-      fireWatch.step === 'ring-bell' &&
-      Math.hypot(pLocal.x - BELL_ROPE_LOCAL_POS[0], pLocal.z - BELL_ROPE_LOCAL_POS[2]) <= 2.4;
-    if (nearBell !== st.lastNearBell) {
-      st.lastNearBell = nearBell;
-      onNearBellRopeChange(nearBell);
-    }
-
     // Step 3: Target railing signal hook proximity
     const hookPos = SIGNAL_HOOK_POSITIONS[roundLoc.direction].pos;
     const nearHook =
@@ -426,6 +557,8 @@ function FireWatchDriver({
 }
 
 export function GameScene({
+  gamePhase,
+  onTitleTransitionComplete,
   viewMode,
   galleryCameraMode,
   targetTimeProgress,
@@ -470,12 +603,13 @@ export function GameScene({
   );
   const cameraCollidersRef = useRef<THREE.Object3D[]>([]);
 
-  const isInterior = viewMode === 'interior';
-  const isInTelescope = !isInterior && activeTelescope !== null;
+  const isPlaying = gamePhase === 'playing';
+  const isInterior = isPlaying && viewMode === 'interior';
+  const isInTelescope = isPlaying && !isInterior && activeTelescope !== null;
   const isExteriorFirstPerson =
-    !isInterior && !isInTelescope && galleryCameraMode === 'first';
+    isPlaying && !isInterior && !isInTelescope && galleryCameraMode === 'first';
   const isExteriorThirdPerson =
-    !isInterior && !isInTelescope && galleryCameraMode === 'third';
+    isPlaying && !isInterior && !isInTelescope && galleryCameraMode === 'third';
 
   return (
     <Canvas
@@ -492,6 +626,16 @@ export function GameScene({
     >
       {/* Global Time-of-Day Interpolation & Soundscape Driver (runs seamlessly across exterior & Birth Room) */}
       <TimeOfDayDriver targetProgress={targetTimeProgress} viewMode={viewMode} />
+
+      {/* Cinematic Live-3D Title Orbit & 1.65s Fly-In Camera */}
+      <TitleOrbitCamera
+        gamePhase={gamePhase}
+        playerWorldPosRef={playerWorldPosRef}
+        onTransitionComplete={onTitleTransitionComplete}
+      />
+
+      {/* Zero-Re-Render Top-Center Compass Driver (active only while playing outdoors) */}
+      <CompassDriver active={isPlaying && !isInterior} />
 
       {/* Fire Watch Frame Driver (spotting ray, 22-28s spread timer, direct DOM HUD refs, proximity) */}
       <FireWatchDriver
@@ -524,7 +668,7 @@ export function GameScene({
             playerLocalPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
             galleryCameraMode={galleryCameraMode}
-            active={!isInterior && !isInTelescope}
+            active={isPlaying && !isInterior && !isInTelescope}
             disableDoor={fireWatch.active}
             onNearDoorChange={onNearDoorChange}
             onNearbyTelescopeChange={onNearbyTelescopeChange}
@@ -532,7 +676,7 @@ export function GameScene({
           <Player
             playerPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
-            disabled={isInTelescope || isInterior}
+            disabled={!isPlaying || isInTelescope || isInterior}
             visible={!isExteriorFirstPerson}
             innerLimit={
               isExteriorFirstPerson
@@ -563,9 +707,9 @@ export function GameScene({
         onPointerLockChange={onPointerLockChange}
       />
       <TelescopeCamera
-        activeTelescope={isInterior ? null : activeTelescope}
+        activeTelescope={!isPlaying || isInterior ? null : activeTelescope}
         unlockedPois={unlockedPois}
-        disabled={isInterior}
+        disabled={!isPlaying || isInterior}
         onScanChange={onScanChange}
         onZoomChange={onZoomChange}
         onPoiUnlocked={onPoiUnlocked}

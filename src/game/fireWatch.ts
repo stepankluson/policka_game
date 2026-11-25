@@ -17,10 +17,16 @@ export type FireWatchStep =
 
 export interface FireTargetBuilding {
   id: string;
+  /** Exact ID of the rendered building/wing to hide when burned down */
+  sourceId: string;
+  /** Real OSM building ID (for merged inner-town townhouses) to exclude when burned down */
+  osmId?: number;
   nameCz: string;
   /** World-space position [x, y, z] directly on the roof/building */
   position: readonly [number, number, number];
-  /** Approximate charred ruin box footprint [width, height, depth] */
+  /** Exact world-space Y rotation matching the original building */
+  rotY: number;
+  /** Exact footprint dimensions [width, originalWallHeight, depth] for the charred ruin */
   ruinSize: readonly [number, number, number];
 }
 
@@ -35,7 +41,10 @@ export interface FireLocationSpec extends FireTargetBuilding {
 
 export interface BurnedBuildingSpec {
   id: string;
+  sourceId: string;
+  osmId?: number;
   position: readonly [number, number, number];
+  rotY: number;
   ruinSize: readonly [number, number, number];
 }
 
@@ -104,6 +113,48 @@ const westCottage2 = HORNI_PREDMESTI_HOUSES_1839[3];
 
 const eastMill0 = EASTERN_MILLS_1903[0];
 
+/** Transforms a local (lx, lz) offset inside a Y-rotated parent group into world (x, z) */
+function localToWorldXZ(
+  baseX: number,
+  baseZ: number,
+  rotY: number,
+  lx: number,
+  lz: number,
+): readonly [number, number] {
+  const cos = Math.cos(rotY);
+  const sin = Math.sin(rotY);
+  return [baseX + lx * cos + lz * sin, baseZ - lx * sin + lz * cos];
+}
+
+const breweryMainXZ = localToWorldXZ(
+  BREWERY_TRANSFORM.x,
+  BREWERY_TRANSFORM.z,
+  BREWERY_TRANSFORM.rotationY,
+  2.0,
+  4.5,
+);
+const breweryMaltXZ = localToWorldXZ(
+  BREWERY_TRANSFORM.x,
+  BREWERY_TRANSFORM.z,
+  BREWERY_TRANSFORM.rotationY,
+  -14.2,
+  3.8,
+);
+const breweryFrontXZ = localToWorldXZ(
+  BREWERY_TRANSFORM.x,
+  BREWERY_TRANSFORM.z,
+  BREWERY_TRANSFORM.rotationY,
+  -4.5,
+  -6.5,
+);
+const eastFactoryAnnexXZ = localToWorldXZ(
+  EASTERN_FACTORY_1903.x,
+  EASTERN_FACTORY_1903.z,
+  EASTERN_FACTORY_1903.rotationY,
+  -9.5,
+  9.2,
+);
+
 /**
  * Pool of 5 distinct, real Polička building locations (each paired with 2 real adjacent neighbors
  * for the chain-spread mechanic). Shuffled at the start of each shift.
@@ -111,6 +162,7 @@ const eastMill0 = EASTERN_MILLS_1903[0];
 export const CANDIDATE_FIRE_LOCATIONS: readonly FireLocationSpec[] = [
   {
     id: 'south-barns',
+    sourceId: southBarn0.id,
     nameCz: 'Stodola u Synského rybníka',
     districtCz: 'Jižní předměstí',
     position: [
@@ -118,34 +170,40 @@ export const CANDIDATE_FIRE_LOCATIONS: readonly FireLocationSpec[] = [
       TOWN_Y + southBarn0.wallHeight + southBarn0.roofHeight * 0.55,
       southBarn0.z,
     ],
-    ruinSize: [southBarn0.width + 0.6, southBarn0.wallHeight + southBarn0.roofHeight, southBarn0.depth + 0.6],
+    rotY: southBarn0.rotY,
+    ruinSize: [southBarn0.width, southBarn0.wallHeight, southBarn0.depth],
     direction: 'south',
     directionCz: 'Jih',
     adjacentChain: [
       {
         id: 'south-barns-adj-1',
+        sourceId: southBarn1.id,
         nameCz: 'Sousední stodola u rybníka',
         position: [
           southBarn1.x,
           TOWN_Y + southBarn1.wallHeight + southBarn1.roofHeight * 0.55,
           southBarn1.z,
         ],
-        ruinSize: [southBarn1.width + 0.6, southBarn1.wallHeight + southBarn1.roofHeight, southBarn1.depth + 0.6],
+        rotY: southBarn1.rotY,
+        ruinSize: [southBarn1.width, southBarn1.wallHeight, southBarn1.depth],
       },
       {
         id: 'south-barns-adj-2',
+        sourceId: southBarn2.id,
         nameCz: 'Krajní stodola na jižním břehu',
         position: [
           southBarn2.x,
           TOWN_Y + southBarn2.wallHeight + southBarn2.roofHeight * 0.55,
           southBarn2.z,
         ],
-        ruinSize: [southBarn2.width + 0.6, southBarn2.wallHeight + southBarn2.roofHeight, southBarn2.depth + 0.6],
+        rotY: southBarn2.rotY,
+        ruinSize: [southBarn2.width, southBarn2.wallHeight, southBarn2.depth],
       },
     ],
   },
   {
     id: 'west-st-michael',
+    sourceId: westCottage0.id,
     nameCz: 'Chalupa u kostela sv. Michaela',
     districtCz: 'Horní předměstí (Západ)',
     position: [
@@ -153,92 +211,101 @@ export const CANDIDATE_FIRE_LOCATIONS: readonly FireLocationSpec[] = [
       TOWN_Y + westCottage0.wallHeight + westCottage0.roofHeight * 0.55,
       westCottage0.z,
     ],
-    ruinSize: [westCottage0.width + 0.6, westCottage0.wallHeight + westCottage0.roofHeight, westCottage0.depth + 0.6],
+    rotY: westCottage0.rotY,
+    ruinSize: [westCottage0.width, westCottage0.wallHeight, westCottage0.depth],
     direction: 'west',
     directionCz: 'Západ',
     adjacentChain: [
       {
         id: 'west-st-michael-adj-1',
+        sourceId: westCottage1.id,
         nameCz: 'Sousední chalupa na Horním předměstí',
         position: [
           westCottage1.x,
           TOWN_Y + westCottage1.wallHeight + westCottage1.roofHeight * 0.55,
           westCottage1.z,
         ],
-        ruinSize: [westCottage1.width + 0.6, westCottage1.wallHeight + westCottage1.roofHeight, westCottage1.depth + 0.6],
+        rotY: westCottage1.rotY,
+        ruinSize: [westCottage1.width, westCottage1.wallHeight, westCottage1.depth],
       },
       {
         id: 'west-st-michael-adj-2',
+        sourceId: westCottage2.id,
         nameCz: 'Chalupa při západní cestě',
         position: [
           westCottage2.x,
           TOWN_Y + westCottage2.wallHeight + westCottage2.roofHeight * 0.55,
           westCottage2.z,
         ],
-        ruinSize: [westCottage2.width + 0.6, westCottage2.wallHeight + westCottage2.roofHeight, westCottage2.depth + 0.6],
+        rotY: westCottage2.rotY,
+        ruinSize: [westCottage2.width, westCottage2.wallHeight, westCottage2.depth],
       },
     ],
   },
   {
     id: 'brewery-yard',
+    sourceId: 'brewery-main',
     nameCz: 'Měšťanský pivovar',
     districtCz: 'Pivovarský dvůr (Západ)',
-    position: [
-      BREWERY_TRANSFORM.x + 6.5,
-      TOWN_Y + 9.4,
-      BREWERY_TRANSFORM.z - 5.5,
-    ],
-    ruinSize: [14, 9.5, 11],
+    position: [breweryMainXZ[0], TOWN_Y + 13.4, breweryMainXZ[1]],
+    rotY: BREWERY_TRANSFORM.rotationY,
+    ruinSize: [25.0, 12.4, 13.8],
     direction: 'west',
     directionCz: 'Západ',
     adjacentChain: [
       {
         id: 'brewery-yard-adj-1',
+        sourceId: 'brewery-malt',
         nameCz: 'Sladovna Měšťanského pivovaru',
-        position: [
-          BREWERY_TRANSFORM.x - 10.0,
-          TOWN_Y + 9.2,
-          BREWERY_TRANSFORM.z + 6.0,
-        ],
-        ruinSize: [14, 9.2, 12],
+        position: [breweryMaltXZ[0], TOWN_Y + 16.0, breweryMaltXZ[1]],
+        rotY: BREWERY_TRANSFORM.rotationY,
+        ruinSize: [10.2, 14.5, 10.8],
       },
       {
         id: 'brewery-yard-adj-2',
+        sourceId: 'brewery-front',
         nameCz: 'Hospodářské křídlo pivovaru',
-        position: [
-          BREWERY_TRANSFORM.x + 2.0,
-          TOWN_Y + 8.4,
-          BREWERY_TRANSFORM.z - 16.5,
-        ],
-        ruinSize: [12, 8.2, 10],
+        position: [breweryFrontXZ[0], TOWN_Y + 9.6, breweryFrontXZ[1]],
+        rotY: BREWERY_TRANSFORM.rotationY,
+        ruinSize: [11.2, 8.4, 14.4],
       },
     ],
   },
   {
     id: 'north-townhouse',
+    sourceId: 'osm-217038207',
+    osmId: 217038207,
     nameCz: 'Měšťanský dům u severní čtvrti',
     districtCz: 'Vnitřní město (Sever)',
-    position: [-3.4, TOWN_Y + 9.2, -171.2],
-    ruinSize: [15, 9.2, 13],
+    position: [-4.04, TOWN_Y + 9.2, -172.06],
+    rotY: -1.266,
+    ruinSize: [18.4, 8.2, 16.6],
     direction: 'north',
     directionCz: 'Sever',
     adjacentChain: [
       {
         id: 'north-townhouse-adj-1',
+        sourceId: 'osm-66869375',
+        osmId: 66869375,
         nameCz: 'Sousední měšťanský dům',
-        position: [-17.3, TOWN_Y + 6.4, -153.3],
-        ruinSize: [12, 6.6, 11],
+        position: [-17.96, TOWN_Y + 6.4, -150.95],
+        rotY: -1.4955,
+        ruinSize: [24.6, 5.8, 8.4],
       },
       {
         id: 'north-townhouse-adj-2',
+        sourceId: 'osm-66869255',
+        osmId: 66869255,
         nameCz: 'Rohový dům u severních hradeb',
-        position: [-25.4, TOWN_Y + 6.4, -182.9],
-        ruinSize: [12, 6.6, 11],
+        position: [-25.86, TOWN_Y + 6.4, -183.06],
+        rotY: 2.3657,
+        ruinSize: [13.2, 5.8, 11.6],
       },
     ],
   },
   {
     id: 'east-factory',
+    sourceId: 'east-factory-main',
     nameCz: 'Továrna za východními hradbami',
     districtCz: 'Východní předměstí',
     position: [
@@ -246,25 +313,30 @@ export const CANDIDATE_FIRE_LOCATIONS: readonly FireLocationSpec[] = [
       TOWN_Y + 10.2,
       EASTERN_FACTORY_1903.z,
     ],
-    ruinSize: [18, 10.0, 14],
+    rotY: EASTERN_FACTORY_1903.rotationY,
+    ruinSize: [27.8, 8.2, 11.8],
     direction: 'east',
     directionCz: 'Východ',
     adjacentChain: [
       {
         id: 'east-factory-adj-1',
+        sourceId: 'east-factory-annex',
         nameCz: 'Východní sklad továrny',
-        position: [EASTERN_FACTORY_1903.x + 12.5, TOWN_Y + 8.6, EASTERN_FACTORY_1903.z - 4.0],
-        ruinSize: [14, 8.5, 11],
+        position: [eastFactoryAnnexXZ[0], TOWN_Y + 6.8, eastFactoryAnnexXZ[1]],
+        rotY: EASTERN_FACTORY_1903.rotationY,
+        ruinSize: [11.2, 5.6, 7.4],
       },
       {
         id: 'east-factory-adj-2',
+        sourceId: eastMill0.id,
         nameCz: 'Východní mlýn u potoka',
         position: [
           eastMill0.x,
           TOWN_Y + eastMill0.wallHeight + eastMill0.roofHeight * 0.55,
           eastMill0.z,
         ],
-        ruinSize: [eastMill0.width + 0.6, eastMill0.wallHeight + eastMill0.roofHeight, eastMill0.depth + 0.6],
+        rotY: eastMill0.rotY,
+        ruinSize: [eastMill0.width, eastMill0.wallHeight, eastMill0.depth],
       },
     ],
   },

@@ -108,12 +108,42 @@ export interface ChimneySmokeSource {
 }
 
 export interface HouseWindowSpec {
+  /** Parent building ID (e.g. 'osm-217038207', 'hp-sw-n-1', 'barn-1839-3') */
+  buildingId: string;
+  /** Wall surface point on facade (outward offset is applied cleanly by renderer) */
   x: number;
   y: number;
   z: number;
+  /** Outward unit normal on XZ plane */
+  nx: number;
+  nz: number;
   rotY: number;
-  /** Deterministic dusk turn-on threshold in [0.50, 0.85] */
+  width: number;
+  height: number;
+  /** True for ~70% of windows that illuminate at dusk/night; false stays dark (sleeping households) */
+  litAtNight: boolean;
+  /** Deterministic dusk turn-on threshold on nightFactor in [0.16, 0.74] */
   threshold: number;
+  /** Historic frame trim palette index: 0 = pale cream, 1 = warm ochre-white, 2 = weathered dark brown, 3 = muted heritage green-grey */
+  frameVariant: number;
+}
+
+export interface HouseDoorSpec {
+  /** Parent building ID */
+  buildingId: string;
+  /** Wall surface point at center of door/gate */
+  x: number;
+  y: number;
+  z: number;
+  /** Outward unit normal on XZ plane */
+  nx: number;
+  nz: number;
+  rotY: number;
+  width: number;
+  height: number;
+  kind: 'door' | 'gate';
+  /** Palette index: 0 = dark walnut, 1 = warm oak, 2 = heritage forest green, 3 = weathered barn timber */
+  colorIdx: number;
 }
 
 const WALL_PALETTE = [
@@ -171,6 +201,22 @@ function hashInt(n: number): number {
   x = Math.imul(x, 0x45d9f3b);
   x = x ^ (x >>> 16);
   return Math.abs(x);
+}
+
+/** Deterministic string hash + mulberry32 PRNG keyed by buildingId for consistent per-house character */
+function makeBuildingRng(buildingId: string): () => number {
+  let seed = 2166136261;
+  for (let i = 0; i < buildingId.length; i++) {
+    seed ^= buildingId.charCodeAt(i);
+    seed = Math.imul(seed, 16777619);
+  }
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 function pointToSegmentDistSq(
@@ -1041,12 +1087,14 @@ export function buildMergedBuildingsGeometry(
   osmWalls: readonly OsmPolyline[] = [],
   wallRing: readonly [number, number][] = [],
   bastions: readonly Bastion3D[] = [],
+  renderedRoads: readonly RenderedRoadPolyline[] = [],
 ): {
   wallGeometry: THREE.BufferGeometry;
   roofGeometry: THREE.BufferGeometry;
   chimneyGeometry: THREE.BufferGeometry;
   chimneyTops: ChimneyTop[];
   houseWindows: HouseWindowSpec[];
+  houseDoors: HouseDoorSpec[];
 } {
   const wallPositions: number[] = [];
   const wallNormals: number[] = [];
@@ -1061,6 +1109,22 @@ export function buildMergedBuildingsGeometry(
   const chimneyColors: number[] = [];
   const chimneyTops: ChimneyTop[] = [];
   const houseWindows: HouseWindowSpec[] = [];
+  const houseDoors: HouseDoorSpec[] = [];
+
+  interface RenderedBuildingMeta {
+    buildingId: string;
+    pts: [number, number][];
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+    effectiveHeight: number;
+    eaveY: number;
+    safeArea: number;
+    dNorm: number;
+    hash: number;
+  }
+  const renderedBuildingMetas: RenderedBuildingMeta[] = [];
 
   const vA = new THREE.Vector3();
   const vB = new THREE.Vector3();
@@ -1511,41 +1575,417 @@ export function buildMergedBuildingsGeometry(
       }
     }
 
-    // === 4. STAGGERED NIGHTTIME GLOWING WINDOWS (~65% OF HISTORIC HOUSES, DETERMINISTIC THRESHOLD) ===
-    if (safeArea >= 38 && (h % 10) < 7) {
-      const threshold = 0.5 + (((h >>> 8) % 36) / 100); // deterministic in [0.50, 0.85]
-      const floorRows = effectiveHeight >= 6.8 ? [2.2, 5.2] : [2.3];
+    // Record rendered building footprint for party-wall-aware doors, gates & windows pass below
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const [px, pz] of safePts) {
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (pz < minZ) minZ = pz;
+      if (pz > maxZ) maxZ = pz;
+    }
+    renderedBuildingMetas.push({
+      buildingId: `osm-${b.id}`,
+      pts: safePts,
+      minX,
+      maxX,
+      minZ,
+      maxZ,
+      effectiveHeight,
+      eaveY,
+      safeArea,
+      dNorm,
+      hash: h,
+    });
+  }
 
-      // Determine winding so outward normal always points away from building centroid
-      let emittedForHouse = 0;
-      for (let ei = 0; ei < safePts.length && emittedForHouse < 4; ei++) {
-        const [ax, az] = safePts[ei];
-        const [bx, bz] = safePts[(ei + 1) % safePts.length];
-        const edx = bx - ax;
-        const edz = bz - az;
-        const edgeLen = Math.hypot(edx, edz);
-        if (edgeLen < 4.5) continue;
+  // === 4. ~1900 DOORS, CARRIAGE GATES (VRATA) & DAY/NIGHT WINDOWS FOR ALL OSM HOUSES ===
+  const roadSegs: Array<{
+    ax: number;
+    az: number;
+    bx: number;
+    bz: number;
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  }> = [];
+  for (const road of renderedRoads) {
+    const rPts = road.points;
+    for (let i = 0; i < rPts.length - 1; i++) {
+      const a = rPts[i];
+      const b = rPts[i + 1];
+      roadSegs.push({
+        ax: a[0],
+        az: a[1],
+        bx: b[0],
+        bz: b[1],
+        minX: Math.min(a[0], b[0]),
+        maxX: Math.max(a[0], b[0]),
+        minZ: Math.min(a[1], b[1]),
+        maxZ: Math.max(a[1], b[1]),
+      });
+    }
+  }
 
-        const mx = (ax + bx) * 0.5;
-        const mz = (az + bz) * 0.5;
-        let nx = -edz / edgeLen;
-        let nz = edx / edgeLen;
-        if (nx * (mx - cx) + nz * (mz - cz) < 0) {
-          nx = -nx;
-          nz = -nz;
+  for (let bi = 0; bi < renderedBuildingMetas.length; bi++) {
+    const meta = renderedBuildingMetas[bi];
+    const { buildingId, pts, effectiveHeight, eaveY, safeArea, dNorm, hash } = meta;
+    if (safeArea < 22 || effectiveHeight < 2.6) continue;
+
+    // 4A. Collect all exposed exterior wall edges (skipping shared/party walls within ~0.42m of neighbors)
+    interface ExposedEdge {
+      ax: number;
+      az: number;
+      edx: number;
+      edz: number;
+      len: number;
+      mx: number;
+      mz: number;
+      nx: number;
+      nz: number;
+      rotY: number;
+    }
+    const exposedEdges: ExposedEdge[] = [];
+
+    for (let ei = 0; ei < pts.length; ei++) {
+      const [ax, az] = pts[ei];
+      const [bx, bz] = pts[(ei + 1) % pts.length];
+      const edx = bx - ax;
+      const edz = bz - az;
+      const len = Math.hypot(edx, edz);
+      if (len < 2.6) continue;
+
+      const mx = (ax + bx) * 0.5;
+      const mz = (az + bz) * 0.5;
+      let nx = -edz / len;
+      let nz = edx / len;
+      // Guarantee outward normal even for concave L-shaped / U-shaped townhouses
+      if (isPointInPolygon(mx + nx * 0.12, mz + nz * 0.12, pts)) {
+        nx = -nx;
+        nz = -nz;
+      }
+
+      // Check if wall is a shared party wall touching an adjacent rowhouse within ~0.42m
+      const probeX = mx + nx * 0.36;
+      const probeZ = mz + nz * 0.36;
+      let isPartyWall = false;
+      for (let oi = 0; oi < renderedBuildingMetas.length; oi++) {
+        if (oi === bi) continue;
+        const other = renderedBuildingMetas[oi];
+        if (
+          probeX < other.minX - 0.55 ||
+          probeX > other.maxX + 0.55 ||
+          probeZ < other.minZ - 0.55 ||
+          probeZ > other.maxZ + 0.55
+        ) {
+          continue;
         }
-        const rotY = Math.atan2(nx, nz);
-        const winCount = edgeLen > 10 ? 2 : 1;
-
-        for (let wi = 0; wi < winCount && emittedForHouse < 4; wi++) {
-          const frac = winCount === 2 ? (wi === 0 ? 0.34 : 0.66) : 0.5;
-          const wx = ax + edx * frac + nx * 0.08;
-          const wz = az + edz * frac + nz * 0.08;
-          const wy = groundY + floorRows[(emittedForHouse + (h >>> 3)) % floorRows.length];
-          if (wy + 0.7 < eaveY) {
-            houseWindows.push({ x: wx, y: wy, z: wz, rotY, threshold });
-            emittedForHouse++;
+        if (isPointInPolygon(probeX, probeZ, other.pts)) {
+          isPartyWall = true;
+          break;
+        }
+        const oPts = other.pts;
+        for (let k = 0; k < oPts.length; k++) {
+          const oa = oPts[k];
+          const ob = oPts[(k + 1) % oPts.length];
+          if (pointToSegmentDistSq(probeX, probeZ, oa[0], oa[1], ob[0], ob[1]) < 0.42 * 0.42) {
+            isPartyWall = true;
+            break;
           }
+        }
+        if (isPartyWall) break;
+      }
+      if (isPartyWall) continue;
+
+      exposedEdges.push({
+        ax,
+        az,
+        edx,
+        edz,
+        len,
+        mx,
+        mz,
+        nx,
+        nz,
+        rotY: Math.atan2(nx, nz),
+      });
+    }
+
+    if (exposedEdges.length === 0) continue;
+
+    // 4B. Identify the front / street-facing facade (closest road-facing edge, or longest edge fallback)
+    let frontIdx = -1;
+    let bestFrontScore = Infinity;
+    for (let i = 0; i < exposedEdges.length; i++) {
+      const e = exposedEdges[i];
+      if (e.len < 2.8) continue;
+      let minRoadDist = 40;
+      let facesRoad = false;
+      if (roadSegs.length > 0) {
+        const searchR = 32;
+        for (let r = 0; r < roadSegs.length; r++) {
+          const rs = roadSegs[r];
+          if (
+            e.mx < rs.minX - searchR ||
+            e.mx > rs.maxX + searchR ||
+            e.mz < rs.minZ - searchR ||
+            e.mz > rs.maxZ + searchR
+          ) {
+            continue;
+          }
+          const dSq = pointToSegmentDistSq(e.mx, e.mz, rs.ax, rs.az, rs.bx, rs.bz);
+          if (dSq < minRoadDist * minRoadDist) {
+            const d = Math.sqrt(dSq);
+            // Closest point on road segment for facing check
+            const sdx = rs.bx - rs.ax;
+            const sdz = rs.bz - rs.az;
+            const sLenSq = sdx * sdx + sdz * sdz;
+            const tProj =
+              sLenSq > 1e-6
+                ? Math.max(0, Math.min(1, ((e.mx - rs.ax) * sdx + (e.mz - rs.az) * sdz) / sLenSq))
+                : 0;
+            const rpx = rs.ax + sdx * tProj;
+            const rpz = rs.az + sdz * tProj;
+            const vx = rpx - e.mx;
+            const vz = rpz - e.mz;
+            const vLen = Math.hypot(vx, vz) || 1;
+            const dot = (vx * e.nx + vz * e.nz) / vLen;
+            minRoadDist = d;
+            facesRoad = dot > 0.15;
+          }
+        }
+      }
+      // Prefer road-facing edges; fall back to longer walls when far from roads
+      const score = minRoadDist < 32 ? minRoadDist - (facesRoad ? 5.0 : 0) : 100 - e.len;
+      if (score < bestFrontScore) {
+        bestFrontScore = score;
+        frontIdx = i;
+      }
+    }
+
+    // 4C. Place ground-level door or carriage gate (vrata) on the front facade with per-building offset
+    const rng = makeBuildingRng(buildingId);
+    let doorAlongDist = -1;
+    let doorWidth = 0;
+    if (frontIdx >= 0 && effectiveHeight >= 2.8) {
+      const fe = exposedEdges[frontIdx];
+      const isInnerTown = dNorm < 1.02;
+      const isLargeGate =
+        fe.len >= 5.2 &&
+        ((isInnerTown && safeArea >= 125 && rng() < 0.34) ||
+          (!isInnerTown && safeArea >= 105 && rng() < 0.32));
+
+      const dw = isLargeGate
+        ? (isInnerTown ? 2.1 + rng() * 0.35 : 2.0 + rng() * 0.3)
+        : (isInnerTown ? 1.05 + rng() * 0.16 : 0.98 + rng() * 0.14);
+      const dh = isLargeGate
+        ? (isInnerTown ? 2.3 + rng() * 0.25 : 2.15 + rng() * 0.22)
+        : (isInnerTown ? 2.02 + rng() * 0.18 : 1.9 + rng() * 0.16);
+      const minInset = 0.85 + dw * 0.5;
+      if (fe.len >= minInset * 2 && groundY + dh + 0.25 < eaveY) {
+        // Varied horizontal alignment: ~38% centered, ~31% left-aligned, ~31% right-aligned
+        const alignRoll = rng();
+        let targetAlong: number;
+        if (alignRoll < 0.38 || fe.len < 5.6) {
+          targetAlong = fe.len * (0.46 + rng() * 0.08);
+        } else if (alignRoll < 0.69) {
+          targetAlong = minInset + (fe.len - minInset * 2) * (0.06 + rng() * 0.24);
+        } else {
+          targetAlong = fe.len - minInset - (fe.len - minInset * 2) * (0.06 + rng() * 0.24);
+        }
+        const along = Math.max(minInset, Math.min(fe.len - minInset, targetAlong));
+        const frac = along / fe.len;
+        const dx = fe.ax + fe.edx * frac;
+        const dz = fe.az + fe.edz * frac;
+
+        // Inner town: dark walnut / warm oak / forest green / heritage green-grey; outer: weathered wood
+        const colorIdx = isInnerTown
+          ? Math.floor(rng() * 5)
+          : isLargeGate
+            ? 3
+            : rng() < 0.55
+              ? 1
+              : 3;
+
+        houseDoors.push({
+          buildingId,
+          x: dx,
+          y: groundY + dh * 0.5,
+          z: dz,
+          nx: fe.nx,
+          nz: fe.nz,
+          rotY: fe.rotY,
+          width: dw,
+          height: dh,
+          kind: isLargeGate ? 'gate' : 'door',
+          colorIdx,
+        });
+        doorAlongDist = along;
+        doorWidth = dw;
+      }
+    }
+
+    // 4D. Per-building window proportions, rhythm, vertical alignment & floor layout
+    const isInnerTown = dNorm < 1.02;
+    const styleRoll = rng();
+    let winW: number;
+    let winH: number;
+    if (isInnerTown && styleRoll < 0.38) {
+      // Taller, narrower historic townhouse window (~0.85m × 1.45m)
+      winW = 0.8 + rng() * 0.1;
+      winH = 1.38 + rng() * 0.14;
+    } else if (styleRoll < 0.78) {
+      // Classic medium window (~1.0m × 1.25m)
+      winW = 0.94 + rng() * 0.12;
+      winH = 1.18 + rng() * 0.14;
+    } else {
+      // Smaller cottage / modest house window (~0.8m × 1.05m)
+      winW = 0.76 + rng() * 0.1;
+      winH = 0.98 + rng() * 0.14;
+    }
+
+    // Per-building horizontal rhythm (spacing 2.2..3.8m, corner inset 0.85..1.4m)
+    const baseSpacing = 2.2 + rng() * 1.6;
+    const baseCornerMargin = 0.85 + rng() * 0.55;
+
+    // Varied vertical sill offsets (±0.25m ground, ±0.35m upper) so neighboring blocks never align rigidly
+    const groundOffset = (rng() - 0.5) * 0.5;
+    const upperOffset = (rng() - 0.5) * 0.7;
+
+    interface FloorRowSpec {
+      y: number;
+      isAtticMezzanine: boolean;
+      w: number;
+      h: number;
+    }
+    const floorRows: FloorRowSpec[] = [];
+    const y0 = groundY + 1.58 + groundOffset;
+    if (y0 - winH * 0.5 > groundY + 0.3 && y0 + winH * 0.5 + 0.32 < eaveY) {
+      floorRows.push({ y: y0, isAtticMezzanine: false, w: winW, h: winH });
+    }
+
+    // 1-story vs 2-story mix: ~28% of medium-height townhouses use 1 full floor + optional 1–2 small attic/mezzanine windows
+    const isMediumHeight = effectiveHeight >= 5.9 && effectiveHeight < 8.4;
+    const useSingleStoryWithAttic = isMediumHeight && rng() < 0.28;
+
+    if (effectiveHeight >= 5.9) {
+      if (useSingleStoryWithAttic) {
+        const atticH = 0.72 + rng() * 0.14;
+        const atticW = 0.68 + rng() * 0.14;
+        const yAttic = Math.min(eaveY - atticH * 0.5 - 0.45, groundY + 4.35 + upperOffset * 0.5);
+        if (yAttic - atticH * 0.5 > y0 + winH * 0.5 + 0.55 && rng() < 0.78) {
+          floorRows.push({ y: yAttic, isAtticMezzanine: true, w: atticW, h: atticH });
+        }
+      } else {
+        const y1 = Math.min(eaveY - winH * 0.5 - 0.42, groundY + 4.48 + upperOffset);
+        if (y1 - winH * 0.5 > y0 + winH * 0.5 + 0.55) {
+          floorRows.push({ y: y1, isAtticMezzanine: false, w: winW, h: winH });
+        }
+      }
+    }
+    if (effectiveHeight >= 9.3 && !useSingleStoryWithAttic) {
+      const y2 = Math.min(eaveY - winH * 0.5 - 0.42, groundY + 7.25 + upperOffset * 0.7);
+      const prevY = floorRows[floorRows.length - 1]?.y ?? y0;
+      if (y2 - winH * 0.5 > prevY + winH * 0.5 + 0.55) {
+        floorRows.push({ y: y2, isAtticMezzanine: false, w: winW, h: winH });
+      }
+    }
+    if (floorRows.length === 0) continue;
+
+    // 4-color historic Czech trim palette (pale cream, warm ochre-white, weathered dark brown, muted heritage green-grey)
+    const trimRoll = rng();
+    const frameVariant =
+      isInnerTown
+        ? trimRoll < 0.36
+          ? 0
+          : trimRoll < 0.64
+            ? 1
+            : trimRoll < 0.84
+              ? 2
+              : 3
+        : trimRoll < 0.42
+          ? 0
+          : trimRoll < 0.62
+            ? 1
+            : 2;
+
+    const houseBaseThreshold = 0.16 + rng() * 0.45; // [0.16, 0.61]
+    const houseMostlyLit = rng() < 0.8; // ~80% of houses have active rooms
+    const sideSkipProb = 0.2 + rng() * 0.15; // 20–35% skip rate on non-front facades
+
+    for (let ei = 0; ei < exposedEdges.length; ei++) {
+      const e = exposedEdges[ei];
+      const isFront = ei === frontIdx;
+
+      // Occasionally leave narrow non-front side walls completely blank for organic realism
+      if (!isFront && e.len < 6.5 && rng() < 0.34) continue;
+
+      const edgeSpacing = isFront ? baseSpacing : baseSpacing * (1.2 + rng() * 0.3);
+
+      for (let fi = 0; fi < floorRows.length; fi++) {
+        const row = floorRows[fi];
+        const cornerInset = baseCornerMargin + row.w * 0.5;
+        const usable = e.len - cornerInset * 2;
+        if (usable < -0.05) continue;
+
+        let count: number;
+        if (row.isAtticMezzanine) {
+          // 1–2 smaller centered attic/mezzanine windows on front/rear walls only
+          if (!isFront && rng() < 0.5) continue;
+          count = e.len > 8.5 && rng() < 0.55 ? 2 : 1;
+        } else {
+          count = usable <= 0.1 ? 1 : Math.max(1, Math.floor(usable / edgeSpacing) + 1);
+        }
+
+        const step = count > 1 ? (row.isAtticMezzanine ? Math.min(3.2, usable * 0.5) : usable / (count - 1)) : 0;
+        const startAlong = row.isAtticMezzanine
+          ? e.len * 0.5 - step * (count - 1) * 0.5
+          : count === 1
+            ? e.len * 0.5
+            : cornerInset;
+
+        for (let wi = 0; wi < count; wi++) {
+          const along = startAlong + wi * step;
+
+          // Skip ground-floor slot occupied by the front door or carriage gate
+          if (
+            isFront &&
+            fi === 0 &&
+            doorAlongDist >= 0 &&
+            Math.abs(along - doorAlongDist) < doorWidth * 0.5 + row.w * 0.5 + 0.52
+          ) {
+            continue;
+          }
+
+          // Sparser side & rear walls: deterministically skip 20–35% of non-front slots
+          if (!isFront && rng() < sideSkipProb) continue;
+
+          const frac = along / e.len;
+          const wx = e.ax + e.edx * frac;
+          const wz = e.az + e.edz * frac;
+
+          // ~70% of windows light up at staggered thresholds; ~30% stay dark (sleeping households)
+          const wh = hashInt(hash ^ (ei * 131 + fi * 37 + wi * 17));
+          const litAtNight = houseMostlyLit ? (wh % 100) < 84 : (wh % 100) < 18;
+          const threshold = Math.min(0.74, houseBaseThreshold + ((wh >>> 4) % 16) / 100);
+
+          houseWindows.push({
+            buildingId,
+            x: wx,
+            y: row.y,
+            z: wz,
+            nx: e.nx,
+            nz: e.nz,
+            rotY: e.rotY,
+            width: row.w,
+            height: row.h,
+            litAtNight,
+            threshold,
+            frameVariant,
+          });
         }
       }
     }
@@ -1593,7 +2033,197 @@ export function buildMergedBuildingsGeometry(
     new THREE.Float32BufferAttribute(chimneyColors, 3),
   );
 
-  return { wallGeometry, roofGeometry, chimneyGeometry, chimneyTops, houseWindows };
+  return { wallGeometry, roofGeometry, chimneyGeometry, chimneyTops, houseWindows, houseDoors };
+}
+
+export interface RectSuburbanBuildingInput {
+  id: string;
+  x: number;
+  z: number;
+  rotY: number;
+  width: number;
+  depth: number;
+  wallHeight: number;
+  isBarn?: boolean;
+  nightThreshold?: number;
+}
+
+/**
+ * Generates matching ~1900 doors, barn gates (vrata) & day/night windows for all custom
+ * rectangular suburban cottages, houses, and south-bank barns (1839 & 1903 layers).
+ */
+export function buildSuburbanFacadeDetails(
+  buildings: readonly RectSuburbanBuildingInput[],
+  groundY: number,
+): { windows: HouseWindowSpec[]; doors: HouseDoorSpec[] } {
+  const windows: HouseWindowSpec[] = [];
+  const doors: HouseDoorSpec[] = [];
+
+  for (let idx = 0; idx < buildings.length; idx++) {
+    const b = buildings[idx];
+    const cos = Math.cos(b.rotY);
+    const sin = Math.sin(b.rotY);
+    const h = hashInt(idx * 977 + Math.round(b.x * 13) + Math.round(b.z * 31));
+    const baseY = groundY + 0.2;
+    const eaveY = baseY + b.wallHeight;
+    const hw = b.width * 0.5;
+    const hd = b.depth * 0.5;
+
+    // Local-to-world helper for rotated rectangular building
+    const toWorld = (lx: number, lz: number): [number, number] => [
+      b.x + lx * cos + lz * sin,
+      b.z - lx * sin + lz * cos,
+    ];
+    const toWorldNormal = (lnx: number, lnz: number): [number, number] => [
+      lnx * cos + lnz * sin,
+      -lnx * sin + lnz * cos,
+    ];
+
+    // 1. Ground-level front door or wide double barn gate on street-facing local -Z wall
+    const rng = makeBuildingRng(b.id);
+    const isBarn = Boolean(b.isBarn);
+    const doorW = isBarn ? Math.min(2.25, b.width * 0.26) : 0.96 + rng() * 0.14;
+    const doorH = isBarn
+      ? Math.min(2.25, b.wallHeight - 0.55)
+      : Math.min(1.88 + rng() * 0.16, b.wallHeight - 0.55);
+    let doorLocalX = 0;
+    let hasDoor = false;
+    const doorMinInset = 0.85 + doorW * 0.5;
+    if (doorH >= 1.5 && b.width >= doorMinInset * 2) {
+      if (!isBarn && b.width >= 6.4) {
+        const alignRoll = rng();
+        const maxShift = Math.max(0, hw - doorMinInset);
+        if (alignRoll < 0.42) {
+          doorLocalX = (rng() - 0.5) * Math.min(0.8, maxShift * 0.5);
+        } else if (alignRoll < 0.71) {
+          doorLocalX = -maxShift * (0.45 + rng() * 0.4);
+        } else {
+          doorLocalX = maxShift * (0.45 + rng() * 0.4);
+        }
+      }
+      const [dx, dz] = toWorld(doorLocalX, -hd);
+      const [nx, nz] = toWorldNormal(0, -1);
+      doors.push({
+        buildingId: b.id,
+        x: dx,
+        y: baseY + doorH * 0.5,
+        z: dz,
+        nx,
+        nz,
+        rotY: Math.atan2(nx, nz),
+        width: doorW,
+        height: doorH,
+        kind: isBarn ? 'gate' : 'door',
+        colorIdx: isBarn ? 3 : Math.floor(rng() * 4),
+      });
+      hasDoor = true;
+    }
+
+    // 2. Per-building window proportions, rhythm, vertical offset & sparser side/rear walls
+    const winW = isBarn ? 0.78 + rng() * 0.1 : 0.78 + rng() * 0.22;
+    const winH = isBarn ? 0.9 + rng() * 0.12 : 1.02 + rng() * 0.28;
+    const groundOff = (rng() - 0.5) * 0.4;
+    const upperOff = (rng() - 0.5) * 0.5;
+    const floorYs: number[] = [];
+    const y0 = baseY + Math.min(b.wallHeight - winH * 0.5 - 0.38, 1.55 + groundOff);
+    if (y0 - winH * 0.5 > baseY + 0.22 && y0 + winH * 0.5 + 0.28 < eaveY) {
+      floorYs.push(y0);
+    }
+    if (!isBarn && b.wallHeight >= 5.6 && rng() < 0.72) {
+      const y1 = Math.min(eaveY - winH * 0.5 - 0.35, baseY + 4.2 + upperOff);
+      if (y1 - winH * 0.5 > y0 + winH * 0.5 + 0.5) {
+        floorYs.push(y1);
+      }
+    }
+    if (floorYs.length === 0) continue;
+
+    // Normalize existing nightThreshold [0.50, 0.85] -> nightFactor threshold [0.18, 0.72]
+    const rawTh = b.nightThreshold ?? 0.65;
+    const houseLit = !isBarn && rawTh <= 1.0;
+    const nfBase = 0.18 + Math.max(0, Math.min(1, (rawTh - 0.5) / 0.35)) * 0.52;
+    const trimRoll = rng();
+    const frameVariant = isBarn
+      ? 2
+      : trimRoll < 0.4
+        ? 0
+        : trimRoll < 0.65
+          ? 1
+          : trimRoll < 0.88
+            ? 2
+            : 3;
+
+    const baseSpacing = isBarn ? 2.9 + rng() * 0.9 : 2.25 + rng() * 1.45;
+    const baseCornerMargin = 0.85 + rng() * 0.5;
+    const sideSkipProb = 0.22 + rng() * 0.13;
+
+    const sides: ReadonlyArray<{
+      len: number;
+      isFront: boolean;
+      lnx: number;
+      lnz: number;
+      pointAt: (along: number) => [number, number];
+    }> = [
+      { len: b.width, isFront: true, lnx: 0, lnz: -1, pointAt: (u) => [-hw + u, -hd] },
+      { len: b.width, isFront: false, lnx: 0, lnz: 1, pointAt: (u) => [-hw + u, hd] },
+      { len: b.depth, isFront: false, lnx: -1, lnz: 0, pointAt: (u) => [-hw, -hd + u] },
+      { len: b.depth, isFront: false, lnx: 1, lnz: 0, pointAt: (u) => [hw, -hd + u] },
+    ];
+
+    for (let si = 0; si < sides.length; si++) {
+      const side = sides[si];
+      if (isBarn && si >= 2) continue;
+      if (!side.isFront && side.len < 6.5 && rng() < 0.35) continue;
+
+      const inset = baseCornerMargin + winW * 0.5;
+      const usable = side.len - inset * 2;
+      if (usable < -0.05) continue;
+
+      const spacing = side.isFront ? baseSpacing : baseSpacing * (1.2 + rng() * 0.3);
+      const count = usable <= 0.1 ? 1 : Math.max(1, Math.floor(usable / spacing) + 1);
+      const step = count > 1 ? usable / (count - 1) : 0;
+      const [nx, nz] = toWorldNormal(side.lnx, side.lnz);
+      const rotY = Math.atan2(nx, nz);
+
+      for (let fi = 0; fi < floorYs.length; fi++) {
+        const wy = floorYs[fi];
+        for (let wi = 0; wi < count; wi++) {
+          const along = count === 1 ? side.len * 0.5 : inset + wi * step;
+          if (
+            side.isFront &&
+            fi === 0 &&
+            hasDoor &&
+            Math.abs(along - (hw + doorLocalX)) < doorW * 0.5 + winW * 0.5 + 0.5
+          ) {
+            continue;
+          }
+          if (!side.isFront && rng() < sideSkipProb) continue;
+
+          const [lx, lz] = side.pointAt(along);
+          const [wx, wz] = toWorld(lx, lz);
+          const wh = hashInt(h ^ (si * 83 + fi * 29 + wi * 13));
+          const litAtNight = houseLit && (wh % 100) < 76;
+          const threshold = Math.min(0.74, nfBase + ((wh >>> 3) % 12) / 100);
+
+          windows.push({
+            buildingId: b.id,
+            x: wx,
+            y: wy,
+            z: wz,
+            nx,
+            nz,
+            rotY,
+            width: winW,
+            height: winH,
+            litAtNight,
+            threshold,
+            frameVariant,
+          });
+        }
+      }
+    }
+  }
+
+  return { windows, doors };
 }
 
 export interface TreeValidatorInput {
@@ -2260,8 +2890,16 @@ export function buildMergedStreetsGeometry(
     }
   }
 
-  const renderedRoadPolylines: RenderedRoadPolyline[] = [];
-  const clippedDrivablePolylines: [number, number][][] = [];
+  interface RoadPolylineDraft {
+    points: [number, number][];
+    halfW: number;
+    isDrivable: boolean;
+    /** Endpoints that are intentional landmark entrances (e.g. Brewery gate, Station forecourt) */
+    lockStart?: boolean;
+    lockEnd?: boolean;
+  }
+
+  const roadDrafts: RoadPolylineDraft[] = [];
 
   for (let i = 0; i < infos.length; i++) {
     if (!keepWay[i]) continue;
@@ -2274,10 +2912,12 @@ export function buildMergedStreetsGeometry(
       WORLD_CLIP_RADIUS,
     );
     for (const piece of clippedPieces) {
-      pushPolylineRibbon(positions, piece, halfW);
-      renderedRoadPolylines.push({ points: piece, halfW });
-      if (infos[i].isDrivable) {
-        clippedDrivablePolylines.push(piece);
+      if (piece.length >= 2) {
+        roadDrafts.push({
+          points: piece,
+          halfW,
+          isDrivable: infos[i].isDrivable,
+        });
       }
     }
   }
@@ -2428,8 +3068,8 @@ export function buildMergedStreetsGeometry(
       WORLD_CLIP_RADIUS,
     );
     for (const piece of clippedPieces) {
-      pushPolylineRibbon(positions, piece, ext.halfW);
-      renderedRoadPolylines.push({ points: piece, halfW: ext.halfW });
+      if (piece.length < 2) continue;
+      roadDrafts.push({ points: piece, halfW: ext.halfW, isDrivable: true });
       // Generous tree clearance (+1.2m) so zero trees touch the curved suburban road edges
       connectorRoads.push({ points: piece, halfW: ext.halfW + 1.2 });
     }
@@ -2492,8 +3132,7 @@ export function buildMergedStreetsGeometry(
         [connectors.breweryGate[0], connectors.breweryGate[1]],
         [connectors.breweryInner[0], connectors.breweryInner[1]],
       ];
-      pushPolylineRibbon(positions, breweryPath, 2.4);
-      renderedRoadPolylines.push({ points: breweryPath, halfW: 2.4 });
+      roadDrafts.push({ points: breweryPath, halfW: 2.4, isDrivable: true, lockEnd: true });
       connectorRoads.push({ points: breweryPath, halfW: 2.8 });
     }
 
@@ -2510,8 +3149,7 @@ export function buildMergedStreetsGeometry(
         [midX, midZ],
         [sfX, sfZ],
       ];
-      pushPolylineRibbon(positions, stationPath, 2.4);
-      renderedRoadPolylines.push({ points: stationPath, halfW: 2.4 });
+      roadDrafts.push({ points: stationPath, halfW: 2.4, isDrivable: true, lockEnd: true });
       connectorRoads.push({ points: stationPath, halfW: 2.8 });
     }
 
@@ -2556,6 +3194,225 @@ export function buildMergedStreetsGeometry(
       ];
       pushPolylineRibbon(footpathPositions, cemeteryPath, 1.0);
       connectorRoads.push({ points: cemeteryPath, halfW: 1.5 });
+    }
+  }
+
+  // === AUTO-CONNECT DANGLING INNER/SUBURBAN ROAD STUBS & TRIM TINY UNCONNECTABLE STUBS ===
+  const segmentClearsBuildings = (
+    ax: number,
+    az: number,
+    bx: number,
+    bz: number,
+    halfW: number,
+  ): boolean => {
+    if (buildingPolysWithAABB.length === 0) return true;
+    const margin = halfW + 0.65;
+    const marginSq = margin * margin;
+    const minX = Math.min(ax, bx) - margin;
+    const maxX = Math.max(ax, bx) + margin;
+    const minZ = Math.min(az, bz) - margin;
+    const maxZ = Math.max(az, bz) + margin;
+    const mx = (ax + bx) * 0.5;
+    const mz = (az + bz) * 0.5;
+
+    for (let i = 0; i < buildingPolysWithAABB.length; i++) {
+      const poly = buildingPolysWithAABB[i];
+      if (poly.maxX < minX || poly.minX > maxX || poly.maxZ < minZ || poly.minZ > maxZ) {
+        continue;
+      }
+      if (isPointInPolygon(mx, mz, poly.pts) || isPointInPolygon(bx, bz, poly.pts)) {
+        return false;
+      }
+      const pPts = poly.pts;
+      for (let k = 0; k < pPts.length; k++) {
+        const p0 = pPts[k];
+        const p1 = pPts[(k + 1) % pPts.length];
+        if (segmentToSegmentDistSq(ax, az, bx, bz, p0[0], p0[1], p1[0], p1[1]) < marginSq) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  const polylineClearsBuildings = (pts: readonly [number, number][], halfW: number): boolean => {
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (!segmentClearsBuildings(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], halfW)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const isEndpointConnected = (ri: number, px: number, pz: number, tolSq = 4.8 * 4.8): boolean => {
+    for (let oi = 0; oi < roadDrafts.length; oi++) {
+      const oPts = roadDrafts[oi].points;
+      if (oPts.length < 2) continue;
+      if (oi === ri) {
+        // Check closed-loop self-connection to a non-adjacent segment
+        for (let k = 1; k < oPts.length - 2; k++) {
+          if (pointToSegmentDistSq(px, pz, oPts[k][0], oPts[k][1], oPts[k + 1][0], oPts[k + 1][1]) <= tolSq) {
+            return true;
+          }
+        }
+        continue;
+      }
+      for (let k = 0; k < oPts.length - 1; k++) {
+        if (pointToSegmentDistSq(px, pz, oPts[k][0], oPts[k][1], oPts[k + 1][0], oPts[k + 1][1]) <= tolSq) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const MAX_CONNECT_DIST = 46;
+  const MAX_CONNECT_DIST_SQ = MAX_CONNECT_DIST * MAX_CONNECT_DIST;
+  const WORLD_EDGE_THRESHOLD = WORLD_CLIP_RADIUS - 25;
+  const removedDrafts = new Set<number>();
+
+  for (let ri = 0; ri < roadDrafts.length; ri++) {
+    if (removedDrafts.has(ri)) continue;
+    const draft = roadDrafts[ri];
+    if (draft.points.length < 2) continue;
+
+    for (const isStart of [true, false] as const) {
+      if ((isStart && draft.lockStart) || (!isStart && draft.lockEnd)) continue;
+      const pts = draft.points;
+      const endPt = isStart ? pts[0] : pts[pts.length - 1];
+      const prevPt = isStart ? pts[1] : pts[pts.length - 2];
+      const [px, pz] = endPt;
+
+      // Skip outer world-boundary termini
+      if (Math.hypot(px - wallOval.centerX, pz - wallOval.centerZ) >= WORLD_EDGE_THRESHOLD) {
+        continue;
+      }
+      // Skip endpoints already connected to another road
+      if (isEndpointConnected(ri, px, pz)) continue;
+
+      // Outward tangent vector pointing forward out of the dead-end stub
+      const tdx = px - prevPt[0];
+      const tdz = pz - prevPt[1];
+      const tLen = Math.hypot(tdx, tdz) || 1;
+      const dirX = tdx / tLen;
+      const dirZ = tdz / tLen;
+
+      // Gather candidate snap points on all other roads within ~46m
+      const candidates: Array<{ x: number; z: number; dist: number; score: number }> = [];
+      for (let oi = 0; oi < roadDrafts.length; oi++) {
+        if (oi === ri || removedDrafts.has(oi)) continue;
+        const oPts = roadDrafts[oi].points;
+        for (let k = 0; k < oPts.length - 1; k++) {
+          const [ax, az] = oPts[k];
+          const [bx, bz] = oPts[k + 1];
+          const sdx = bx - ax;
+          const sdz = bz - az;
+          const sLenSq = sdx * sdx + sdz * sdz;
+          const tClosest =
+            sLenSq > 1e-6
+              ? Math.max(0, Math.min(1, ((px - ax) * sdx + (pz - az) * sdz) / sLenSq))
+              : 0;
+
+          // Sample closest point + slight angular offsets along segment to clear building corners
+          for (const dtSample of [0, -0.25, 0.25]) {
+            const ts = Math.max(0, Math.min(1, tClosest + dtSample));
+            const qx = ax + sdx * ts;
+            const qz = az + sdz * ts;
+            const dSq = (qx - px) * (qx - px) + (qz - pz) * (qz - pz);
+            if (dSq < 1.5 * 1.5 || dSq > MAX_CONNECT_DIST_SQ) continue;
+            const dist = Math.sqrt(dSq);
+            const dot = ((qx - px) * dirX + (qz - pz) * dirZ) / dist;
+            // Reject sharp backwards U-turns (> 130°)
+            if (dot < -0.65) continue;
+            // Strongly reward natural forward continuation of the stub
+            const score = dist - dot * 14.0;
+            candidates.push({ x: qx, z: qz, dist, score });
+          }
+        }
+      }
+
+      candidates.sort((a, b) => a.score - b.score);
+
+      let connectedPath: [number, number][] | null = null;
+      const maxChecks = Math.min(candidates.length, 28);
+      for (let ci = 0; ci < maxChecks; ci++) {
+        const c = candidates[ci];
+        // 1. Direct straight extension to T-junction
+        if (segmentClearsBuildings(px, pz, c.x, c.z, draft.halfW)) {
+          connectedPath = [
+            [px, pz],
+            [c.x, c.z],
+          ];
+          break;
+        }
+        // 2. Gentle curved extension nudged around any nearby building corner
+        const midX = (px + c.x) * 0.5;
+        const midZ = (pz + c.z) * 0.5;
+        const curved = ensurePolylineClearsBuildings(
+          [
+            [px, pz],
+            [midX, midZ],
+            [c.x, c.z],
+          ],
+          draft.halfW,
+          0.9,
+        );
+        const curvedLen =
+          Math.hypot(curved[1][0] - curved[0][0], curved[1][1] - curved[0][1]) +
+          Math.hypot(curved[2][0] - curved[1][0], curved[2][1] - curved[1][1]);
+        if (curvedLen <= MAX_CONNECT_DIST + 8 && polylineClearsBuildings(curved, draft.halfW)) {
+          connectedPath = curved;
+          break;
+        }
+      }
+
+      if (connectedPath) {
+        // Clip safely inside WORLD_CLIP_RADIUS and attach smoothly onto this road polyline
+        const clippedExt = clipPolylineToCircle(
+          connectedPath,
+          wallOval.centerX,
+          wallOval.centerZ,
+          WORLD_CLIP_RADIUS,
+        );
+        if (clippedExt.length > 0 && clippedExt[0].length >= 2) {
+          const extPts = clippedExt[0];
+          if (isStart) {
+            for (let k = 1; k < extPts.length; k++) {
+              draft.points.unshift(extPts[k]);
+            }
+          } else {
+            for (let k = 1; k < extPts.length; k++) {
+              draft.points.push(extPts[k]);
+            }
+          }
+          // Register in connectorRoads so trees & streetlamps stay clear and graph includes it
+          connectorRoads.push({ points: extPts, halfW: Math.max(draft.halfW + 1.1, 2.2) });
+        }
+      } else {
+        // If no clear path exists and the entire stub is tiny (< 15m), cleanly remove it
+        let totalLen = 0;
+        for (let k = 0; k < pts.length - 1; k++) {
+          totalLen += Math.hypot(pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1]);
+        }
+        if (totalLen < 15.0) {
+          removedDrafts.add(ri);
+          break;
+        }
+      }
+    }
+  }
+
+  // Push all finalized road ribbons into streetsGeometry, renderedRoadPolylines & clippedDrivablePolylines
+  const renderedRoadPolylines: RenderedRoadPolyline[] = [];
+  const clippedDrivablePolylines: [number, number][][] = [];
+  for (let ri = 0; ri < roadDrafts.length; ri++) {
+    if (removedDrafts.has(ri)) continue;
+    const draft = roadDrafts[ri];
+    if (draft.points.length < 2) continue;
+    pushPolylineRibbon(positions, draft.points, draft.halfW);
+    renderedRoadPolylines.push({ points: draft.points, halfW: draft.halfW });
+    if (draft.isDrivable) {
+      clippedDrivablePolylines.push(draft.points);
     }
   }
 

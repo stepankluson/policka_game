@@ -4,10 +4,13 @@ import * as THREE from 'three';
 import {
   CADASTRAL_1839_CHIMNEY_TOPS,
   CADASTRAL_1839_EXCLUSION_POLYGONS,
+  HORNI_PREDMESTI_HOUSES_1839,
   MILL_STREAM_POINTS_1839,
+  SOUTH_BANK_BARNS_1839,
 } from '../game/cadastral1839';
 import {
   EASTERN_STREAM_POINTS_1903,
+  SUBURBAN_HOUSES_1903,
   SURVEY_1903_CHIMNEY_TOPS,
   SURVEY_1903_EXCLUSION_POLYGONS,
 } from '../game/survey1903';
@@ -16,6 +19,7 @@ import {
   buildMergedFlatPolygons,
   buildMergedStreetsGeometry,
   buildRealOsmWalls,
+  buildSuburbanFacadeDetails,
   createTreeValidator,
   type ChimneySmokeSource,
   type ChimneyTop,
@@ -245,6 +249,28 @@ export function TownDiorama({
     );
   }, [osmData, streetsResult]);
 
+  // Track all burned-down building IDs across the active Fire Watch shift
+  const burnedSourceIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (fireWatch?.active) {
+      for (const b of fireWatch.burnedBuildings) {
+        ids.add(b.sourceId);
+      }
+    }
+    return ids;
+  }, [fireWatch?.active, fireWatch?.burnedBuildings]);
+
+  // Stable key of burned OSM building IDs (only changes if an inner-town OSM building burns down)
+  const burnedOsmKey = useMemo(() => {
+    if (!fireWatch?.active || fireWatch.burnedBuildings.length === 0) return '';
+    const osmIds: number[] = [];
+    for (const b of fireWatch.burnedBuildings) {
+      if (typeof b.osmId === 'number') osmIds.push(b.osmId);
+    }
+    osmIds.sort((a, b) => a - b);
+    return osmIds.join(',');
+  }, [fireWatch?.active, fireWatch?.burnedBuildings]);
+
   // 3. Build merged building, park & water BufferGeometries once OSM data, streets & wall ring load
   const merged = useMemo(() => {
     if (!osmData || !streetsResult) return null;
@@ -252,6 +278,12 @@ export function TownDiorama({
     const excludeIds = new Set<number>();
     if (osmData.landmarks.townHall) {
       excludeIds.add(osmData.landmarks.townHall.id);
+    }
+    if (burnedOsmKey.length > 0) {
+      for (const part of burnedOsmKey.split(',')) {
+        const parsed = Number(part);
+        if (Number.isFinite(parsed)) excludeIds.add(parsed);
+      }
     }
     // Exclude any raw OSM building polygons overlapping the custom historic Polička Brewery footprint
     for (const b of osmData.buildings) {
@@ -272,25 +304,69 @@ export function TownDiorama({
       }
     }
 
-    const { wallGeometry, roofGeometry, chimneyGeometry, chimneyTops, houseWindows } =
-      buildMergedBuildingsGeometry(
-        osmData.buildings,
-        TOWN_Y,
-        excludeIds,
-        REAL_LANDMARKS.wallOval,
-        osmData.walls,
-        wallRing,
-        bastions,
-      );
+    const {
+      wallGeometry,
+      roofGeometry,
+      chimneyGeometry,
+      chimneyTops,
+      houseWindows,
+      houseDoors,
+    } = buildMergedBuildingsGeometry(
+      osmData.buildings,
+      TOWN_Y,
+      excludeIds,
+      REAL_LANDMARKS.wallOval,
+      osmData.walls,
+      wallRing,
+      bastions,
+      streetsResult.renderedRoadPolylines,
+    );
     const parksGeometry = buildMergedFlatPolygons(osmData.parks, TOWN_Y + 0.15);
     const waterGeometry = buildMergedFlatPolygons(osmData.water, TOWN_Y + 0.25);
+
+    const suburbanFacades = buildSuburbanFacadeDetails(
+      [
+        ...HORNI_PREDMESTI_HOUSES_1839.map((h) => ({
+          id: h.id,
+          x: h.x,
+          z: h.z,
+          rotY: h.rotY,
+          width: h.width,
+          depth: h.depth,
+          wallHeight: h.wallHeight,
+          nightThreshold: h.nightThreshold,
+        })),
+        ...SUBURBAN_HOUSES_1903.map((h) => ({
+          id: h.id,
+          x: h.x,
+          z: h.z,
+          rotY: h.rotY,
+          width: h.width,
+          depth: h.depth,
+          wallHeight: h.wallHeight,
+          nightThreshold: h.nightThreshold,
+        })),
+        ...SOUTH_BANK_BARNS_1839.map((b) => ({
+          id: b.id,
+          x: b.x,
+          z: b.z,
+          rotY: b.rotY,
+          width: b.width,
+          depth: b.depth,
+          wallHeight: b.wallHeight,
+          isBarn: true,
+        })),
+      ],
+      TOWN_Y,
+    );
 
     return {
       wallGeometry,
       roofGeometry,
       chimneyGeometry,
       chimneyTops,
-      houseWindows,
+      houseWindows: [...houseWindows, ...suburbanFacades.windows],
+      houseDoors: [...houseDoors, ...suburbanFacades.doors],
       streetsGeometry: streetsResult.streetsGeometry,
       footpathGeometry: streetsResult.footpathGeometry,
       connectorRoads: streetsResult.connectorRoads,
@@ -299,7 +375,7 @@ export function TownDiorama({
       parksGeometry,
       waterGeometry,
     };
-  }, [osmData, streetsResult, wallRing, bastions]);
+  }, [osmData, streetsResult, wallRing, bastions, burnedOsmKey]);
 
   // Export world-space chimney top coordinates (houses + tall industrial brewery smokestack)
   // for future rising smoke particles
@@ -763,6 +839,7 @@ export function TownDiorama({
       <PolickaBrewery
         position={[BREWERY_TRANSFORM.x, TOWN_Y, BREWERY_TRANSFORM.z]}
         rotationY={BREWERY_TRANSFORM.rotationY}
+        burnedIds={burnedSourceIds}
       />
 
       {/* Hřbitovní kostel sv. Michaela (1576) & Historic 1900 Cemetery on Horní předměstí */}
@@ -775,10 +852,10 @@ export function TownDiorama({
       <SynskyRybnikDetails />
 
       {/* 1839 Cadastral Additions: Historic Watermill, South-Bank Buildings & Horní předměstí Suburbs */}
-      <PolickaCadastral1839 />
+      <PolickaCadastral1839 burnedIds={burnedSourceIds} />
 
       {/* 1903 Third Military Survey Additions: Eastern Factory, 2 Eastern Mills, Shrines, Strip Fields, Orchards & Suburbs */}
-      <PolickaSurvey1903 />
+      <PolickaSurvey1903 burnedIds={burnedSourceIds} />
 
       {/* Real 1896–1897 Polička Railway Line, Historic Station & Randomized Steam Train */}
       {osmData?.railway && osmData.railway.track.length >= 2 && (
@@ -803,10 +880,14 @@ export function TownDiorama({
           />
         )}
 
-      {/* Staggered Nighttime OSM House Windows + 1900 Palackého náměstí & Station Streetlamps */}
+      {/* Unified Instanced ~1900 House Doors/Gates, Day/Night Windows & Wrought-Iron Streetlamps */}
       {merged && (
         <TownNightLights
           houseWindows={merged.houseWindows}
+          houseDoors={merged.houseDoors}
+          burnedIds={burnedSourceIds}
+          roadGraph={merged.roadGraph}
+          renderedRoads={streetsResult?.renderedRoadPolylines}
           stationPos={osmData?.railway?.station?.position}
           stationTrackAngle={osmData?.railway?.station?.trackAngle}
         />
@@ -924,9 +1005,13 @@ export function TownDiorama({
         </>
       )}
 
-      {/* === 5. ARTICULATED ~1900 POLIČKA TOWNSPEOPLE (SQUARE + MARKETPLACE + SIDEWALKS) === */}
+      {/* === 5. ARTICULATED ~1900 POLIČKA TOWNSPEOPLE (2x INNER TOWN + SUBURBAN ROAD WALKERS & HOUSE-FRONT VILLAGERS) === */}
       {merged && merged.roadGraph.nodes.length > 1 && (
-        <Townspeople roadGraph={merged.roadGraph} />
+        <Townspeople
+          roadGraph={merged.roadGraph}
+          renderedRoads={streetsResult?.renderedRoadPolylines}
+          waterPolys={osmData?.water}
+        />
       )}
 
       {/* === 6. DISTANT VYSOČINA HORIZON HILLS === */}
