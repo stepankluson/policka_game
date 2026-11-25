@@ -42,16 +42,16 @@ export const INITIAL_PLAYER_POSITION: readonly [number, number, number] = [
 ];
 
 export const CAMERA_CONFIG = {
-  /** Initial third-person orbit distance from the player */
-  defaultDistance: 6.2,
+  /** Initial third-person orbit distance from the player (tuned to showcase the Tower Keeper's face, belt & lantern) */
+  defaultDistance: 4.8,
   /** Closest comfortable third-person zoom distance on the gallery */
-  minDistance: 3.2,
+  minDistance: 2.6,
   /** Maximum zoom-out distance to view the entire St. James Church and real Polička */
   maxDistance: 260,
-  /** Initial horizontal yaw behind the player (radians) */
-  defaultYaw: 0,
+  /** Initial horizontal yaw giving a crisp three-quarter/profile view of the Tower Keeper */
+  defaultYaw: 0.42,
   /** Initial vertical pitch above the player (radians) */
-  defaultPitch: 0.4,
+  defaultPitch: 0.28,
   /** Minimum vertical pitch when close to the gallery (prevents floor clipping) */
   minPitchClose: 0.12,
   /** Minimum vertical pitch when zoomed far out (allows side / low-angle church views) */
@@ -59,7 +59,7 @@ export const CAMERA_CONFIG = {
   /** Maximum vertical pitch so camera never flips straight overhead */
   maxPitch: 1.24,
   /** Height offset of the orbit pivot on the player character when close */
-  targetHeight: 1.35,
+  targetHeight: 1.28,
   /** Panoramic look-at Y when zoomed all the way out (centers full church from nave to spire) */
   farTargetHeight: -12,
   /** Minimum world Y height for the camera when close to the gallery */

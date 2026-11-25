@@ -21,6 +21,98 @@ interface PlayerProps {
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
+/**
+ * Procedurally sculpted low-poly human head (~80-100 flat-shaded triangles, zero per-frame allocs):
+ * - Natural adult proportions (slightly elongated cranium, defined cheekbones, brow ridge, eye sockets,
+ *   and a sharp, sculpted jawline & chin).
+ */
+function createSculptedHeadGeometry(): THREE.BufferGeometry {
+  const base = new THREE.IcosahedronGeometry(0.115, 1); // 80 triangles, crisp stylized low-poly facets
+  const geom = base.toNonIndexed();
+  base.dispose();
+
+  const pos = geom.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    let x = pos.getX(i);
+    let y = pos.getY(i);
+    let z = pos.getZ(i);
+
+    // Base adult cranium aspect: slightly narrower horizontally, taller vertically, deeper front-to-back
+    x *= 0.86;
+    y *= 1.18;
+    z *= 0.98;
+
+    // Taper jawline & sculpt sharp chin in lower face
+    if (y < -0.015) {
+      const jawT = Math.min(1, (-y - 0.015) / 0.12);
+      x *= 1 - jawT * 0.36;
+      if (z > 0) {
+        // Project chin subtly forward for a defined profile
+        z += jawT * 0.016;
+      } else {
+        // Taper back of jaw cleanly toward neck
+        z *= 1 - jawT * 0.28;
+      }
+    }
+
+    // Subtle brow ridge prominence & slightly recessed eye-socket plane
+    if (z > 0.04) {
+      if (y > 0.018 && y < 0.055) {
+        z += 0.011;
+      } else if (y > -0.012 && y <= 0.018 && Math.abs(x) > 0.018 && Math.abs(x) < 0.068) {
+        z -= 0.008;
+      }
+    }
+
+    // Crisp cheekbones
+    if (y > -0.03 && y < 0.01 && Math.abs(x) > 0.055 && z > 0.015) {
+      x += Math.sign(x) * 0.008;
+      z += 0.006;
+    }
+
+    pos.setXYZ(i, x, y, z);
+  }
+  geom.computeVertexNormals();
+  return geom;
+}
+
+// Shared module-level geometries & materials (strict 60 FPS, zero per-render duplication)
+const KEEPER_HEAD_GEOM = createSculptedHeadGeometry();
+
+const KEEPER_MATS = {
+  skin: new THREE.MeshStandardMaterial({ color: '#e6ba95', roughness: 0.78, flatShading: true }),
+  skinShadow: new THREE.MeshStandardMaterial({ color: '#d6a57f', roughness: 0.82, flatShading: true }),
+  hair: new THREE.MeshStandardMaterial({ color: '#2b1e15', roughness: 0.9, flatShading: true }),
+  moustache: new THREE.MeshStandardMaterial({ color: '#211710', roughness: 0.88, flatShading: true }),
+  eyeDark: new THREE.MeshStandardMaterial({ color: '#1b1714', roughness: 0.45 }),
+  eyeWhite: new THREE.MeshStandardMaterial({ color: '#ebe4d8', roughness: 0.6 }),
+  coat: new THREE.MeshStandardMaterial({ color: '#1d2436', roughness: 0.86, flatShading: true }),
+  coatDeep: new THREE.MeshStandardMaterial({ color: '#161c2b', roughness: 0.88, flatShading: true }),
+  coatLapel: new THREE.MeshStandardMaterial({ color: '#242d44', roughness: 0.84, flatShading: true }),
+  shirt: new THREE.MeshStandardMaterial({ color: '#dfd8c8', roughness: 0.9 }),
+  beltLeather: new THREE.MeshStandardMaterial({ color: '#613b1e', roughness: 0.78, flatShading: true }),
+  beltDark: new THREE.MeshStandardMaterial({ color: '#4a2c15', roughness: 0.82, flatShading: true }),
+  brass: new THREE.MeshStandardMaterial({
+    color: '#cfa83c',
+    roughness: 0.28,
+    metalness: 0.82,
+    flatShading: true,
+  }),
+  hat: new THREE.MeshStandardMaterial({ color: '#36302b', roughness: 0.88, flatShading: true }),
+  hatBand: new THREE.MeshStandardMaterial({ color: '#1c1816', roughness: 0.85, flatShading: true }),
+  trousers: new THREE.MeshStandardMaterial({ color: '#4d3c2d', roughness: 0.9, flatShading: true }),
+  boots: new THREE.MeshStandardMaterial({ color: '#291c14', roughness: 0.82, flatShading: true }),
+  bootSole: new THREE.MeshStandardMaterial({ color: '#1a120d', roughness: 0.92 }),
+  lanternIron: new THREE.MeshStandardMaterial({ color: '#2e2620', roughness: 0.48, metalness: 0.72 }),
+  lanternGlow: new THREE.MeshStandardMaterial({
+    color: '#ffe49e',
+    emissive: '#ffaa3d',
+    emissiveIntensity: 2.6,
+    roughness: 0.24,
+    toneMapped: false,
+  }),
+};
+
 export function Player({
   playerPosRef,
   playerWorldPosRef,
@@ -33,10 +125,12 @@ export function Player({
 
   const rootRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
+  const headRef = useRef<THREE.Group>(null);
   const leftLegRef = useRef<THREE.Group>(null);
   const rightLegRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
   const rightArmRef = useRef<THREE.Group>(null);
+  const lanternGroupRef = useRef<THREE.Group>(null);
   const lanternLightRef = useRef<THREE.PointLight>(null);
 
   // Persistent scratch vectors & motion state (zero allocations per frame)
@@ -46,6 +140,7 @@ export function Player({
   const desiredDirRef = useRef(new THREE.Vector3());
   const facingYawRef = useRef(Math.PI / 2);
   const walkPhaseRef = useRef(0);
+  const idleTimeRef = useRef(0);
 
   useFrame((_, rawDelta) => {
     if (disabled) {
@@ -54,6 +149,7 @@ export function Player({
     }
 
     const dt = Math.min(rawDelta, 0.05);
+    idleTimeRef.current += dt;
     const input = inputRef.current;
 
     const forwardAxis = (input.forward ? 1 : 0) - (input.backward ? 1 : 0);
@@ -124,30 +220,39 @@ export function Player({
       rootRef.current.rotation.y = facingYawRef.current;
     }
 
-    // Stylized walk & idle animation
+    // Natural upright idle breathing & gallery patrol walk animation
     const speedRatio = Math.min(actualSpeed / PLAYER_CONFIG.moveSpeed, 1);
     if (speedRatio > 0.04) {
-      walkPhaseRef.current += dt * (7.5 + speedRatio * 4.5);
+      walkPhaseRef.current += dt * (7.2 + speedRatio * 4.2);
     } else {
-      // Gently relax limbs back to neutral stance
-      walkPhaseRef.current += dt * 1.6;
+      walkPhaseRef.current += dt * 1.45;
     }
 
-    const swing = Math.sin(walkPhaseRef.current) * 0.62 * speedRatio;
-    const bob = Math.abs(Math.sin(walkPhaseRef.current)) * 0.065 * speedRatio;
-    const idleBreath = Math.sin(walkPhaseRef.current * 0.9) * 0.012 * (1 - speedRatio);
+    const swing = Math.sin(walkPhaseRef.current) * 0.56 * speedRatio;
+    const bob = Math.abs(Math.sin(walkPhaseRef.current)) * 0.055 * speedRatio;
+    const idleBreath = Math.sin(idleTimeRef.current * 1.8) * 0.011 * (1 - speedRatio);
 
     if (bodyRef.current) {
       bodyRef.current.position.y = bob + idleBreath;
+      bodyRef.current.rotation.z = Math.sin(walkPhaseRef.current) * 0.024 * speedRatio;
+    }
+    if (headRef.current) {
+      // Subtle vigilant watchman scan while idling
+      headRef.current.rotation.y = Math.sin(idleTimeRef.current * 0.65) * 0.14 * (1 - speedRatio);
     }
     if (leftLegRef.current && rightLegRef.current) {
       leftLegRef.current.rotation.x = swing;
       rightLegRef.current.rotation.x = -swing;
     }
     if (leftArmRef.current && rightArmRef.current) {
-      leftArmRef.current.rotation.x = -swing * 0.75;
-      // Keep lantern-bearing right arm raised forward with subtle sway
-      rightArmRef.current.rotation.x = -0.45 + swing * 0.25;
+      // Anatomical LEFT arm (+X) grips the lit vintage lantern forward with gentle pendulum sway
+      leftArmRef.current.rotation.x = -0.44 + swing * 0.2;
+      // Anatomical RIGHT arm (-X) rests naturally at his side and swings freely while walking
+      rightArmRef.current.rotation.x = -swing * 0.72;
+    }
+    if (lanternGroupRef.current) {
+      lanternGroupRef.current.rotation.x = 0.44 - swing * 0.14;
+      lanternGroupRef.current.rotation.z = Math.sin(idleTimeRef.current * 2.1) * 0.035;
     }
 
     // Scale warm handheld lantern PointLight smoothly with nightFactor (active in 3rd person; 1st person has its own viewmodel light)
@@ -169,128 +274,278 @@ export function Player({
       ]}
       rotation={[0, Math.PI / 2, 0]}
     >
-      {/* Left Leg */}
-      <group ref={leftLegRef} position={[-0.14, 0.52, 0]}>
-        <mesh position={[0, -0.22, 0]} castShadow>
-          <boxGeometry args={[0.16, 0.44, 0.18]} />
-          <meshStandardMaterial color="#3a332e" roughness={0.9} flatShading />
+      {/* === 1. LEGS & STURDY LACE-UP BOOTS (Weathered brown trousers + dark-brown boots) === */}
+      {/* Anatomical Right Leg (-X) */}
+      <group ref={rightLegRef} position={[-0.105, 0.72, 0]}>
+        <mesh position={[0, -0.26, 0]} material={KEEPER_MATS.trousers} castShadow>
+          <boxGeometry args={[0.13, 0.52, 0.15]} />
         </mesh>
-        {/* Boot */}
-        <mesh position={[0, -0.46, 0.04]} castShadow>
-          <boxGeometry args={[0.18, 0.12, 0.26]} />
-          <meshStandardMaterial color="#251d18" roughness={0.85} flatShading />
+        {/* Boot Shaft */}
+        <mesh position={[0, -0.57, 0.01]} material={KEEPER_MATS.boots} castShadow>
+          <boxGeometry args={[0.135, 0.18, 0.16]} />
         </mesh>
-      </group>
-
-      {/* Right Leg */}
-      <group ref={rightLegRef} position={[0.14, 0.52, 0]}>
-        <mesh position={[0, -0.22, 0]} castShadow>
-          <boxGeometry args={[0.16, 0.44, 0.18]} />
-          <meshStandardMaterial color="#3a332e" roughness={0.9} flatShading />
+        {/* Boot Foot & Sole */}
+        <mesh position={[0, -0.66, 0.045]} material={KEEPER_MATS.boots} castShadow>
+          <boxGeometry args={[0.14, 0.09, 0.24]} />
         </mesh>
-        {/* Boot */}
-        <mesh position={[0, -0.46, 0.04]} castShadow>
-          <boxGeometry args={[0.18, 0.12, 0.26]} />
-          <meshStandardMaterial color="#251d18" roughness={0.85} flatShading />
+        <mesh position={[0, -0.705, 0.045]} material={KEEPER_MATS.bootSole}>
+          <boxGeometry args={[0.148, 0.03, 0.25]} />
         </mesh>
       </group>
 
-      {/* Upper Body Group (bobs gently while walking) */}
+      {/* Anatomical Left Leg (+X) */}
+      <group ref={leftLegRef} position={[0.105, 0.72, 0]}>
+        <mesh position={[0, -0.26, 0]} material={KEEPER_MATS.trousers} castShadow>
+          <boxGeometry args={[0.13, 0.52, 0.15]} />
+        </mesh>
+        <mesh position={[0, -0.57, 0.01]} material={KEEPER_MATS.boots} castShadow>
+          <boxGeometry args={[0.135, 0.18, 0.16]} />
+        </mesh>
+        <mesh position={[0, -0.66, 0.045]} material={KEEPER_MATS.boots} castShadow>
+          <boxGeometry args={[0.14, 0.09, 0.24]} />
+        </mesh>
+        <mesh position={[0, -0.705, 0.045]} material={KEEPER_MATS.bootSole}>
+          <boxGeometry args={[0.148, 0.03, 0.25]} />
+        </mesh>
+      </group>
+
+      {/* === 2. UPPER BODY GROUP (Slender athletic posture, long dark-navy wool coat, belt & sculpted head) === */}
       <group ref={bodyRef}>
-        {/* Long Watchman's Coat Skirt */}
-        <mesh position={[0, 0.66, 0]} castShadow>
-          <cylinderGeometry args={[0.24, 0.32, 0.42, 7]} />
-          <meshStandardMaterial color="#2c4159" roughness={0.85} flatShading />
+        {/* Long Historic Dark-Navy Wool Coat Skirt (ending cleanly below the knees, y = 0.38..0.88) */}
+        <mesh position={[0, 0.63, 0]} material={KEEPER_MATS.coatDeep} castShadow>
+          <cylinderGeometry args={[0.205, 0.27, 0.5, 8]} />
         </mesh>
 
-        {/* Torso / Coat */}
-        <mesh position={[0, 1.04, 0]} castShadow>
-          <boxGeometry args={[0.48, 0.52, 0.3]} />
-          <meshStandardMaterial color="#314964" roughness={0.82} flatShading />
+        {/* Athletic Tapered Upper Coat Torso (y = 0.86..1.38) */}
+        <mesh position={[0, 1.12, 0]} material={KEEPER_MATS.coat} castShadow>
+          <boxGeometry args={[0.42, 0.52, 0.24]} />
+        </mesh>
+        {/* Subtle Broader Athletic Shoulder Cap */}
+        <mesh position={[0, 1.33, 0]} material={KEEPER_MATS.coat} castShadow>
+          <boxGeometry args={[0.46, 0.11, 0.245]} />
         </mesh>
 
-        {/* Leather Belt & Brass Buckle */}
-        <mesh position={[0, 0.84, 0]} castShadow>
-          <boxGeometry args={[0.51, 0.09, 0.33]} />
-          <meshStandardMaterial color="#59361f" roughness={0.8} />
+        {/* Front Coat Placket & Brass Coat Buttons */}
+        <mesh position={[0, 1.07, 0.123]} material={KEEPER_MATS.coatDeep}>
+          <boxGeometry args={[0.045, 0.42, 0.012]} />
         </mesh>
-        <mesh position={[0, 0.84, 0.17]}>
-          <boxGeometry args={[0.11, 0.11, 0.03]} />
-          <meshStandardMaterial color="#e0b052" roughness={0.35} metalness={0.75} />
-        </mesh>
-
-        {/* Warm Wool Scarf / Collar */}
-        <mesh position={[0, 1.32, 0]} castShadow>
-          <cylinderGeometry args={[0.2, 0.24, 0.12, 8]} />
-          <meshStandardMaterial color="#c97b43" roughness={0.9} flatShading />
-        </mesh>
-
-        {/* Low-Poly Head */}
-        <mesh position={[0, 1.54, 0]} castShadow>
-          <dodecahedronGeometry args={[0.21, 0]} />
-          <meshStandardMaterial color="#f0c7a4" roughness={0.78} flatShading />
-        </mesh>
-
-        {/* Watchman's Wide-Brimmed Hat */}
-        <group position={[0, 1.71, 0]} rotation={[-0.08, 0, 0]}>
-          {/* Brim */}
-          <mesh castShadow>
-            <cylinderGeometry args={[0.38, 0.41, 0.05, 8]} />
-            <meshStandardMaterial color="#2a2422" roughness={0.88} flatShading />
+        {[1.18, 1.08, 0.98].map((by, idx) => (
+          <mesh key={`btn-${idx}`} position={[0.038, by, 0.13]} material={KEEPER_MATS.brass}>
+            <cylinderGeometry args={[0.014, 0.014, 0.012, 6]} />
           </mesh>
-          {/* Ochre Hatband */}
-          <mesh position={[0, 0.06, 0]} castShadow>
-            <cylinderGeometry args={[0.21, 0.22, 0.08, 8]} />
-            <meshStandardMaterial color="#c9853b" roughness={0.8} flatShading />
+        ))}
+
+        {/* Shirt Collar Peek + Modeled Folded Coat Collar & Angled Lapels */}
+        <mesh position={[0, 1.36, 0.075]} material={KEEPER_MATS.shirt}>
+          <boxGeometry args={[0.11, 0.11, 0.1]} />
+        </mesh>
+        {/* High Back/Side Coat Collar */}
+        <mesh position={[0, 1.40, -0.015]} material={KEEPER_MATS.coatLapel} castShadow>
+          <cylinderGeometry args={[0.115, 0.135, 0.095, 8]} />
+        </mesh>
+        {/* Left & Right Angled Front Lapels */}
+        <mesh
+          position={[-0.08, 1.29, 0.126]}
+          rotation={[0, 0, -0.26]}
+          material={KEEPER_MATS.coatLapel}
+          castShadow
+        >
+          <boxGeometry args={[0.085, 0.22, 0.026]} />
+        </mesh>
+        <mesh
+          position={[0.08, 1.29, 0.126]}
+          rotation={[0, 0, 0.26]}
+          material={KEEPER_MATS.coatLapel}
+          castShadow
+        >
+          <boxGeometry args={[0.085, 0.22, 0.026]} />
+        </mesh>
+
+        {/* === FULLY VISIBLE BROWN LEATHER BELT (~9cm thick) & METALLIC BRASS BUCKLE === */}
+        <group position={[0, 0.89, 0]}>
+          {/* Continuous Brown Leather Belt sitting cleanly ON TOP of coat waist with zero clipping */}
+          <mesh material={KEEPER_MATS.beltLeather} castShadow>
+            <boxGeometry args={[0.455, 0.092, 0.278]} />
           </mesh>
-          {/* Crown */}
-          <mesh position={[0, 0.17, 0]} castShadow>
-            <cylinderGeometry args={[0.16, 0.21, 0.18, 8]} />
-            <meshStandardMaterial color="#342d2a" roughness={0.88} flatShading />
+          {/* Open-Frame Metallic Brass Buckle centered at the front (+Z) */}
+          <group position={[0, 0, 0.145]}>
+            {/* Top & Bottom Buckle Bars */}
+            <mesh position={[0, 0.044, 0]} material={KEEPER_MATS.brass}>
+              <boxGeometry args={[0.115, 0.018, 0.022]} />
+            </mesh>
+            <mesh position={[0, -0.044, 0]} material={KEEPER_MATS.brass}>
+              <boxGeometry args={[0.115, 0.018, 0.022]} />
+            </mesh>
+            {/* Left & Right Buckle Sides */}
+            <mesh position={[-0.048, 0, 0]} material={KEEPER_MATS.brass}>
+              <boxGeometry args={[0.018, 0.105, 0.022]} />
+            </mesh>
+            <mesh position={[0.048, 0, 0]} material={KEEPER_MATS.brass}>
+              <boxGeometry args={[0.018, 0.105, 0.022]} />
+            </mesh>
+            {/* Center Brass Pin / Prong */}
+            <mesh position={[0.005, 0, 0.005]} material={KEEPER_MATS.brass}>
+              <boxGeometry args={[0.048, 0.013, 0.016]} />
+            </mesh>
+          </group>
+          {/* Leather Belt Keeper Loop + Loose End of Strap neatly tucked on the left-front side */}
+          <mesh position={[0.095, 0, 0.143]} material={KEEPER_MATS.beltDark}>
+            <boxGeometry args={[0.028, 0.102, 0.024]} />
+          </mesh>
+          <mesh position={[0.155, -0.004, 0.141]} rotation={[0, 0, -0.04]} material={KEEPER_MATS.beltLeather}>
+            <boxGeometry args={[0.095, 0.076, 0.018]} />
           </mesh>
         </group>
 
-        {/* Left Arm */}
-        <group ref={leftArmRef} position={[-0.32, 1.22, 0]}>
-          <mesh position={[0, -0.22, 0]} castShadow>
-            <boxGeometry args={[0.14, 0.44, 0.14]} />
-            <meshStandardMaterial color="#2c4159" roughness={0.84} flatShading />
+        {/* === 3. NECK, SCULPTED EXPRESSIVE LOW-POLY HEAD, MOUSTACHE, DARK HAIR & HAT === */}
+        <mesh position={[0, 1.43, 0.005]} material={KEEPER_MATS.skinShadow} castShadow>
+          <cylinderGeometry args={[0.062, 0.072, 0.11, 7]} />
+        </mesh>
+
+        <group ref={headRef} position={[0, 1.56, 0.01]}>
+          {/* Custom Sculpted Low-Poly Head (~80 flat-shaded polygons with sharp jawline & brow) */}
+          <mesh geometry={KEEPER_HEAD_GEOM} material={KEEPER_MATS.skin} castShadow />
+
+          {/* Ears */}
+          <mesh position={[-0.096, -0.005, -0.008]} material={KEEPER_MATS.skinShadow}>
+            <boxGeometry args={[0.024, 0.052, 0.032]} />
           </mesh>
-          <mesh position={[0, -0.46, 0]} castShadow>
-            <boxGeometry args={[0.11, 0.11, 0.11]} />
-            <meshStandardMaterial color="#f0c7a4" roughness={0.8} flatShading />
+          <mesh position={[0.096, -0.005, -0.008]} material={KEEPER_MATS.skinShadow}>
+            <boxGeometry args={[0.024, 0.052, 0.032]} />
+          </mesh>
+
+          {/* Sculpted Low-Poly Nose */}
+          <mesh position={[0, -0.004, 0.112]} rotation={[0.22, 0, 0]} material={KEEPER_MATS.skinShadow}>
+            <coneGeometry args={[0.022, 0.054, 4]} />
+          </mesh>
+
+          {/* Determined Dark Eyes & Angled Eyebrows */}
+          {([-1, 1] as const).map((side) => (
+            <group key={`eye-${side}`}>
+              {/* Subtle sclera backing */}
+              <mesh position={[side * 0.036, 0.016, 0.095]} material={KEEPER_MATS.eyeWhite}>
+                <boxGeometry args={[0.026, 0.015, 0.012]} />
+              </mesh>
+              {/* Dark focused iris/pupil */}
+              <mesh position={[side * 0.036, 0.016, 0.101]} material={KEEPER_MATS.eyeDark}>
+                <boxGeometry args={[0.014, 0.013, 0.008]} />
+              </mesh>
+              {/* Focused dark-brown eyebrow ridge */}
+              <mesh
+                position={[side * 0.038, 0.037, 0.101]}
+                rotation={[0, 0, -side * 0.14]}
+                material={KEEPER_MATS.hair}
+              >
+                <boxGeometry args={[0.038, 0.013, 0.016]} />
+              </mesh>
+            </group>
+          ))}
+
+          {/* Full, Tidy Dark-Brown ~1900 Youthful Moustache (3-piece sculpted chevron/swept wings) */}
+          <group position={[0, -0.039, 0.103]}>
+            <mesh material={KEEPER_MATS.moustache}>
+              <boxGeometry args={[0.048, 0.022, 0.024]} />
+            </mesh>
+            <mesh position={[-0.032, -0.005, -0.006]} rotation={[0, -0.28, 0.22]} material={KEEPER_MATS.moustache}>
+              <boxGeometry args={[0.038, 0.019, 0.02]} />
+            </mesh>
+            <mesh position={[0.032, -0.005, -0.006]} rotation={[0, 0.28, -0.22]} material={KEEPER_MATS.moustache}>
+              <boxGeometry args={[0.038, 0.019, 0.02]} />
+            </mesh>
+          </group>
+
+          {/* Visible Dark-Brown Hair peeking out from under the hat at temples, sides & nape (NO grey) */}
+          <mesh position={[0, 0.032, -0.068]} material={KEEPER_MATS.hair} castShadow>
+            <boxGeometry args={[0.175, 0.14, 0.09]} />
+          </mesh>
+          <mesh position={[-0.088, 0.022, -0.01]} material={KEEPER_MATS.hair}>
+            <boxGeometry args={[0.03, 0.095, 0.095]} />
+          </mesh>
+          <mesh position={[0.088, 0.022, -0.01]} material={KEEPER_MATS.hair}>
+            <boxGeometry args={[0.03, 0.095, 0.095]} />
+          </mesh>
+          {/* Tidy sideburns */}
+          <mesh position={[-0.086, -0.018, 0.025]} material={KEEPER_MATS.hair}>
+            <boxGeometry args={[0.022, 0.046, 0.026]} />
+          </mesh>
+          <mesh position={[0.086, -0.018, 0.025]} material={KEEPER_MATS.hair}>
+            <boxGeometry args={[0.022, 0.046, 0.026]} />
+          </mesh>
+
+          {/* Traditional Wide-Brimmed "Pověžný" Hat (#36302b) with Dark Hatband, exposing face clearly */}
+          <group position={[0, 0.115, -0.012]} rotation={[-0.09, 0, 0]}>
+            {/* Wide brim */}
+            <mesh material={KEEPER_MATS.hat} castShadow>
+              <cylinderGeometry args={[0.29, 0.315, 0.032, 9]} />
+            </mesh>
+            {/* Dark leather hatband */}
+            <mesh position={[0, 0.036, 0]} material={KEEPER_MATS.hatBand} castShadow>
+              <cylinderGeometry args={[0.145, 0.152, 0.046, 9]} />
+            </mesh>
+            {/* Tapered crown */}
+            <mesh position={[0, 0.105, 0]} material={KEEPER_MATS.hat} castShadow>
+              <cylinderGeometry args={[0.112, 0.145, 0.125, 9]} />
+            </mesh>
+          </group>
+        </group>
+
+        {/* === 4. ARMS & LEFT-HAND VINTAGE LIT LANTERN === */}
+        {/* Anatomical Right Arm (-X): Rests naturally / available for interaction */}
+        <group ref={rightArmRef} position={[-0.265, 1.31, 0]}>
+          <mesh position={[0, -0.22, 0]} material={KEEPER_MATS.coat} castShadow>
+            <boxGeometry args={[0.12, 0.44, 0.125]} />
+          </mesh>
+          {/* Cuff */}
+          <mesh position={[0, -0.42, 0]} material={KEEPER_MATS.coatLapel}>
+            <boxGeometry args={[0.128, 0.05, 0.132]} />
+          </mesh>
+          {/* Natural Hand */}
+          <mesh position={[0, -0.48, 0.01]} material={KEEPER_MATS.skin} castShadow>
+            <boxGeometry args={[0.085, 0.105, 0.09]} />
           </mesh>
         </group>
 
-        {/* Right Arm holding a glowing Brass Keeper's Lantern */}
-        <group ref={rightArmRef} position={[0.32, 1.22, 0]} rotation={[-0.45, 0, 0]}>
-          <mesh position={[0, -0.22, 0]} castShadow>
-            <boxGeometry args={[0.14, 0.44, 0.14]} />
-            <meshStandardMaterial color="#2c4159" roughness={0.84} flatShading />
+        {/* Anatomical Left Arm (+X): Naturally grips the glowing Vintage Watchman's Lantern */}
+        <group ref={leftArmRef} position={[0.265, 1.31, 0]} rotation={[-0.44, 0, 0]}>
+          <mesh position={[0, -0.22, 0]} material={KEEPER_MATS.coat} castShadow>
+            <boxGeometry args={[0.12, 0.44, 0.125]} />
           </mesh>
-          <mesh position={[0, -0.46, 0]} castShadow>
-            <boxGeometry args={[0.11, 0.11, 0.11]} />
-            <meshStandardMaterial color="#f0c7a4" roughness={0.8} flatShading />
+          {/* Cuff */}
+          <mesh position={[0, -0.42, 0]} material={KEEPER_MATS.coatLapel}>
+            <boxGeometry args={[0.128, 0.05, 0.132]} />
+          </mesh>
+          {/* Gripping Left Hand */}
+          <mesh position={[0, -0.48, 0.015]} material={KEEPER_MATS.skin} castShadow>
+            <boxGeometry args={[0.088, 0.102, 0.095]} />
           </mesh>
 
-          {/* Hanging Brass Lantern */}
-          <group position={[0, -0.62, 0.08]} rotation={[0.45, 0, 0]}>
-            <mesh position={[0, 0.11, 0]}>
-              <coneGeometry args={[0.1, 0.09, 6]} />
-              <meshStandardMaterial color="#3b2f26" roughness={0.5} metalness={0.7} />
+          {/* Vintage Lit Watchman's Lantern (glowing yellow cylinder inside dark iron frame) */}
+          <group ref={lanternGroupRef} position={[0, -0.63, 0.075]} rotation={[0.44, 0, 0]}>
+            {/* Wire handle ring */}
+            <mesh position={[0, 0.165, 0]} material={KEEPER_MATS.lanternIron}>
+              <torusGeometry args={[0.036, 0.008, 5, 8]} />
             </mesh>
-            <mesh>
-              <cylinderGeometry args={[0.075, 0.065, 0.17, 6]} />
-              <meshStandardMaterial
-                color="#ffe099"
-                emissive="#ffaa3d"
-                emissiveIntensity={2.6}
-                roughness={0.25}
-              />
+            {/* Dark iron lantern cap */}
+            <mesh position={[0, 0.11, 0]} material={KEEPER_MATS.lanternIron}>
+              <coneGeometry args={[0.098, 0.088, 6]} />
             </mesh>
-            <mesh position={[0, -0.1, 0]}>
-              <cylinderGeometry args={[0.08, 0.09, 0.04, 6]} />
-              <meshStandardMaterial color="#3b2f26" roughness={0.5} metalness={0.7} />
+            {/* Glowing warm yellow glass cylinder */}
+            <mesh material={KEEPER_MATS.lanternGlow}>
+              <cylinderGeometry args={[0.072, 0.062, 0.165, 6]} />
+            </mesh>
+            {/* 4 Slim vertical dark iron frame struts */}
+            {([0, Math.PI / 2, Math.PI, -Math.PI / 2] as const).map((ang, i) => (
+              <mesh
+                key={`strut-${i}`}
+                position={[Math.cos(ang) * 0.073, 0, Math.sin(ang) * 0.073]}
+                material={KEEPER_MATS.lanternIron}
+              >
+                <boxGeometry args={[0.012, 0.175, 0.012]} />
+              </mesh>
+            ))}
+            {/* Dark iron base */}
+            <mesh position={[0, -0.096, 0]} material={KEEPER_MATS.lanternIron}>
+              <cylinderGeometry args={[0.08, 0.092, 0.038, 6]} />
             </mesh>
             <pointLight
               ref={lanternLightRef}
