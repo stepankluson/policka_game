@@ -1,14 +1,16 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import { Sparkles } from '@react-three/drei';
 import * as THREE from 'three';
 
 const SUN_DIRECTION = new THREE.Vector3(28, 15, 22).normalize();
 
 const SKY_VERTEX_SHADER = /* glsl */ `
-  varying vec3 vWorldDirection;
+  varying vec3 vSkyDirection;
   void main() {
+    // Use local unit-sphere direction so sky stays locked to horizon while centered on camera
+    vSkyDirection = normalize(position);
     vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-    vWorldDirection = normalize(worldPosition.xyz);
     gl_Position = projectionMatrix * viewMatrix * worldPosition;
   }
 `;
@@ -20,10 +22,10 @@ const SKY_FRAGMENT_SHADER = /* glsl */ `
   uniform vec3 uGroundColor;
   uniform vec3 uSunDirection;
   uniform vec3 uSunColor;
-  varying vec3 vWorldDirection;
+  varying vec3 vSkyDirection;
 
   void main() {
-    vec3 dir = normalize(vWorldDirection);
+    vec3 dir = normalize(vSkyDirection);
     float h = dir.y;
 
     vec3 sky;
@@ -49,6 +51,8 @@ const SKY_FRAGMENT_SHADER = /* glsl */ `
 `;
 
 export function Atmosphere() {
+  const skyDomeRef = useRef<THREE.Mesh>(null);
+
   const skyUniforms = useMemo(
     () => ({
       uTopColor: { value: new THREE.Color('#274472') },
@@ -61,18 +65,32 @@ export function Atmosphere() {
     [],
   );
 
+  // Keep the inverted sky sphere centered on the active camera so it can never clip at screen corners
+  useFrame(({ camera }) => {
+    if (skyDomeRef.current) {
+      skyDomeRef.current.position.copy(camera.position);
+    }
+  });
+
   return (
     <>
       {/* Background fallback & subtle golden-hour atmospheric distance fog */}
       <color attach="background" args={['#e9b98c']} />
-      <fog attach="fog" args={['#e9b98c', 95, 420]} />
+      <fog attach="fog" args={['#e9b98c', 280, 1150]} />
 
-      {/* Custom Golden-Hour Sky Dome */}
-      <mesh name="sky-dome" scale={[650, 650, 650]} frustumCulled={false}>
+      {/* Camera-Centered Golden-Hour Sky Dome (never clips regardless of zoom-out) */}
+      <mesh
+        ref={skyDomeRef}
+        name="sky-dome"
+        scale={[1800, 1800, 1800]}
+        renderOrder={-1000}
+        frustumCulled={false}
+      >
         <sphereGeometry args={[1, 32, 24]} />
         <shaderMaterial
           side={THREE.BackSide}
           depthWrite={false}
+          depthTest={false}
           fog={false}
           uniforms={skyUniforms}
           vertexShader={SKY_VERTEX_SHADER}

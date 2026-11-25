@@ -2,17 +2,25 @@ import { useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { INITIAL_PLAYER_POSITION, PLAYER_CONFIG, RING_BOUNDS } from '../game/constants';
+import { CHURCH_TRANSFORM, churchLocalToWorld } from '../game/pois';
 import { constrainToSquareRing, dampAngle } from '../game/ringCollision';
 import { useKeyboard } from '../game/useKeyboard';
 
 interface PlayerProps {
+  /** Player position in gallery-local coordinates (for ring collision & telescope proximity) */
   playerPosRef: RefObject<THREE.Vector3>;
+  /** Player position in world coordinates (for third-person FollowCamera) */
+  playerWorldPosRef: RefObject<THREE.Vector3>;
   disabled?: boolean;
 }
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
-export function Player({ playerPosRef, disabled = false }: PlayerProps) {
+export function Player({
+  playerPosRef,
+  playerWorldPosRef,
+  disabled = false,
+}: PlayerProps) {
   const { camera } = useThree();
   const inputRef = useKeyboard();
 
@@ -43,7 +51,7 @@ export function Player({ playerPosRef, disabled = false }: PlayerProps) {
     const forwardAxis = (input.forward ? 1 : 0) - (input.backward ? 1 : 0);
     const rightAxis = (input.right ? 1 : 0) - (input.left ? 1 : 0);
 
-    // Derive camera-relative XZ basis
+    // Derive camera-relative XZ basis in world space, then rotate into church-local gallery space
     const camForward = camForwardRef.current;
     camera.getWorldDirection(camForward);
     camForward.y = 0;
@@ -52,6 +60,7 @@ export function Player({ playerPosRef, disabled = false }: PlayerProps) {
     } else {
       camForward.set(0, 0, -1);
     }
+    camForward.applyAxisAngle(WORLD_UP, -CHURCH_TRANSFORM.rotationY);
 
     const camRight = camRightRef.current.crossVectors(camForward, WORLD_UP).normalize();
 
@@ -87,6 +96,8 @@ export function Player({ playerPosRef, disabled = false }: PlayerProps) {
     const actualSpeed = dt > 1e-5 ? Math.hypot(actualDx, actualDz) / dt : 0;
 
     playerPosRef.current.set(constrained.x, 0, constrained.z);
+    const [wx, wy, wz] = churchLocalToWorld(constrained.x, 0, constrained.z);
+    playerWorldPosRef.current.set(wx, wy, wz);
 
     // Smoothly rotate character toward movement direction
     if (desiredDir.lengthSq() > 0.01) {

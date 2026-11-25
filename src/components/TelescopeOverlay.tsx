@@ -30,6 +30,7 @@ export function TelescopeOverlay({
   const aimedPoi = scanState.poiId
     ? POIS.find((p) => p.id === scanState.poiId) ?? null
     : null;
+  const isAimedUnlocked = aimedPoi ? unlockedPois.has(aimedPoi.id) : false;
 
   const dashOffset = RING_CIRCUMFERENCE * (1 - scanState.progress);
   const isScanComplete = scanState.progress >= 1;
@@ -102,7 +103,11 @@ export function TelescopeOverlay({
                   cx="48"
                   cy="48"
                   r="2.2"
-                  fill={aimedPoi ? '#ffd166' : 'rgba(254, 243, 199, 0.7)'}
+                  fill={
+                    aimedPoi && !isAimedUnlocked
+                      ? '#ffd166'
+                      : 'rgba(254, 243, 199, 0.7)'
+                  }
                 />
 
                 {/* Subtle outer reticle ring */}
@@ -115,8 +120,8 @@ export function TelescopeOverlay({
                   strokeWidth="1.5"
                 />
 
-                {/* Radial Progress Ring (fills over 2 seconds when aimed at a POI) */}
-                {aimedPoi && scanState.progress > 0 && (
+                {/* Radial Progress Ring (only shown for undiscovered POIs) */}
+                {aimedPoi && !isAimedUnlocked && scanState.progress > 0 && (
                   <circle
                     cx="48"
                     cy="48"
@@ -133,18 +138,21 @@ export function TelescopeOverlay({
               </svg>
 
               {/* Target Lock Caption */}
-              {aimedPoi && (
-                <div className="absolute top-26 flex flex-col items-center whitespace-nowrap rounded-full border border-amber-200/30 bg-stone-950/75 px-3.5 py-1 text-center backdrop-blur-md">
-                  <span className="text-xs font-semibold tracking-wide text-amber-200">
-                    {aimedPoi.titleCz}
-                  </span>
-                  <span className="text-[10px] text-amber-100/70">
-                    {unlockedPois.has(aimedPoi.id)
-                      ? 'Památka objevena'
-                      : `Zaměřování… ${Math.round(scanState.progress * 100)} %`}
-                  </span>
-                </div>
-              )}
+              {aimedPoi &&
+                (isAimedUnlocked ? (
+                  <div className="absolute top-26 whitespace-nowrap rounded-full border border-amber-100/15 bg-stone-950/60 px-3 py-1 text-center text-[11px] tracking-wide text-amber-100/65 backdrop-blur-md">
+                    {aimedPoi.titleCz} · Objeveno
+                  </div>
+                ) : (
+                  <div className="absolute top-26 flex flex-col items-center whitespace-nowrap rounded-full border border-amber-200/30 bg-stone-950/75 px-3.5 py-1 text-center backdrop-blur-md">
+                    <span className="text-xs font-semibold tracking-wide text-amber-200">
+                      {aimedPoi.titleCz}
+                    </span>
+                    <span className="text-[10px] text-amber-100/70">
+                      {`Zaměřování… ${Math.round(scanState.progress * 100)} %`}
+                    </span>
+                  </div>
+                ))}
             </div>
 
             {/* Subtle Zoom Indicator Badge inside bottom of lens rim */}

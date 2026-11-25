@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
+  CHURCH_TRANSFORM,
+  churchLocalToWorld,
   POIS,
   TELESCOPES,
   TELESCOPE_CONFIG,
@@ -16,6 +18,7 @@ export interface ScanState {
 
 interface TelescopeCameraProps {
   activeTelescope: TelescopeId | null;
+  unlockedPois: ReadonlySet<string>;
   onScanChange: (scan: ScanState) => void;
   onZoomChange: (zoom: number) => void;
   onPoiUnlocked: (poiId: PoiSpec['id']) => void;
@@ -32,11 +35,14 @@ interface TelescopeKeys {
 
 export function TelescopeCamera({
   activeTelescope,
+  unlockedPois,
   onScanChange,
   onZoomChange,
   onPoiUnlocked,
 }: TelescopeCameraProps) {
   const { camera } = useThree();
+  const unlockedPoisRef = useRef<ReadonlySet<string>>(unlockedPois);
+  unlockedPoisRef.current = unlockedPois;
 
   const defaultYawRef = useRef(0);
   const targetYawRef = useRef(0);
@@ -98,9 +104,10 @@ export function TelescopeCamera({
     const scope = TELESCOPES.find((t) => t.id === activeTelescope);
     if (!scope) return;
 
-    defaultYawRef.current = scope.defaultYaw;
-    targetYawRef.current = scope.defaultYaw;
-    currentYawRef.current = scope.defaultYaw;
+    const worldDefaultYaw = scope.defaultYaw + CHURCH_TRANSFORM.rotationY;
+    defaultYawRef.current = worldDefaultYaw;
+    targetYawRef.current = worldDefaultYaw;
+    currentYawRef.current = worldDefaultYaw;
     targetPitchRef.current = scope.defaultPitch;
     currentPitchRef.current = scope.defaultPitch;
 
@@ -118,11 +125,12 @@ export function TelescopeCamera({
     scanTimerRef.current = 0;
     triggeredPoiRef.current = null;
 
-    camera.position.set(
+    const [lx, ly, lz] = churchLocalToWorld(
       scope.lensPosition[0],
       scope.lensPosition[1],
       scope.lensPosition[2],
     );
+    camera.position.set(lx, ly, lz);
   }, [activeTelescope, camera, onScanChange, onZoomChange]);
 
   // Mouse-drag panning, mouse-wheel FOV zoom, and Arrow / W·S / +/- key listeners
@@ -304,12 +312,13 @@ export function TelescopeCamera({
     currentYawRef.current += (targetYawRef.current - currentYawRef.current) * dampT;
     currentPitchRef.current += (targetPitchRef.current - currentPitchRef.current) * dampT;
 
-    // 5. Position camera at telescope lens & orient along (yaw, pitch)
-    camera.position.set(
+    // 5. Position camera at rotated world telescope lens & orient along (yaw, pitch)
+    const [lensX, lensY, lensZ] = churchLocalToWorld(
       scope.lensPosition[0],
       scope.lensPosition[1],
       scope.lensPosition[2],
     );
+    camera.position.set(lensX, lensY, lensZ);
 
     const cosPitch = Math.cos(currentPitchRef.current);
     const forward = forwardVecRef.current.set(
@@ -340,32 +349,48 @@ export function TelescopeCamera({
     }
 
     if (aimedPoi) {
-      if (scanningPoiRef.current !== aimedPoi.id) {
-        scanningPoiRef.current = aimedPoi.id;
+      // Never re-scan or re-trigger already discovered POIs
+      if (unlockedPoisRef.current.has(aimedPoi.id)) {
+        scanningPoiRef.current = null;
         scanTimerRef.current = 0;
         triggeredPoiRef.current = null;
+
+        if (
+          lastReportedScanRef.current.poiId !== aimedPoi.id ||
+          lastReportedScanRef.current.progress !== 0
+        ) {
+          const next: ScanState = { poiId: aimedPoi.id, progress: 0 };
+          lastReportedScanRef.current = next;
+          onScanChange(next);
+        }
       } else {
-        scanTimerRef.current = Math.min(
-          TELESCOPE_CONFIG.scanDuration,
-          scanTimerRef.current + dt,
-        );
-      }
+        if (scanningPoiRef.current !== aimedPoi.id) {
+          scanningPoiRef.current = aimedPoi.id;
+          scanTimerRef.current = 0;
+          triggeredPoiRef.current = null;
+        } else {
+          scanTimerRef.current = Math.min(
+            TELESCOPE_CONFIG.scanDuration,
+            scanTimerRef.current + dt,
+          );
+        }
 
-      const progress = scanTimerRef.current / TELESCOPE_CONFIG.scanDuration;
-      if (progress >= 1 && triggeredPoiRef.current !== aimedPoi.id) {
-        triggeredPoiRef.current = aimedPoi.id;
-        onPoiUnlocked(aimedPoi.id);
-      }
+        const progress = scanTimerRef.current / TELESCOPE_CONFIG.scanDuration;
+        if (progress >= 1 && triggeredPoiRef.current !== aimedPoi.id) {
+          triggeredPoiRef.current = aimedPoi.id;
+          onPoiUnlocked(aimedPoi.id);
+        }
 
-      const last = lastReportedScanRef.current;
-      if (
-        last.poiId !== aimedPoi.id ||
-        Math.abs(last.progress - progress) >= 0.015 ||
-        (progress === 1 && last.progress !== 1)
-      ) {
-        const next: ScanState = { poiId: aimedPoi.id, progress };
-        lastReportedScanRef.current = next;
-        onScanChange(next);
+        const last = lastReportedScanRef.current;
+        if (
+          last.poiId !== aimedPoi.id ||
+          Math.abs(last.progress - progress) >= 0.015 ||
+          (progress === 1 && last.progress !== 1)
+        ) {
+          const next: ScanState = { poiId: aimedPoi.id, progress };
+          lastReportedScanRef.current = next;
+          onScanChange(next);
+        }
       }
     } else {
       scanningPoiRef.current = null;

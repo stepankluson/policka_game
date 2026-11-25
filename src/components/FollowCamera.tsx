@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CAMERA_CONFIG, TOWER_DIMENSIONS } from '../game/constants';
+import { CHURCH_TRANSFORM } from '../game/pois';
 
 interface FollowCameraProps {
   playerPosRef: RefObject<THREE.Vector3>;
@@ -171,8 +172,10 @@ export function FollowCamera({
     currentPitchRef.current += (targetPitchRef.current - currentPitchRef.current) * orbitT;
 
     // 1. Blend orbit pivot from player's head up close to the full church midpoint when zoomed far out
-    const pivotX = p.x * (1 - farBlend * 0.75);
-    const pivotZ = p.z * (1 - farBlend * 0.75);
+    const churchMidX = CHURCH_TRANSFORM.x + 17 * Math.cos(CHURCH_TRANSFORM.rotationY);
+    const churchMidZ = CHURCH_TRANSFORM.z - 17 * Math.sin(CHURCH_TRANSFORM.rotationY);
+    const pivotX = p.x * (1 - farBlend) + churchMidX * farBlend;
+    const pivotZ = p.z * (1 - farBlend) + churchMidZ * farBlend;
     const pivotY =
       (p.y + CAMERA_CONFIG.targetHeight) * (1 - farBlend) +
       CAMERA_CONFIG.farTargetHeight * farBlend;
@@ -244,20 +247,29 @@ export function FollowCamera({
       .addScaledVector(rayDir, actualDistanceRef.current);
     finalPos.y = Math.max(minCamY, finalPos.y);
 
-    // 6. AABB safety check around the central stone tower footprint (+ wallMargin)
+    // 6. Oriented AABB safety check in tower-local space around the rotated central stone tower
     const towerSafeHalf = TOWER_DIMENSIONS.coreHalf + CAMERA_CONFIG.wallMargin;
     if (
       finalPos.y < TOWER_DIMENSIONS.belfryHeight + 1.0 &&
-      finalPos.y > -TOWER_DIMENSIONS.shaftDepth &&
-      Math.abs(finalPos.x) < towerSafeHalf &&
-      Math.abs(finalPos.z) < towerSafeHalf
+      finalPos.y > -TOWER_DIMENSIONS.shaftDepth
     ) {
-      const penX = towerSafeHalf - Math.abs(finalPos.x);
-      const penZ = towerSafeHalf - Math.abs(finalPos.z);
-      if (penX < penZ) {
-        finalPos.x = (finalPos.x >= 0 ? 1 : -1) * towerSafeHalf;
-      } else {
-        finalPos.z = (finalPos.z >= 0 ? 1 : -1) * towerSafeHalf;
+      const cos = Math.cos(CHURCH_TRANSFORM.rotationY);
+      const sin = Math.sin(CHURCH_TRANSFORM.rotationY);
+      const dx = finalPos.x - CHURCH_TRANSFORM.x;
+      const dz = finalPos.z - CHURCH_TRANSFORM.z;
+      let lx = dx * cos - dz * sin;
+      let lz = dx * sin + dz * cos;
+
+      if (Math.abs(lx) < towerSafeHalf && Math.abs(lz) < towerSafeHalf) {
+        const penX = towerSafeHalf - Math.abs(lx);
+        const penZ = towerSafeHalf - Math.abs(lz);
+        if (penX < penZ) {
+          lx = (lx >= 0 ? 1 : -1) * towerSafeHalf;
+        } else {
+          lz = (lz >= 0 ? 1 : -1) * towerSafeHalf;
+        }
+        finalPos.x = CHURCH_TRANSFORM.x + lx * cos + lz * sin;
+        finalPos.z = CHURCH_TRANSFORM.z - lx * sin + lz * cos;
       }
     }
 

@@ -135,142 +135,141 @@ function TowerClockFace({ position }: { position: [number, number, number] }) {
   );
 }
 
-/** Main Neo-Gothic pale-sandstone church nave (chrámová loď) with dark slate roof & copper turret */
+/** Main Neo-Gothic pale-sandstone church nave (chrámová loď) scaled 1:1 (~48m total length) & aligned to real OSM orientation */
 function ChurchNave({ groundY, coreHalf }: { groundY: number; coreHalf: number }) {
-  const naveLength = 12.0;
-  const naveWidth = 8.6;
-  const wallHeight = 9.2;
-  const naveCenterX = coreHalf + naveLength / 2 - 0.1;
+  const naveLength = 31.0;
+  const naveWidth = 14.8;
+  const wallHeight = 16.5;
+  const naveCenterX = coreHalf + naveLength / 2 - 0.5;
 
   // Steep pitched dark-slate roof parameters
-  const roofRise = 4.9;
-  const roofHalfSpan = naveWidth / 2 + 0.4;
+  const roofRise = 9.2;
+  const roofHalfSpan = naveWidth / 2 + 0.65;
   const slopeLength = Math.hypot(roofHalfSpan, roofRise);
   const slopeAngle = Math.atan2(roofRise, roofHalfSpan);
 
-  const buttressX = [-4.8, -1.6, 1.6, 4.8];
-  const windowX = [-3.2, 0, 3.2];
+  const buttressX = [-12.5, -6.25, 0, 6.25, 12.5];
+  const windowX = [-9.4, -3.1, 3.1, 9.4];
 
   return (
     <group name="church-nave" position={[naveCenterX, groundY, 0]}>
-      {/* Main warm pale sandstone nave body */}
-      <mesh position={[0, wallHeight / 2, 0]} castShadow receiveShadow>
-        <boxGeometry args={[naveLength, wallHeight, naveWidth]} />
-        <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
-      </mesh>
-
-      {/* Weathered stone foundation plinth */}
-      <mesh position={[0, 0.55, 0]} receiveShadow>
-        <boxGeometry args={[naveLength + 0.36, 1.1, naveWidth + 0.36]} />
-        <meshStandardMaterial color={COLORS.sandstoneBase} roughness={0.96} />
-      </mesh>
-
-      {/* Upper sandstone cornice */}
-      <mesh position={[0, wallHeight + 0.18, 0]} castShadow>
-        <boxGeometry args={[naveLength + 0.42, 0.36, naveWidth + 0.42]} />
-        <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
-      </mesh>
-
-      {/* Steep pitched dark charcoal-slate roof slopes (matches photo 1 & 2) */}
-      <mesh
-        position={[0, wallHeight + roofRise / 2 + 0.15, naveWidth / 4 + 0.16]}
-        rotation={[slopeAngle, 0, 0]}
-        castShadow
-        receiveShadow
-      >
-        <boxGeometry args={[naveLength + 0.6, 0.28, slopeLength]} />
-        <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
-      </mesh>
-      <mesh
-        position={[0, wallHeight + roofRise / 2 + 0.15, -(naveWidth / 4 + 0.16)]}
-        rotation={[-slopeAngle, 0, 0]}
-        castShadow
-        receiveShadow
-      >
-        <boxGeometry args={[naveLength + 0.6, 0.28, slopeLength]} />
-        <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
-      </mesh>
-
-      {/* Roof ridge */}
-      <mesh position={[0, wallHeight + roofRise + 0.2, 0]}>
-        <boxGeometry args={[naveLength + 0.68, 0.28, 0.34]} />
-        <meshStandardMaterial color={COLORS.naveSlateRidge} roughness={0.8} />
-      </mesh>
-
-      {/* East gable wall filling under the pitched roof */}
-      <mesh position={[naveLength / 2 - 0.15, wallHeight + roofRise * 0.42, 0]}>
-        <cylinderGeometry args={[0.1, naveWidth * 0.62, roofRise * 0.92, 4]} />
-        <meshStandardMaterial color={COLORS.sandstoneWarm} roughness={0.92} />
-      </mesh>
-
-      {/* Oxidized green copper Neo-Gothic ridge turret (sanktusník) */}
-      <group position={[3.2, wallHeight + roofRise + 0.18, 0]}>
-        <mesh position={[0, 0.95, 0]} castShadow>
-          <cylinderGeometry args={[0.52, 0.58, 1.9, 6]} />
-          <meshStandardMaterial color={COLORS.copperDark} roughness={0.58} metalness={0.35} />
-        </mesh>
-        <mesh position={[0, 3.1, 0]} castShadow>
-          <coneGeometry args={[0.64, 2.7, 6]} />
-          <meshStandardMaterial color={COLORS.copperMain} roughness={0.52} metalness={0.38} />
-        </mesh>
-        <mesh position={[0, 4.6, 0]}>
-          <sphereGeometry args={[0.12, 8, 8]} />
-          <meshStandardMaterial color={COLORS.gold} roughness={0.3} metalness={0.85} />
-        </mesh>
-      </group>
-
-      {/* Stepped Neo-Gothic Sandstone Buttresses & Two-Tier Lancet Windows (matches photo 1) */}
-      {[-1, 1].map((zSign) => (
-        <group key={`nave-side-${zSign}`}>
-          {buttressX.map((bx, i) => (
-            <group
-              key={`buttress-${zSign}-${i}`}
-              position={[bx, 0, zSign * (naveWidth / 2 + 0.42)]}
-            >
-              <mesh position={[0, 2.4, 0]} castShadow receiveShadow>
-                <boxGeometry args={[0.72, 4.8, 0.95]} />
-                <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
-              </mesh>
-              <mesh position={[0, 6.5, -zSign * 0.12]} castShadow receiveShadow>
-                <boxGeometry args={[0.58, 3.8, 0.68]} />
-                <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
-              </mesh>
-              <mesh
-                position={[0, 8.55, -zSign * 0.12]}
-                rotation={[zSign * 0.45, 0, 0]}
-              >
-                <boxGeometry args={[0.66, 0.22, 0.78]} />
-                <meshStandardMaterial color={COLORS.sandstoneDark} roughness={0.95} />
-              </mesh>
-            </group>
-          ))}
-
-          {/* Upper & lower Gothic pointed-arch side windows */}
-          {windowX.map((wx, i) => (
-            <group
-              key={`nave-win-${zSign}-${i}`}
-              position={[wx, 0, zSign * (naveWidth / 2 + 0.04)]}
-              rotation={[0, zSign > 0 ? 0 : Math.PI, 0]}
-            >
-              <GothicWindow position={[0, 6.2, 0]} width={0.95} height={3.2} />
-              <GothicWindow position={[0, 2.5, 0]} width={0.85} height={2.2} />
-            </group>
-          ))}
-        </group>
-      ))}
-
-      {/* Polygonal Sandstone Eastern Presbytery / Apse with dark slate roof */}
-      <group position={[naveLength / 2 + 1.5, 0, 0]}>
-        <mesh position={[0, (wallHeight - 0.8) / 2, 0]} castShadow receiveShadow>
-          <cylinderGeometry args={[3.2, 3.3, wallHeight - 0.8, 6]} />
+        {/* Main warm pale sandstone nave body */}
+        <mesh position={[0, wallHeight / 2, 0]} castShadow receiveShadow>
+          <boxGeometry args={[naveLength, wallHeight, naveWidth]} />
           <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
         </mesh>
-        <mesh position={[0, wallHeight + 0.95, 0]} castShadow>
-          <coneGeometry args={[3.6, 3.6, 6]} />
+
+        {/* Weathered stone foundation plinth */}
+        <mesh position={[0, 0.9, 0]} receiveShadow>
+          <boxGeometry args={[naveLength + 0.6, 1.8, naveWidth + 0.6]} />
+          <meshStandardMaterial color={COLORS.sandstoneBase} roughness={0.96} />
+        </mesh>
+
+        {/* Upper sandstone cornice */}
+        <mesh position={[0, wallHeight + 0.3, 0]} castShadow>
+          <boxGeometry args={[naveLength + 0.7, 0.6, naveWidth + 0.7]} />
+          <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
+        </mesh>
+
+        {/* Steep pitched dark charcoal-slate roof slopes */}
+        <mesh
+          position={[0, wallHeight + roofRise / 2 + 0.25, naveWidth / 4 + 0.28]}
+          rotation={[slopeAngle, 0, 0]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={[naveLength + 1.0, 0.45, slopeLength]} />
           <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
         </mesh>
+        <mesh
+          position={[0, wallHeight + roofRise / 2 + 0.25, -(naveWidth / 4 + 0.28)]}
+          rotation={[-slopeAngle, 0, 0]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={[naveLength + 1.0, 0.45, slopeLength]} />
+          <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
+        </mesh>
+
+        {/* Roof ridge */}
+        <mesh position={[0, wallHeight + roofRise + 0.35, 0]}>
+          <boxGeometry args={[naveLength + 1.1, 0.45, 0.55]} />
+          <meshStandardMaterial color={COLORS.naveSlateRidge} roughness={0.8} />
+        </mesh>
+
+        {/* East gable wall filling under the pitched roof */}
+        <mesh position={[naveLength / 2 - 0.25, wallHeight + roofRise * 0.42, 0]}>
+          <cylinderGeometry args={[0.2, naveWidth * 0.62, roofRise * 0.92, 4]} />
+          <meshStandardMaterial color={COLORS.sandstoneWarm} roughness={0.92} />
+        </mesh>
+
+        {/* Oxidized green copper Neo-Gothic ridge turret (sanktusník) */}
+        <group position={[9.2, wallHeight + roofRise + 0.3, 0]}>
+          <mesh position={[0, 1.8, 0]} castShadow>
+            <cylinderGeometry args={[0.9, 1.05, 3.6, 6]} />
+            <meshStandardMaterial color={COLORS.copperDark} roughness={0.58} metalness={0.35} />
+          </mesh>
+          <mesh position={[0, 5.9, 0]} castShadow>
+            <coneGeometry args={[1.15, 5.0, 6]} />
+            <meshStandardMaterial color={COLORS.copperMain} roughness={0.52} metalness={0.38} />
+          </mesh>
+          <mesh position={[0, 8.6, 0]}>
+            <sphereGeometry args={[0.22, 8, 8]} />
+            <meshStandardMaterial color={COLORS.gold} roughness={0.3} metalness={0.85} />
+          </mesh>
+        </group>
+
+        {/* Stepped Neo-Gothic Sandstone Buttresses & Two-Tier Lancet Windows */}
+        {[-1, 1].map((zSign) => (
+          <group key={`nave-side-${zSign}`}>
+            {buttressX.map((bx, i) => (
+              <group
+                key={`buttress-${zSign}-${i}`}
+                position={[bx, 0, zSign * (naveWidth / 2 + 0.72)]}
+              >
+                <mesh position={[0, 4.4, 0]} castShadow receiveShadow>
+                  <boxGeometry args={[1.2, 8.8, 1.6]} />
+                  <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
+                </mesh>
+                <mesh position={[0, 11.8, -zSign * 0.2]} castShadow receiveShadow>
+                  <boxGeometry args={[0.95, 6.8, 1.15]} />
+                  <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
+                </mesh>
+                <mesh
+                  position={[0, 15.4, -zSign * 0.2]}
+                  rotation={[zSign * 0.45, 0, 0]}
+                >
+                  <boxGeometry args={[1.1, 0.36, 1.3]} />
+                  <meshStandardMaterial color={COLORS.sandstoneDark} roughness={0.95} />
+                </mesh>
+              </group>
+            ))}
+
+            {windowX.map((wx, i) => (
+              <group
+                key={`nave-win-${zSign}-${i}`}
+                position={[wx, 0, zSign * (naveWidth / 2 + 0.08)]}
+                rotation={[0, zSign > 0 ? 0 : Math.PI, 0]}
+              >
+                <GothicWindow position={[0, 11.4, 0]} width={1.65} height={5.6} />
+                <GothicWindow position={[0, 4.6, 0]} width={1.45} height={3.8} />
+              </group>
+            ))}
+          </group>
+        ))}
+
+        {/* Polygonal Sandstone Eastern Presbytery / Apse with dark slate roof */}
+        <group position={[naveLength / 2 + 3.2, 0, 0]}>
+          <mesh position={[0, (wallHeight - 1.2) / 2, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[5.8, 6.0, wallHeight - 1.2, 6]} />
+            <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
+          </mesh>
+          <mesh position={[0, wallHeight + 2.1, 0]} castShadow>
+            <coneGeometry args={[6.5, 6.8, 6]} />
+            <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
+          </mesh>
+        </group>
       </group>
-    </group>
   );
 }
 
@@ -806,7 +805,7 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow
       >
-        <circleGeometry args={[380, 40]} />
+        <circleGeometry args={[1200, 48]} />
         <meshStandardMaterial color="#758465" roughness={1} />
       </mesh>
     </group>

@@ -44,8 +44,8 @@ export const CAMERA_CONFIG = {
   defaultDistance: 6.2,
   /** Closest comfortable third-person zoom distance on the gallery */
   minDistance: 3.2,
-  /** Maximum zoom-out distance to view the entire St. James Church and Polička */
-  maxDistance: 115,
+  /** Maximum zoom-out distance to view the entire St. James Church and real Polička */
+  maxDistance: 260,
   /** Initial horizontal yaw behind the player (radians) */
   defaultYaw: 0,
   /** Initial vertical pitch above the player (radians) */
