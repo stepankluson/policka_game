@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { OsmRailwayData } from '../game/osmGeometry';
-import { RAILWAY_STATION_TRANSFORM, TOWN_Y } from '../game/pois';
+import { soundEngine } from '../audio/soundEngine';
+import {
+  clipPolylineToCircle,
+  WORLD_CLIP_RADIUS,
+  type OsmRailwayData,
+} from '../game/osmGeometry';
+import { RAILWAY_STATION_TRANSFORM, REAL_LANDMARKS, TOWN_Y } from '../game/pois';
+import { NIGHT_MATERIALS, timeOfDayState } from '../game/timeOfDay';
 
 interface PolickaRailwayProps {
   railway: OsmRailwayData;
@@ -208,18 +214,16 @@ function HistoricPolickaStation({
               <boxGeometry args={[1.25, 1.85, 0.14]} />
               <meshStandardMaterial color={COLORS.stationTrim} roughness={0.9} />
             </mesh>
-            <mesh position={[wx, 6.1, -5.02]}>
+            <mesh position={[wx, 6.1, -5.02]} material={NIGHT_MATERIALS.industrialWindow}>
               <boxGeometry args={[0.95, 1.55, 0.1]} />
-              <meshStandardMaterial color={COLORS.windowDark} roughness={0.5} />
             </mesh>
             {/* Ground floor windows / waiting room doors */}
             <mesh position={[wx, 2.4, -4.96]}>
               <boxGeometry args={[1.25, 2.0, 0.14]} />
               <meshStandardMaterial color={COLORS.stationTrim} roughness={0.9} />
             </mesh>
-            <mesh position={[wx, 2.4, -5.02]}>
+            <mesh position={[wx, 2.4, -5.02]} material={NIGHT_MATERIALS.carriageWindow}>
               <boxGeometry args={[0.95, 1.7, 0.1]} />
-              <meshStandardMaterial color={COLORS.windowWarm} emissive="#d69538" emissiveIntensity={0.45} roughness={0.4} />
             </mesh>
           </group>
         ))}
@@ -325,10 +329,13 @@ function SteamLocomotive() {
         <meshStandardMaterial color={COLORS.locoBrass} roughness={0.35} metalness={0.8} />
       </mesh>
 
-      {/* Warm brass front headlamp */}
-      <mesh position={[0, 2.35, 3.95]} rotation={[Math.PI / 2, 0, 0]}>
+      {/* Warm brass front headlamp (shines brightly with a real hero PointLight at night) */}
+      <mesh
+        position={[0, 2.35, 3.95]}
+        rotation={[Math.PI / 2, 0, 0]}
+        material={NIGHT_MATERIALS.headlight}
+      >
         <cylinderGeometry args={[0.26, 0.22, 0.24, 10]} />
-        <meshStandardMaterial color="#ffe4a1" emissive="#ffbe55" emissiveIntensity={1.6} />
       </mesh>
 
       {/* Engineer's Cab with warm glowing firebox inside */}
@@ -429,14 +436,8 @@ function VintageCarriage({ color }: { color: string }) {
       </mesh>
       {/* Row of warm lit/amber vintage passenger windows on both sides */}
       {[-2.8, -1.4, 0, 1.4, 2.8].map((wz, i) => (
-        <mesh key={`cw-${i}`} position={[0, 2.55, wz]}>
+        <mesh key={`cw-${i}`} position={[0, 2.55, wz]} material={NIGHT_MATERIALS.carriageWindow}>
           <boxGeometry args={[2.62, 0.88, 0.85]} />
-          <meshStandardMaterial
-            color={COLORS.windowWarm}
-            emissive="#e0a448"
-            emissiveIntensity={0.4}
-            roughness={0.45}
-          />
         </mesh>
       ))}
       {/* Bogie wheels */}
@@ -463,26 +464,48 @@ function VintageCarriage({ color }: { color: string }) {
 export function PolickaRailway({ railway }: PolickaRailwayProps) {
   const sleeperRef = useRef<THREE.InstancedMesh>(null);
   const steamRef = useRef<THREE.InstancedMesh>(null);
+  const trainGroupRef = useRef<THREE.Group>(null);
+  const locoLightRef = useRef<THREE.PointLight>(null);
   const locoRef = useRef<THREE.Group>(null);
   const tenderRef = useRef<THREE.Group>(null);
   const car1Ref = useRef<THREE.Group>(null);
   const car2Ref = useRef<THREE.Group>(null);
   const car3Ref = useRef<THREE.Group>(null);
+  const car4Ref = useRef<THREE.Group>(null);
 
   const stationPos = railway.station?.position ?? [
     RAILWAY_STATION_TRANSFORM.x,
     RAILWAY_STATION_TRANSFORM.z,
   ];
 
-  // Build smooth CatmullRomCurve3 trimmed to the visible ~2,200m horizon-to-horizon stretch
+  // Build smooth CatmullRomCurve3 clipped strictly inside WORLD_CLIP_RADIUS (base of outer hills)
   const { curve, curveLength, stationT, stationWorldTransform, ballastGeom, leftRailGeom, rightRailGeom, sleeperCount } =
     useMemo(() => {
       const [stX, stZ] = stationPos;
-      // Keep points within 1,150m of Polička station so the track stretches horizon-to-horizon
-      const filtered = railway.track.filter(
-        ([x, z]) => Math.hypot(x - stX, z - stZ) <= 1150,
+      const { centerX, centerZ } = REAL_LANDMARKS.wallOval;
+      // Clip the real OSM track polyline strictly to the outer hill perimeter so nothing pokes past the horizon
+      const clippedPieces = clipPolylineToCircle(
+        railway.track,
+        centerX,
+        centerZ,
+        WORLD_CLIP_RADIUS,
       );
-      const pts2d = filtered.length >= 4 ? filtered : railway.track;
+      let pts2d: [number, number][] = railway.track;
+      if (clippedPieces.length > 0) {
+        // Pick the clipped track piece passing closest to Polička Station
+        let bestPiece = clippedPieces[0];
+        let bestStationDistSq = Infinity;
+        for (const piece of clippedPieces) {
+          for (const [px, pz] of piece) {
+            const dSq = (px - stX) * (px - stX) + (pz - stZ) * (pz - stZ);
+            if (dSq < bestStationDistSq) {
+              bestStationDistSq = dSq;
+              bestPiece = piece;
+            }
+          }
+        }
+        if (bestPiece.length >= 2) pts2d = bestPiece;
+      }
       const vec3s = pts2d.map(([x, z]) => new THREE.Vector3(x, RAIL_Y, z));
       const c = new THREE.CatmullRomCurve3(vec3s, false, 'centripetal', 0.5);
       const len = c.getLength();
@@ -566,9 +589,33 @@ export function PolickaRailway({ railway }: PolickaRailwayProps) {
     mesh.instanceMatrix.needsUpdate = true;
   }, [curve, sleeperCount]);
 
-  // Animation state & scratch objects (zero per-frame allocations)
-  const trainDistRef = useRef(0);
-  const initializedRef = useRef(false);
+  // Randomized train schedule state machine (waiting -> running -> stopped-at-station -> running -> waiting)
+  const trainStateRef = useRef<{
+    phase: 'waiting' | 'running' | 'station-stop';
+    cooldownTimer: number;
+    stopTimer: number;
+    direction: 1 | -1;
+    dist: number;
+    cruiseSpeed: number;
+    carriageCount: 2 | 3 | 4;
+    willStopAtStation: boolean;
+    hasStoppedThisRun: boolean;
+    hasWhistledThisRun: boolean;
+    initialized: boolean;
+  }>({
+    phase: 'running',
+    cooldownTimer: 0,
+    stopTimer: 0,
+    direction: 1,
+    dist: 0,
+    cruiseSpeed: 23,
+    carriageCount: 3,
+    willStopAtStation: true,
+    hasStoppedThisRun: false,
+    hasWhistledThisRun: false,
+    initialized: false,
+  });
+
   const steamEmitTimerRef = useRef(0);
   const steamCursorRef = useRef(0);
   const puffsRef = useRef<SteamPuffState[]>(
@@ -589,72 +636,159 @@ export function PolickaRailway({ railway }: PolickaRailwayProps) {
     const dt = Math.min(rawDelta, 0.05);
     if (curveLength < 60) return;
 
-    // Start the train visibly approaching Polička station on initial load
-    if (!initializedRef.current) {
-      trainDistRef.current = Math.max(60, stationT * curveLength - 180);
-      initializedRef.current = true;
-    }
-
-    // Scenic speed with smooth slowdown when gliding past Polička station
+    const st = trainStateRef.current;
     const stationDist = stationT * curveLength;
-    const distFromStation = Math.abs(trainDistRef.current - stationDist);
-    const stationSlowFactor = Math.min(1, distFromStation / 140);
-    const speed = 7.5 + 16.5 * (stationSlowFactor * stationSlowFactor * (3 - 2 * stationSlowFactor));
 
-    trainDistRef.current += speed * dt;
-    if (trainDistRef.current > curveLength - 20) {
-      trainDistRef.current = 55;
-    }
+    const dispatchTrain = (startNearStation = false) => {
+      st.direction = Math.random() < 0.5 ? 1 : -1;
+      st.cruiseSpeed = 23 * (0.85 + Math.random() * 0.3); // ±15% randomized cruise speed
+      const counts = [2, 3, 4] as const;
+      st.carriageCount = counts[Math.floor(Math.random() * counts.length)];
+      st.willStopAtStation = Math.random() < 0.72;
+      st.hasStoppedThisRun = false;
+      st.hasWhistledThisRun = false;
+      st.stopTimer = 5 + Math.random() * 7; // 5–12s station stop
+      st.phase = 'running';
 
-    const posScratch = ptScratchRef.current;
-    const tanScratch = tanScratchRef.current;
+      // Clamp spawn/despawn cleanly inside the clipped track so the train vanishes smoothly at the hills
+      const endMargin = Math.min(72, curveLength * 0.12);
+      if (startNearStation) {
+        st.direction = 1;
+        st.dist = Math.max(endMargin, stationDist - 160);
+      } else {
+        st.dist = st.direction === 1 ? endMargin : curveLength - endMargin;
+      }
 
-    const placeCar = (ref: React.RefObject<THREE.Group | null>, distOffset: number) => {
-      const grp = ref.current;
-      if (!grp) return;
-      const d = Math.max(0.5, Math.min(curveLength - 0.5, trainDistRef.current - distOffset));
-      const t = d / curveLength;
-      curve.getPointAt(t, posScratch);
-      curve.getTangentAt(t, tanScratch);
-      grp.position.set(posScratch.x, RAIL_Y + 0.14, posScratch.z);
-      grp.rotation.set(0, Math.atan2(tanScratch.x, tanScratch.z), 0);
+      if (car3Ref.current) car3Ref.current.visible = st.carriageCount >= 3;
+      if (car4Ref.current) car4Ref.current.visible = st.carriageCount >= 4;
+      if (trainGroupRef.current) trainGroupRef.current.visible = true;
     };
 
-    placeCar(locoRef, 0);
-    placeCar(tenderRef, 7.6);
-    placeCar(car1Ref, 16.0);
-    placeCar(car2Ref, 26.2);
-    placeCar(car3Ref, 36.4);
-
-    // Emit rising white steam puffs from the locomotive's live smokestack
-    steamEmitTimerRef.current += dt;
-    if (steamEmitTimerRef.current >= 0.14 && locoRef.current) {
-      steamEmitTimerRef.current = 0;
-      const puff = puffsRef.current[steamCursorRef.current % STEAM_PUFF_COUNT];
-      steamCursorRef.current++;
-
-      const yaw = locoRef.current.rotation.y;
-      const fwdX = Math.sin(yaw);
-      const fwdZ = Math.cos(yaw);
-      stackWorldRef.current.set(
-        locoRef.current.position.x + fwdX * 3.1,
-        locoRef.current.position.y + 4.95,
-        locoRef.current.position.z + fwdZ * 3.1,
-      );
-
-      puff.age = 0;
-      puff.maxAge = 3.2 + (steamCursorRef.current % 5) * 0.25;
-      puff.origin.copy(stackWorldRef.current);
-      // Rise briskly upward and drift backward behind the moving locomotive
-      puff.vel.set(
-        -fwdX * (2.6 + (steamCursorRef.current % 3) * 0.6) + 0.8,
-        4.2 + (steamCursorRef.current % 4) * 0.4,
-        -fwdZ * (2.6 + (steamCursorRef.current % 3) * 0.6) - 0.5,
-      );
-      puff.baseScale = 0.65 + (steamCursorRef.current % 4) * 0.15;
+    if (!st.initialized) {
+      st.initialized = true;
+      dispatchTrain(true);
     }
 
-    // Update instanced steam puffs
+    let currentSpeed = 0;
+
+    if (st.phase === 'waiting') {
+      if (trainGroupRef.current) trainGroupRef.current.visible = false;
+      st.cooldownTimer -= dt;
+      if (st.cooldownTimer <= 0) {
+        dispatchTrain(false);
+      }
+    } else if (st.phase === 'station-stop') {
+      currentSpeed = 0;
+      st.stopTimer -= dt;
+      if (st.stopTimer <= 0) {
+        st.hasStoppedThisRun = true;
+        st.phase = 'running';
+      }
+    } else {
+      // Running along the track in st.direction (+1 forward or -1 reverse)
+      const signedToStation = (stationDist - st.dist) * st.direction;
+      const absDistStation = Math.abs(signedToStation);
+
+      // Blow distant ~1900 steam whistle as the train approaches Polička Station
+      if (!st.hasWhistledThisRun && signedToStation > 40 && signedToStation < 165) {
+        st.hasWhistledThisRun = true;
+        soundEngine.playTrainWhistle();
+      }
+
+      if (st.willStopAtStation && !st.hasStoppedThisRun && signedToStation >= -2 && signedToStation < 160) {
+        if (signedToStation <= 2.5) {
+          st.dist = stationDist;
+          st.phase = 'station-stop';
+          currentSpeed = 0;
+        } else {
+          // Smooth braking curve approaching Polička station
+          const u = Math.min(1, signedToStation / 160);
+          currentSpeed = 2.8 + (st.cruiseSpeed - 2.8) * (u * u * (3 - 2 * u));
+        }
+      } else if (absDistStation < 130) {
+        // Gentle acceleration out of station or slow scenic pass-through
+        const u = Math.min(1, absDistStation / 130);
+        const minPassSpeed = st.hasStoppedThisRun ? 4.5 : 8.5;
+        currentSpeed = minPassSpeed + (st.cruiseSpeed - minPassSpeed) * (u * u * (3 - 2 * u));
+      } else {
+        currentSpeed = st.cruiseSpeed;
+      }
+
+      st.dist += currentSpeed * st.direction * dt;
+
+      // Despawn cleanly inside the clipped track before reaching the outer hill edge
+      const despawnMargin = Math.min(58, curveLength * 0.1);
+      if (
+        (st.direction === 1 && st.dist > curveLength - despawnMargin) ||
+        (st.direction === -1 && st.dist < despawnMargin)
+      ) {
+        st.phase = 'waiting';
+        st.cooldownTimer = 25 + Math.random() * 50; // 25–75s randomized cooldown
+        if (trainGroupRef.current) trainGroupRef.current.visible = false;
+      }
+    }
+
+    if (locoLightRef.current) {
+      const nf = timeOfDayState.nightFactor;
+      locoLightRef.current.intensity = nf * 14;
+      locoLightRef.current.visible = st.phase !== 'waiting' && nf > 0.05;
+    }
+
+    if (st.phase !== 'waiting') {
+      const posScratch = ptScratchRef.current;
+      const tanScratch = tanScratchRef.current;
+      const dir = st.direction;
+
+      const placeCar = (ref: React.RefObject<THREE.Group | null>, distOffset: number) => {
+        const grp = ref.current;
+        if (!grp) return;
+        const d = Math.max(0.5, Math.min(curveLength - 0.5, st.dist - dir * distOffset));
+        const t = d / curveLength;
+        curve.getPointAt(t, posScratch);
+        curve.getTangentAt(t, tanScratch);
+        grp.position.set(posScratch.x, RAIL_Y + 0.14, posScratch.z);
+        // Locomotive & cars always orient cleanly along travel direction (dir * tangent)
+        grp.rotation.set(0, Math.atan2(tanScratch.x * dir, tanScratch.z * dir), 0);
+      };
+
+      placeCar(locoRef, 0);
+      placeCar(tenderRef, 7.6);
+      placeCar(car1Ref, 16.0);
+      placeCar(car2Ref, 26.2);
+      placeCar(car3Ref, 36.4);
+      placeCar(car4Ref, 46.6);
+
+      // Emit rising white steam puffs (brisk trail while moving, gentler upward puffs while stopped)
+      const emitInterval = st.phase === 'station-stop' ? 0.34 : 0.14;
+      steamEmitTimerRef.current += dt;
+      if (steamEmitTimerRef.current >= emitInterval && locoRef.current) {
+        steamEmitTimerRef.current = 0;
+        const puff = puffsRef.current[steamCursorRef.current % STEAM_PUFF_COUNT];
+        steamCursorRef.current++;
+
+        const yaw = locoRef.current.rotation.y;
+        const fwdX = Math.sin(yaw);
+        const fwdZ = Math.cos(yaw);
+        stackWorldRef.current.set(
+          locoRef.current.position.x + fwdX * 3.1,
+          locoRef.current.position.y + 4.95,
+          locoRef.current.position.z + fwdZ * 3.1,
+        );
+
+        const speedFactor = Math.min(1, currentSpeed / 18);
+        puff.age = 0;
+        puff.maxAge = 3.2 + (steamCursorRef.current % 5) * 0.25;
+        puff.origin.copy(stackWorldRef.current);
+        puff.vel.set(
+          -fwdX * (2.6 * speedFactor) + 0.7,
+          3.4 + 1.1 * speedFactor + (steamCursorRef.current % 4) * 0.35,
+          -fwdZ * (2.6 * speedFactor) - 0.4,
+        );
+        puff.baseScale = 0.6 + (steamCursorRef.current % 4) * 0.14;
+      }
+    }
+
+    // Always keep updating existing airborne steam puffs even after train enters cooldown
     const steamMesh = steamRef.current;
     if (steamMesh) {
       const dummy = dummyRef.current;
@@ -721,21 +855,35 @@ export function PolickaRailway({ railway }: PolickaRailwayProps) {
         rotationY={stationWorldTransform.rotationY}
       />
 
-      {/* Animated 1900 Steam Train: Locomotive + Coal Tender + 3 Vintage Carriages */}
-      <group ref={locoRef}>
-        <SteamLocomotive />
-      </group>
-      <group ref={tenderRef}>
-        <CoalTender />
-      </group>
-      <group ref={car1Ref}>
-        <VintageCarriage color={COLORS.carriageGreen} />
-      </group>
-      <group ref={car2Ref}>
-        <VintageCarriage color={COLORS.carriageBrown} />
-      </group>
-      <group ref={car3Ref}>
-        <VintageCarriage color={COLORS.carriageGreen} />
+      {/* Animated 1900 Steam Train: Locomotive + Coal Tender + 2–4 Vintage Carriages */}
+      <group ref={trainGroupRef}>
+        <group ref={locoRef}>
+          <SteamLocomotive />
+          <pointLight
+            ref={locoLightRef}
+            position={[0, 2.4, 5.2]}
+            color="#ffe09e"
+            intensity={0}
+            distance={36}
+            decay={1.6}
+            visible={false}
+          />
+        </group>
+        <group ref={tenderRef}>
+          <CoalTender />
+        </group>
+        <group ref={car1Ref}>
+          <VintageCarriage color={COLORS.carriageGreen} />
+        </group>
+        <group ref={car2Ref}>
+          <VintageCarriage color={COLORS.carriageBrown} />
+        </group>
+        <group ref={car3Ref}>
+          <VintageCarriage color={COLORS.carriageGreen} />
+        </group>
+        <group ref={car4Ref} visible={false}>
+          <VintageCarriage color={COLORS.carriageBrown} />
+        </group>
       </group>
 
       {/* Stylized Rising White Steam Puffs */}

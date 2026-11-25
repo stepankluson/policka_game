@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { INITIAL_PLAYER_POSITION, PLAYER_CONFIG, RING_BOUNDS } from '../game/constants';
 import { CHURCH_TRANSFORM, churchLocalToWorld } from '../game/pois';
 import { constrainToSquareRing, dampAngle } from '../game/ringCollision';
+import { timeOfDayState } from '../game/timeOfDay';
 import { useKeyboard } from '../game/useKeyboard';
 
 interface PlayerProps {
@@ -36,6 +37,7 @@ export function Player({
   const rightLegRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
   const rightArmRef = useRef<THREE.Group>(null);
+  const lanternLightRef = useRef<THREE.PointLight>(null);
 
   // Persistent scratch vectors & motion state (zero allocations per frame)
   const velocityRef = useRef(new THREE.Vector3());
@@ -146,6 +148,12 @@ export function Player({
       leftArmRef.current.rotation.x = -swing * 0.75;
       // Keep lantern-bearing right arm raised forward with subtle sway
       rightArmRef.current.rotation.x = -0.45 + swing * 0.25;
+    }
+
+    // Scale warm handheld lantern PointLight smoothly with nightFactor (active in 3rd person; 1st person has its own viewmodel light)
+    if (lanternLightRef.current) {
+      const nf = timeOfDayState.nightFactor;
+      lanternLightRef.current.intensity = visible ? 1.8 + nf * 2.8 : 0;
     }
   });
 
@@ -285,10 +293,11 @@ export function Player({
               <meshStandardMaterial color="#3b2f26" roughness={0.5} metalness={0.7} />
             </mesh>
             <pointLight
+              ref={lanternLightRef}
               color="#ffb65c"
               intensity={2.4}
-              distance={6.5}
-              decay={2}
+              distance={8.5}
+              decay={1.8}
             />
           </group>
         </group>

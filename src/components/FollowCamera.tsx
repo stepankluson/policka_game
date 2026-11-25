@@ -19,6 +19,97 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** 4 corner turret XZ coordinates in tower-local space */
+const CORNER_TURRETS: readonly (readonly [number, number])[] = [
+  [-TOWER_DIMENSIONS.railingHalf, -TOWER_DIMENSIONS.railingHalf],
+  [TOWER_DIMENSIONS.railingHalf, -TOWER_DIMENSIONS.railingHalf],
+  [-TOWER_DIMENSIONS.railingHalf, TOWER_DIMENSIONS.railingHalf],
+  [TOWER_DIMENSIONS.railingHalf, TOWER_DIMENSIONS.railingHalf],
+];
+const TURRET_SAFE_RADIUS = 0.46 + 0.46; // spire cone radius (0.46m) + 0.46m camera safety buffer
+const TURRET_MIN_Y = -0.2;
+const TURRET_MAX_Y = 10.2;
+
+/**
+ * Analytical 3D ray vs. vertical cylinder intersection in tower-local space.
+ * Returns smallest hit t in (0, 1] along segment P0 -> P1, or null if no hit.
+ */
+function rayVerticalCylinderHitT(
+  p0x: number,
+  p0y: number,
+  p0z: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  cx: number,
+  cz: number,
+  radius: number,
+  minY: number,
+  maxY: number,
+): number | null {
+  const fx = p0x - cx;
+  const fz = p0z - cz;
+  const a = dx * dx + dz * dz;
+  if (a < 1e-8) return null;
+  const b = 2 * (fx * dx + fz * dz);
+  const c = fx * fx + fz * fz - radius * radius;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return null;
+  const sqrtD = Math.sqrt(disc);
+  const t1 = (-b - sqrtD) / (2 * a);
+  const t2 = (-b + sqrtD) / (2 * a);
+  if (t1 > 0.001 && t1 <= 1) {
+    const hy = p0y + dy * t1;
+    if (hy >= minY && hy <= maxY) return t1;
+  }
+  if (t2 > 0.001 && t2 <= 1) {
+    const hy = p0y + dy * t2;
+    if (hy >= minY && hy <= maxY) return t2;
+  }
+  return null;
+}
+
+/**
+ * Analytical 3D ray vs. axis-aligned box intersection in tower-local space.
+ * Returns entry hit t in (0, 1] along segment P0 -> P1, or null if no hit.
+ */
+function rayAABBHitT(
+  p0x: number,
+  p0y: number,
+  p0z: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  halfX: number,
+  halfZ: number,
+  minY: number,
+  maxY: number,
+): number | null {
+  let tMin = 0.001;
+  let tMax = 1.0;
+
+  const checkAxis = (p0: number, d: number, bMin: number, bMax: number): boolean => {
+    if (Math.abs(d) < 1e-8) {
+      return p0 >= bMin && p0 <= bMax;
+    }
+    let t1 = (bMin - p0) / d;
+    let t2 = (bMax - p0) / d;
+    if (t1 > t2) {
+      const tmp = t1;
+      t1 = t2;
+      t2 = tmp;
+    }
+    tMin = Math.max(tMin, t1);
+    tMax = Math.min(tMax, t2);
+    return tMin <= tMax;
+  };
+
+  if (!checkAxis(p0x, dx, -halfX, halfX)) return null;
+  if (!checkAxis(p0z, dz, -halfZ, halfZ)) return null;
+  if (!checkAxis(p0y, dy, minY, maxY)) return null;
+  return tMin;
+}
+
 /**
  * Free-orbit third-person camera around the player character & church tower:
  * - Click & drag mouse to orbit 360° horizontally and tilt vertically
@@ -166,17 +257,30 @@ export function FollowCamera({
     const desiredDist = desiredDistanceRef.current;
     const farBlend = smoothstep(10, 48, desiredDist);
 
-    // Dynamically clamp pitch if user zooms back in from a low-angle panoramic view
+    // Dynamically clamp pitch if user zooms back in so camera never clips floor or overhanging spire roof
+    const closeBlend = smoothstep(8, 36, desiredDist);
     const minPitch =
       CAMERA_CONFIG.minPitchClose +
-      (CAMERA_CONFIG.minPitchFar - CAMERA_CONFIG.minPitchClose) *
-        smoothstep(8, 36, desiredDist);
+      (CAMERA_CONFIG.minPitchFar - CAMERA_CONFIG.minPitchClose) * closeBlend;
+    const maxPitch = 1.02 + (CAMERA_CONFIG.maxPitch - 1.02) * closeBlend;
     if (targetPitchRef.current < minPitch) {
       targetPitchRef.current = minPitch;
+    } else if (targetPitchRef.current > maxPitch) {
+      targetPitchRef.current = maxPitch;
     }
 
-    currentYawRef.current += (targetYawRef.current - currentYawRef.current) * orbitT;
-    currentPitchRef.current += (targetPitchRef.current - currentPitchRef.current) * orbitT;
+    currentYawRef.current = THREE.MathUtils.damp(
+      currentYawRef.current,
+      targetYawRef.current,
+      CAMERA_CONFIG.orbitDamping,
+      dt,
+    );
+    currentPitchRef.current = THREE.MathUtils.damp(
+      currentPitchRef.current,
+      targetPitchRef.current,
+      CAMERA_CONFIG.orbitDamping,
+      dt,
+    );
 
     // 1. Blend orbit pivot from player's head up close to the full church midpoint when zoomed far out
     const churchMidX = CHURCH_TRANSFORM.x + 17 * Math.cos(CHURCH_TRANSFORM.rotationY);
@@ -208,44 +312,114 @@ export function FollowCamera({
       pivot.z + Math.cos(yaw) * horizDist,
     );
 
-    // 3. Spring-arm raycast when operating close to the gallery (releases for 360° panoramic zoom-out)
+    // 3. Spring-arm collision check when operating close to the gallery (releases for 360° panoramic zoom-out)
+    //    Checks BOTH tower mesh colliders AND analytical bounds for all 4 corner turrets + central core/spire
     const rayDir = rayDirRef.current.subVectors(desiredCamPos, pivot);
     const rayLen = rayDir.length();
+
+    const cosR = Math.cos(CHURCH_TRANSFORM.rotationY);
+    const sinR = Math.sin(CHURCH_TRANSFORM.rotationY);
+    const towerSafeHalf = TOWER_DIMENSIONS.coreHalf + 0.44;
 
     let safeDistance = rayLen;
     if (rayLen > 1e-4) {
       rayDir.divideScalar(rayLen);
 
-      const colliders = cameraCollidersRef.current;
-      if (colliders.length > 0 && desiredDist <= CAMERA_CONFIG.panoramicThreshold) {
-        const raycaster = raycasterRef.current;
-        raycaster.set(pivot, rayDir);
-        raycaster.near = 0.05;
-        raycaster.far = rayLen;
+      if (desiredDist <= CAMERA_CONFIG.panoramicThreshold) {
+        // 3A. Lightweight raycast strictly against central tower structure meshes
+        const colliders = cameraCollidersRef.current;
+        if (colliders.length > 0) {
+          const raycaster = raycasterRef.current;
+          raycaster.set(pivot, rayDir);
+          raycaster.near = 0.05;
+          raycaster.far = rayLen;
 
-        const hits = hitResultsRef.current;
-        hits.length = 0;
-        raycaster.intersectObjects(colliders, false, hits);
+          const hits = hitResultsRef.current;
+          hits.length = 0;
+          raycaster.intersectObjects(colliders, false, hits);
 
-        if (hits.length > 0) {
-          safeDistance = Math.max(
-            CAMERA_CONFIG.minSafeDistance,
-            hits[0].distance - CAMERA_CONFIG.wallMargin,
+          if (hits.length > 0) {
+            safeDistance = Math.min(
+              safeDistance,
+              Math.max(CAMERA_CONFIG.minSafeDistance, hits[0].distance - 0.42),
+            );
+          }
+        }
+
+        // 3B. Analytical ray checks in tower-local space against all 4 corner turrets & upper copper spire skirt
+        const p0dx = pivot.x - CHURCH_TRANSFORM.x;
+        const p0dz = pivot.z - CHURCH_TRANSFORM.z;
+        const p0lx = p0dx * cosR - p0dz * sinR;
+        const p0lz = p0dx * sinR + p0dz * cosR;
+
+        const p1dx = desiredCamPos.x - CHURCH_TRANSFORM.x;
+        const p1dz = desiredCamPos.z - CHURCH_TRANSFORM.z;
+        const p1lx = p1dx * cosR - p1dz * sinR;
+        const p1lz = p1dx * sinR + p1dz * cosR;
+
+        const dlx = p1lx - p0lx;
+        const dly = desiredCamPos.y - pivot.y;
+        const dlz = p1lz - p0lz;
+
+        for (let i = 0; i < CORNER_TURRETS.length; i++) {
+          const [tx, tz] = CORNER_TURRETS[i];
+          const hitT = rayVerticalCylinderHitT(
+            p0lx,
+            pivot.y,
+            p0lz,
+            dlx,
+            dly,
+            dlz,
+            tx,
+            tz,
+            TURRET_SAFE_RADIUS,
+            TURRET_MIN_Y,
+            TURRET_MAX_Y,
+          );
+          if (hitT !== null) {
+            safeDistance = Math.min(
+              safeDistance,
+              Math.max(CAMERA_CONFIG.minSafeDistance, hitT * rayLen - 0.12),
+            );
+          }
+        }
+
+        // Central watchroom + flared copper spire skirt AABB check
+        const spireHitT = rayAABBHitT(
+          p0lx,
+          pivot.y,
+          p0lz,
+          dlx,
+          dly,
+          dlz,
+          towerSafeHalf,
+          towerSafeHalf,
+          -TOWER_DIMENSIONS.shaftDepth,
+          TOWER_DIMENSIONS.belfryHeight + 3.2,
+        );
+        if (spireHitT !== null) {
+          safeDistance = Math.min(
+            safeDistance,
+            Math.max(CAMERA_CONFIG.minSafeDistance, spireHitT * rayLen - 0.12),
           );
         }
       }
     }
 
-    // 4. Asymmetric smooth interpolation: pull in fast on wall hit, ease out smoothly when clear
+    // 4. Frame-rate-independent asymmetric damping: pull in fast on obstruction, ease out smoothly when clear
     const pullingIn = safeDistance < actualDistanceRef.current;
     const dampRate = pullingIn
       ? CAMERA_CONFIG.pullInDamping
       : CAMERA_CONFIG.easeOutDamping;
-    const distT = 1 - Math.exp(-dampRate * dt);
-    actualDistanceRef.current += (safeDistance - actualDistanceRef.current) * distT;
+    actualDistanceRef.current = THREE.MathUtils.damp(
+      actualDistanceRef.current,
+      safeDistance,
+      dampRate,
+      dt,
+    );
 
-    if (pullingIn && actualDistanceRef.current > safeDistance + 0.08) {
-      actualDistanceRef.current = safeDistance + 0.08;
+    if (pullingIn && actualDistanceRef.current > safeDistance + 0.06) {
+      actualDistanceRef.current = safeDistance + 0.06;
     }
 
     // 5. Compute final camera position along ray
@@ -254,20 +428,20 @@ export function FollowCamera({
       .addScaledVector(rayDir, actualDistanceRef.current);
     finalPos.y = Math.max(minCamY, finalPos.y);
 
-    // 6. Oriented AABB safety check in tower-local space around the rotated central stone tower
-    const towerSafeHalf = TOWER_DIMENSIONS.coreHalf + CAMERA_CONFIG.wallMargin;
-    if (
-      finalPos.y < TOWER_DIMENSIONS.belfryHeight + 1.0 &&
-      finalPos.y > -TOWER_DIMENSIONS.shaftDepth
-    ) {
-      const cos = Math.cos(CHURCH_TRANSFORM.rotationY);
-      const sin = Math.sin(CHURCH_TRANSFORM.rotationY);
+    // 6. Oriented safety push-out in tower-local space for BOTH central tower core AND all 4 corner turrets
+    if (desiredDist <= CAMERA_CONFIG.panoramicThreshold + 4) {
       const dx = finalPos.x - CHURCH_TRANSFORM.x;
       const dz = finalPos.z - CHURCH_TRANSFORM.z;
-      let lx = dx * cos - dz * sin;
-      let lz = dx * sin + dz * cos;
+      let lx = dx * cosR - dz * sinR;
+      let lz = dx * sinR + dz * cosR;
+      let pushed = false;
 
-      if (Math.abs(lx) < towerSafeHalf && Math.abs(lz) < towerSafeHalf) {
+      if (
+        finalPos.y < TOWER_DIMENSIONS.belfryHeight + 3.2 &&
+        finalPos.y > -TOWER_DIMENSIONS.shaftDepth &&
+        Math.abs(lx) < towerSafeHalf &&
+        Math.abs(lz) < towerSafeHalf
+      ) {
         const penX = towerSafeHalf - Math.abs(lx);
         const penZ = towerSafeHalf - Math.abs(lz);
         if (penX < penZ) {
@@ -275,8 +449,31 @@ export function FollowCamera({
         } else {
           lz = (lz >= 0 ? 1 : -1) * towerSafeHalf;
         }
-        finalPos.x = CHURCH_TRANSFORM.x + lx * cos + lz * sin;
-        finalPos.z = CHURCH_TRANSFORM.z - lx * sin + lz * cos;
+        pushed = true;
+      }
+
+      if (finalPos.y >= TURRET_MIN_Y && finalPos.y <= TURRET_MAX_Y) {
+        for (let i = 0; i < CORNER_TURRETS.length; i++) {
+          const [tx, tz] = CORNER_TURRETS[i];
+          const tdx = lx - tx;
+          const tdz = lz - tz;
+          const tDistSq = tdx * tdx + tdz * tdz;
+          if (tDistSq < TURRET_SAFE_RADIUS * TURRET_SAFE_RADIUS) {
+            const tDist = Math.sqrt(tDistSq);
+            if (tDist > 1e-4) {
+              lx = tx + (tdx / tDist) * TURRET_SAFE_RADIUS;
+              lz = tz + (tdz / tDist) * TURRET_SAFE_RADIUS;
+            } else {
+              lx = tx + (tx >= 0 ? 1 : -1) * TURRET_SAFE_RADIUS;
+            }
+            pushed = true;
+          }
+        }
+      }
+
+      if (pushed) {
+        finalPos.x = CHURCH_TRANSFORM.x + lx * cosR + lz * sinR;
+        finalPos.z = CHURCH_TRANSFORM.z - lx * sinR + lz * cosR;
       }
     }
 

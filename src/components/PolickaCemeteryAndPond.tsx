@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { TOWN_Y } from '../game/pois';
+import { NIGHT_MATERIALS } from '../game/timeOfDay';
 
 interface StMichaelCemeteryProps {
   position: [number, number, number];
@@ -61,13 +62,15 @@ function ChurchArchedWindow({ position }: { position: [number, number, number] }
         <boxGeometry args={[1.05, 2.35, 0.1]} />
         <meshStandardMaterial color={CEMETERY_COLORS.plasterTrim} roughness={0.92} />
       </mesh>
-      <mesh position={[0, 0, 0.06]}>
+      <mesh position={[0, 0, 0.06]} material={NIGHT_MATERIALS.churchStainedGlass}>
         <boxGeometry args={[0.78, 2.05, 0.08]} />
-        <meshStandardMaterial color={CEMETERY_COLORS.windowDark} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 1.02, 0.06]} rotation={[Math.PI / 2, 0, 0]}>
+      <mesh
+        position={[0, 1.02, 0.06]}
+        rotation={[Math.PI / 2, 0, 0]}
+        material={NIGHT_MATERIALS.churchStainedGlass}
+      >
         <cylinderGeometry args={[0.39, 0.39, 0.08, 8]} />
-        <meshStandardMaterial color={CEMETERY_COLORS.windowDark} roughness={0.55} />
       </mesh>
     </group>
   );

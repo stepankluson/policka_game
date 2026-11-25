@@ -2,6 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
+  CADASTRAL_1839_CHIMNEY_TOPS,
+  CADASTRAL_1839_EXCLUSION_POLYGONS,
+  MILL_STREAM_POINTS_1839,
+} from '../game/cadastral1839';
+import {
+  EASTERN_STREAM_POINTS_1903,
+  SURVEY_1903_CHIMNEY_TOPS,
+  SURVEY_1903_EXCLUSION_POLYGONS,
+} from '../game/survey1903';
+import {
   buildMergedBuildingsGeometry,
   buildMergedFlatPolygons,
   buildMergedStreetsGeometry,
@@ -23,16 +33,28 @@ import {
 } from '../game/pois';
 import { Marketplace } from './Marketplace';
 import { PolickaBrewery } from './PolickaBrewery';
+import { PolickaCadastral1839 } from './PolickaCadastral1839';
+import { PolickaSurvey1903 } from './PolickaSurvey1903';
+import { FireWatchWorld } from './FireWatchWorld';
+import type { FireWatchState } from '../game/fireWatch';
 import {
   StMichaelCemetery,
   SynskyRybnikDetails,
 } from './PolickaCemeteryAndPond';
+import { PolickaJackdaws } from './PolickaJackdaws';
 import { BaroqueTownHall, PlagueColumn } from './PolickaLandmarks';
 import { PolickaRailway } from './PolickaRailway';
+import { TownChimneySmoke } from './TownChimneySmoke';
+import { TownNightLights } from './TownNightLights';
+import { Townspeople } from './Townspeople';
+import { TownTraffic } from './TownTraffic';
 
 interface TownDioramaProps {
   unlockedPois: ReadonlySet<string>;
   onChimneyTopsReady?: (tops: ChimneyTop[], sources?: ChimneySmokeSource[]) => void;
+  fireWatch?: FireWatchState;
+  onFireEngineArrived?: () => void;
+  onExtinguishComplete?: () => void;
 }
 
 interface TreeInstance {
@@ -40,21 +62,6 @@ interface TreeInstance {
   z: number;
   scale: number;
   color: THREE.Color;
-}
-
-interface VillagerSpec {
-  pathIndex: number;
-  direction: 1 | -1;
-  phase: number;
-  speed: number;
-  bodyColor: THREE.Color;
-  headColor: THREE.Color;
-}
-
-interface ClosedPath {
-  points: readonly (readonly [number, number])[];
-  segLengths: number[];
-  totalLength: number;
 }
 
 const TREE_FOLIAGE_COLORS = [
@@ -65,17 +72,10 @@ const TREE_FOLIAGE_COLORS = [
   '#a16e3b',
 ].map((c) => new THREE.Color(c));
 
-const VILLAGER_TUNIC_COLORS = [
-  '#c85a3a',
-  '#3e6685',
-  '#d49c3d',
-  '#4e7a56',
-  '#7a4d66',
-  '#9c6844',
-  '#4f5d75',
-].map((c) => new THREE.Color(c));
-
-const SKIN_TONES = ['#f2cbb0', '#e8ba98', '#ddb08e'].map((c) => new THREE.Color(c));
+const EXTRA_CHIMNEY_TOPS = [
+  ...CADASTRAL_1839_CHIMNEY_TOPS,
+  ...SURVEY_1903_CHIMNEY_TOPS,
+] as const;
 
 const POND_CENTER = REAL_LANDMARKS.pondCenter;
 /** Long facade of BaroqueTownHall is along local Z, so add +PI/2 to townHallTransform.rotationY */
@@ -90,47 +90,6 @@ function mulberry32(seed: number) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-function buildClosedPath(points: readonly (readonly [number, number])[]): ClosedPath {
-  const segLengths: number[] = [];
-  let totalLength = 0;
-  for (let i = 0; i < points.length; i++) {
-    const a = points[i];
-    const b = points[(i + 1) % points.length];
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    segLengths.push(len);
-    totalLength += len;
-  }
-  return { points, segLengths, totalLength };
-}
-
-function sampleClosedPath(
-  path: ClosedPath,
-  distance: number,
-  direction: 1 | -1,
-): { x: number; z: number; rotY: number } {
-  const len = path.totalLength;
-  const wrapped = ((distance % len) + len) % len;
-  let d = wrapped;
-
-  for (let i = 0; i < path.points.length; i++) {
-    const segLen = path.segLengths[i];
-    if (d <= segLen || i === path.points.length - 1) {
-      const a = path.points[i];
-      const b = path.points[(i + 1) % path.points.length];
-      const t = segLen > 1e-5 ? d / segLen : 0;
-      const dx = (b[0] - a[0]) * direction;
-      const dz = (b[1] - a[1]) * direction;
-      return {
-        x: a[0] + (b[0] - a[0]) * t,
-        z: a[1] + (b[1] - a[1]) * t,
-        rotY: Math.atan2(dx, dz),
-      };
-    }
-    d -= segLen;
-  }
-  return { x: path.points[0][0], z: path.points[0][1], rotY: 0 };
 }
 
 /** Octagonal stone fountain with painterly muted blue-green water */
@@ -157,15 +116,18 @@ function StoneFountain({ position }: { position: [number, number, number] }) {
   );
 }
 
-export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaProps) {
+export function TownDiorama({
+  unlockedPois,
+  onChimneyTopsReady,
+  fireWatch,
+  onFireEngineArrived,
+  onExtinguishComplete,
+}: TownDioramaProps) {
   const [osmData, setOsmData] = useState<PolickaOsmData | null>(null);
 
   const treeTrunkRef = useRef<THREE.InstancedMesh>(null);
   const treeFoliageRef = useRef<THREE.InstancedMesh>(null);
-  const villagerBodyRef = useRef<THREE.InstancedMesh>(null);
-  const villagerHeadRef = useRef<THREE.InstancedMesh>(null);
   const beaconRefs = useRef<(THREE.Group | null)[]>([]);
-  const dummy = useMemo(() => new THREE.Object3D(), []);
 
   // Static load of pre-fetched Polička OSM dataset in native real-world meter coordinates
   useEffect(() => {
@@ -183,23 +145,109 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
     };
   }, []);
 
-  // Render ALL real OSM medieval city wall segments + RÚIAN wall ribbons in unified warm weathered stone
-  // with clean road/water openings and evenly spaced alternating A-B-A-B bastions.
-  // Computed BEFORE buildings so buildings & OBB pitched roofs strictly respect the closed wall ring & bastions.
+  // 1. Build merged streets & suburban road network FIRST (with programmatic building-footprint
+  //    clearance guard) so we have the exact list of EVERY rendered road polyline before cutting
+  //    city wall gate openings.
+  const streetsResult = useMemo(() => {
+    if (!osmData) return null;
+
+    // Compute exact world-space entrances for Brewery, Train Station forecourt, and St. Michael's Cemetery gate
+    const brCos = Math.cos(BREWERY_TRANSFORM.rotationY);
+    const brSin = Math.sin(BREWERY_TRANSFORM.rotationY);
+    const breweryGate: [number, number] = [
+      BREWERY_TRANSFORM.x + -19.8 * brSin,
+      BREWERY_TRANSFORM.z + -19.8 * brCos,
+    ];
+    const breweryInner: [number, number] = [
+      BREWERY_TRANSFORM.x + -16.0 * brSin,
+      BREWERY_TRANSFORM.z + -16.0 * brCos,
+    ];
+
+    const stBaseX = osmData.railway?.station?.position[0] ?? RAILWAY_STATION_TRANSFORM.x;
+    const stBaseZ = osmData.railway?.station?.position[1] ?? RAILWAY_STATION_TRANSFORM.z;
+    const stTrackAng = osmData.railway?.station?.trackAngle ?? RAILWAY_STATION_TRANSFORM.trackAngle;
+    // Perpendicular vector pointing toward town (+Z side of the track)
+    let sideX = Math.cos(stTrackAng);
+    let sideZ = -Math.sin(stTrackAng);
+    if (sideZ < 0) {
+      sideX = -sideX;
+      sideZ = -sideZ;
+    }
+    const stationRotY = Math.atan2(sideX, sideZ);
+    // Station building town-facing door is at 15.3m from track; forecourt center sits flush at 20.5m
+    const stationForecourtCenter: [number, number] = [
+      stBaseX + sideX * 20.5,
+      stBaseZ + sideZ * 20.5,
+    ];
+
+    const cmCos = Math.cos(ST_MICHAEL_TRANSFORM.rotationY);
+    const cmSin = Math.sin(ST_MICHAEL_TRANSFORM.rotationY);
+    const cemeteryGate: [number, number] = [
+      ST_MICHAEL_TRANSFORM.x + 28.0 * cmCos,
+      ST_MICHAEL_TRANSFORM.z - 28.0 * cmSin,
+    ];
+    const cemeteryInner: [number, number] = [
+      ST_MICHAEL_TRANSFORM.x + 25.0 * cmCos,
+      ST_MICHAEL_TRANSFORM.z - 25.0 * cmSin,
+    ];
+
+    // Collect ALL rendered building footprints (OSM + 1839 + 1903 custom houses) for zero-clipping road check
+    const { centerX, centerZ, radiusX, radiusZ } = REAL_LANDMARKS.wallOval;
+    const buildingFootprints: (readonly [number, number][])[] = [
+      ...CADASTRAL_1839_EXCLUSION_POLYGONS,
+      ...SURVEY_1903_EXCLUSION_POLYGONS,
+    ];
+    for (const b of osmData.buildings) {
+      if (b.points.length < 3) continue;
+      let cx = 0;
+      let cz = 0;
+      for (const [px, pz] of b.points) {
+        cx += px;
+        cz += pz;
+      }
+      cx /= b.points.length;
+      cz /= b.points.length;
+      const dn = Math.hypot((cx - centerX) / radiusX, (cz - centerZ) / radiusZ);
+      if (dn > 1.02 && (dn > 1.36 || b.area > 175 || b.height > 7.4)) continue;
+      buildingFootprints.push(b.points);
+    }
+
+    return buildMergedStreetsGeometry(
+      osmData.streets,
+      TOWN_Y + 0.45,
+      REAL_LANDMARKS.wallOval,
+      {
+        breweryGate,
+        breweryInner,
+        stationForecourtCenter,
+        stationRotY,
+        cemeteryGate,
+        cemeteryInner,
+      },
+      buildingFootprints,
+    );
+  }, [osmData]);
+
+  // 2. Render ALL real OSM medieval city wall segments + RÚIAN wall ribbons in unified warm weathered stone
+  //    with clean gate openings automatically cut wherever ANY rendered road crosses the wall ring,
+  //    and evenly spaced alternating A-B-A-B bastions strictly clear of all road openings.
   const { wallSegments, bastions, wallRing } = useMemo(() => {
-    if (!osmData) return { wallSegments: [], bastions: [], wallRing: [] as [number, number][] };
+    if (!osmData || !streetsResult) {
+      return { wallSegments: [], bastions: [], wallRing: [] as [number, number][] };
+    }
     return buildRealOsmWalls(
       osmData.walls,
       osmData.streets,
       osmData.water,
       osmData.buildings,
       REAL_LANDMARKS.wallOval,
+      streetsResult.renderedRoadPolylines,
     );
-  }, [osmData]);
+  }, [osmData, streetsResult]);
 
-  // Build merged BufferGeometries once OSM data & wall ring load
+  // 3. Build merged building, park & water BufferGeometries once OSM data, streets & wall ring load
   const merged = useMemo(() => {
-    if (!osmData) return null;
+    if (!osmData || !streetsResult) return null;
 
     const excludeIds = new Set<number>();
     if (osmData.landmarks.townHall) {
@@ -224,7 +272,7 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
       }
     }
 
-    const { wallGeometry, roofGeometry, chimneyGeometry, chimneyTops } =
+    const { wallGeometry, roofGeometry, chimneyGeometry, chimneyTops, houseWindows } =
       buildMergedBuildingsGeometry(
         osmData.buildings,
         TOWN_Y,
@@ -234,11 +282,6 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
         wallRing,
         bastions,
       );
-    const streetsGeometry = buildMergedStreetsGeometry(
-      osmData.streets,
-      TOWN_Y + 0.45,
-      REAL_LANDMARKS.wallOval,
-    );
     const parksGeometry = buildMergedFlatPolygons(osmData.parks, TOWN_Y + 0.15);
     const waterGeometry = buildMergedFlatPolygons(osmData.water, TOWN_Y + 0.25);
 
@@ -247,11 +290,16 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
       roofGeometry,
       chimneyGeometry,
       chimneyTops,
-      streetsGeometry,
+      houseWindows,
+      streetsGeometry: streetsResult.streetsGeometry,
+      footpathGeometry: streetsResult.footpathGeometry,
+      connectorRoads: streetsResult.connectorRoads,
+      stationForecourtPolygon: streetsResult.stationForecourtPolygon,
+      roadGraph: streetsResult.roadGraph,
       parksGeometry,
       waterGeometry,
     };
-  }, [osmData, wallRing, bastions]);
+  }, [osmData, streetsResult, wallRing, bastions]);
 
   // Export world-space chimney top coordinates (houses + tall industrial brewery smokestack)
   // for future rising smoke particles
@@ -272,11 +320,18 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
   // Dispose merged geometries on unmount
   useEffect(() => {
     return () => {
+      if (!streetsResult) return;
+      streetsResult.streetsGeometry.dispose();
+      streetsResult.footpathGeometry.dispose();
+    };
+  }, [streetsResult]);
+
+  useEffect(() => {
+    return () => {
       if (!merged) return;
       merged.wallGeometry.dispose();
       merged.roofGeometry.dispose();
       merged.chimneyGeometry.dispose();
-      merged.streetsGeometry.dispose();
       merged.parksGeometry.dispose();
       merged.waterGeometry.dispose();
     };
@@ -345,7 +400,7 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
         52,
         ST_MICHAEL_TRANSFORM.rotationY,
       ),
-      // Real 1896–1897 Polička railway corridor (5m clearance) & station footprint
+      // Real 1896–1897 Polička railway corridor (5m clearance), station footprint, connecting roads & forecourt
       railwayTrack: osmData.railway?.track,
       stationPolygon: makeRectPoly(
         osmData.railway?.station?.position[0] ?? RAILWAY_STATION_TRANSFORM.x,
@@ -354,6 +409,16 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
         24,
         osmData.railway?.station?.trackAngle ?? RAILWAY_STATION_TRANSFORM.trackAngle,
       ),
+      connectorRoads: [
+        ...(merged?.connectorRoads ?? []),
+        { points: MILL_STREAM_POINTS_1839, halfW: 4.5 },
+        { points: EASTERN_STREAM_POINTS_1903, halfW: 4.5 },
+      ],
+      stationForecourtPolygon: merged?.stationForecourtPolygon,
+      extraExclusionPolygons: [
+        ...CADASTRAL_1839_EXCLUSION_POLYGONS,
+        ...SURVEY_1903_EXCLUSION_POLYGONS,
+      ],
       wallOval: REAL_LANDMARKS.wallOval,
     });
 
@@ -401,7 +466,7 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
     }
 
     return list;
-  }, [osmData, wallSegments, bastions]);
+  }, [osmData, wallSegments, bastions, merged]);
 
   // 19th-century Vysočina rolling meadows & patchwork fields (strictly non-overlapping AABBs)
   const pastoralFields = useMemo(() => {
@@ -437,6 +502,8 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
       if (Math.hypot(x - POND_CENTER[0], z - POND_CENTER[1]) < 95) continue;
       if (Math.hypot(x - BREWERY_TRANSFORM.x, z - BREWERY_TRANSFORM.z) < 62) continue;
       if (Math.hypot(x - ST_MICHAEL_TRANSFORM.x, z - ST_MICHAEL_TRANSFORM.z) < 52) continue;
+      // Keep random pastoral squares clear of the 1903 narrow strip-field zone south of Synský rybník
+      if (x > 0 && x < 380 && z > 115 && z < 470) continue;
 
       const w = 58 + rand() * 68;
       const d = 42 + rand() * 52;
@@ -548,77 +615,9 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
     return list;
   }, []);
 
-  // Market villagers strolling on Palackého náměstí around the Town Hall & Plague Column
-  const squarePaths = useMemo(() => {
-    const [mx, mz] = REAL_LANDMARKS.marketCenter;
-    return [
-      buildClosedPath([
-        [mx - 10, mz - 12],
-        [mx + 14, mz - 12],
-        [mx + 14, mz + 12],
-        [mx - 10, mz + 12],
-      ]),
-      buildClosedPath([
-        [mx - 4, mz - 6],
-        [mx + 8, mz - 6],
-        [mx + 8, mz + 6],
-        [mx - 4, mz + 6],
-      ]),
-    ];
-  }, []);
-
-  const villagers = useMemo<VillagerSpec[]>(() => {
-    const rand = mulberry32(999);
-    const list: VillagerSpec[] = [];
-    for (let i = 0; i < 24; i++) {
-      const pathIndex = i % squarePaths.length;
-      list.push({
-        pathIndex,
-        direction: i % 2 === 0 ? 1 : -1,
-        phase: rand() * squarePaths[pathIndex].totalLength,
-        speed: 1.6 + rand() * 0.8,
-        bodyColor:
-          VILLAGER_TUNIC_COLORS[Math.floor(rand() * VILLAGER_TUNIC_COLORS.length)],
-        headColor: SKIN_TONES[Math.floor(rand() * SKIN_TONES.length)],
-      });
-    }
-    return list;
-  }, [squarePaths]);
-
-  // Animate market villagers & subtle POI beacons
+  // Animate subtle POI beacons
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
-
-    const bodyMesh = villagerBodyRef.current;
-    const headMesh = villagerHeadRef.current;
-    if (bodyMesh && headMesh) {
-      for (let i = 0; i < villagers.length; i++) {
-        const v = villagers[i];
-        const path = squarePaths[v.pathIndex];
-        const sample = sampleClosedPath(
-          path,
-          v.phase + t * v.speed * v.direction,
-          v.direction,
-        );
-        const bob = Math.abs(Math.sin(t * 6.5 + i * 1.3)) * 0.08;
-
-        dummy.position.set(sample.x, TOWN_Y + 0.65 + bob, sample.z);
-        dummy.rotation.set(0, sample.rotY, 0);
-        dummy.scale.set(1, 1, 1);
-        dummy.updateMatrix();
-        bodyMesh.setMatrixAt(i, dummy.matrix);
-        bodyMesh.setColorAt(i, v.bodyColor);
-
-        dummy.position.set(sample.x, TOWN_Y + 1.32 + bob, sample.z);
-        dummy.updateMatrix();
-        headMesh.setMatrixAt(i, dummy.matrix);
-        headMesh.setColorAt(i, v.headColor);
-      }
-      bodyMesh.instanceMatrix.needsUpdate = true;
-      headMesh.instanceMatrix.needsUpdate = true;
-      if (bodyMesh.instanceColor) bodyMesh.instanceColor.needsUpdate = true;
-      if (headMesh.instanceColor) headMesh.instanceColor.needsUpdate = true;
-    }
 
     for (let i = 0; i < POIS.length; i++) {
       const grp = beaconRefs.current[i];
@@ -657,7 +656,7 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
             <meshStandardMaterial vertexColors roughness={0.9} flatShading />
           </mesh>
 
-          {/* Real OSM Streets (y = +0.45, highest flat layer with polygonOffset) */}
+          {/* Real OSM Streets + Brewery & Train Station Connecting Roads + Forecourt (y = +0.45) */}
           <mesh geometry={merged.streetsGeometry} renderOrder={70} receiveShadow>
             <meshStandardMaterial
               color="#b9ad99"
@@ -665,6 +664,17 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
               polygonOffset
               polygonOffsetFactor={-4}
               polygonOffsetUnits={-4}
+            />
+          </mesh>
+
+          {/* Rustic Packed-Earth Footpath (Pěšina) to St. Michael's Cemetery Entrance Gate (y = +0.45) */}
+          <mesh geometry={merged.footpathGeometry} renderOrder={71} receiveShadow>
+            <meshStandardMaterial
+              color="#a3937c"
+              roughness={0.97}
+              polygonOffset
+              polygonOffsetFactor={-4.5}
+              polygonOffsetUnits={-4.5}
             />
           </mesh>
 
@@ -764,10 +774,54 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
       {/* Synský rybník shoreline details (wooden pier, moored rowboat, reeds & cattails) */}
       <SynskyRybnikDetails />
 
-      {/* Real 1896–1897 Polička Railway Line, Historic Station & Animated Steam Train */}
+      {/* 1839 Cadastral Additions: Historic Watermill, South-Bank Buildings & Horní předměstí Suburbs */}
+      <PolickaCadastral1839 />
+
+      {/* 1903 Third Military Survey Additions: Eastern Factory, 2 Eastern Mills, Shrines, Strip Fields, Orchards & Suburbs */}
+      <PolickaSurvey1903 />
+
+      {/* Real 1896–1897 Polička Railway Line, Historic Station & Randomized Steam Train */}
       {osmData?.railway && osmData.railway.track.length >= 2 && (
         <PolickaRailway railway={osmData.railway} />
       )}
+
+      {/* Dynamic Randomized ~1900 Road Traffic (Veteran Motorcars, Carriages, Farm & Brewery Wagons) */}
+      {merged && merged.roadGraph.nodes.length > 1 && (
+        <TownTraffic roadGraph={merged.roadGraph} />
+      )}
+
+      {/* Fire Watch Mode: Active Roof Fire, Smoke/Steam Plume & Horse-Drawn Fire Engine */}
+      {merged &&
+        fireWatch?.active &&
+        onFireEngineArrived &&
+        onExtinguishComplete && (
+          <FireWatchWorld
+            fireWatch={fireWatch}
+            roadGraph={merged.roadGraph}
+            onFireEngineArrived={onFireEngineArrived}
+            onExtinguishComplete={onExtinguishComplete}
+          />
+        )}
+
+      {/* Staggered Nighttime OSM House Windows + 1900 Palackého náměstí & Station Streetlamps */}
+      {merged && (
+        <TownNightLights
+          houseWindows={merged.houseWindows}
+          stationPos={osmData?.railway?.station?.position}
+          stationTrackAngle={osmData?.railway?.station?.trackAngle}
+        />
+      )}
+
+      {/* Atmospheric Rising Chimney Smoke (Houses + 1839/1903 Mills, Factory & Suburbs + Brewery Smokestack) */}
+      {merged && (
+        <TownChimneySmoke
+          chimneyTops={merged.chimneyTops}
+          extraChimneyTops={EXTRA_CHIMNEY_TOPS}
+        />
+      )}
+
+      {/* Realistic Flying Jackdaws (Kavky) Circling St. James Tower & Soaring Over Polička */}
+      <PolickaJackdaws />
 
       {/* === 3. CONTINUOUS WARM WEATHERED-STONE MEDIEVAL CITY WALLS & A-B-A-B BASTIONS === */}
       {wallSegments.map((seg) => (
@@ -870,23 +924,10 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
         </>
       )}
 
-      {/* === 5. ANIMATED LOW-POLY MARKET VILLAGERS ON PALACKÉHO NÁMĚSTÍ === */}
-      <instancedMesh
-        ref={villagerBodyRef}
-        args={[undefined, undefined, villagers.length]}
-        frustumCulled={false}
-      >
-        <cylinderGeometry args={[0.26, 0.36, 1.0, 6]} />
-        <meshStandardMaterial roughness={0.85} flatShading />
-      </instancedMesh>
-      <instancedMesh
-        ref={villagerHeadRef}
-        args={[undefined, undefined, villagers.length]}
-        frustumCulled={false}
-      >
-        <sphereGeometry args={[0.24, 6, 6]} />
-        <meshStandardMaterial roughness={0.8} flatShading />
-      </instancedMesh>
+      {/* === 5. ARTICULATED ~1900 POLIČKA TOWNSPEOPLE (SQUARE + MARKETPLACE + SIDEWALKS) === */}
+      {merged && merged.roadGraph.nodes.length > 1 && (
+        <Townspeople roadGraph={merged.roadGraph} />
+      )}
 
       {/* === 6. DISTANT VYSOČINA HORIZON HILLS === */}
       {vysocinaHills.map((hill) => (

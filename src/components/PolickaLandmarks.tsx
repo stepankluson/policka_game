@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
+import { NIGHT_MATERIALS } from '../game/timeOfDay';
 
 const TH_COLORS = {
   ochreWall: '#e2bd69',
@@ -132,10 +133,9 @@ function BaroqueWindow({
         <boxGeometry args={[width + 0.3, height + 0.28, 0.14]} />
         <meshStandardMaterial color={TH_COLORS.whiteTrim} roughness={0.85} />
       </mesh>
-      {/* Recessed dark window glazing */}
-      <mesh position={[0, 0, 0.05]}>
+      {/* Recessed window glazing (illuminates warmly at dusk/night) */}
+      <mesh position={[0, 0, 0.05]} material={NIGHT_MATERIALS.townHallWindow}>
         <boxGeometry args={[width, height, 0.08]} />
-        <meshStandardMaterial color={TH_COLORS.windowDark} roughness={0.45} metalness={0.15} />
       </mesh>
       {/* Fine pale window muntin cross */}
       <mesh position={[0, 0, 0.095]}>
@@ -565,10 +565,13 @@ export function BaroqueTownHall({
             >
               <meshStandardMaterial color={TH_COLORS.whiteTrim} roughness={0.82} />
             </mesh>
-            {/* Dark circular clock face cleanly centered below the arch (offset 0.04m from wall) */}
-            <mesh position={[0, 4.95, 2.54]} rotation={[Math.PI / 2, 0, 0]}>
+            {/* Circular clock face cleanly centered below the arch (subtle warm glow at night) */}
+            <mesh
+              position={[0, 4.95, 2.54]}
+              rotation={[Math.PI / 2, 0, 0]}
+              material={NIGHT_MATERIALS.townHallClock}
+            >
               <cylinderGeometry args={[1.08, 1.08, 0.06, 20]} />
-              <meshStandardMaterial color={TH_COLORS.clockFace} roughness={0.5} metalness={0.2} />
             </mesh>
             {/* Gilded clock bezel */}
             <mesh position={[0, 4.95, 2.58]}>

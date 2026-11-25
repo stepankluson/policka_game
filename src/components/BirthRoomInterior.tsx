@@ -11,6 +11,7 @@ import {
   type BirthRoomHotspot,
 } from '../game/birthRoomData';
 import { useKeyboard } from '../game/useKeyboard';
+import { NIGHT_MATERIALS } from '../game/timeOfDay';
 
 interface BirthRoomInteriorProps {
   activeHotspotId: BirthRoomHotspot['id'] | null;
@@ -285,6 +286,309 @@ function InteriorFPSControls({
   return null;
 }
 
+// Module-level reusable scratch vectors/quaternions for YoungBohuslavViolinist (zero per-frame GC)
+const _upAxis = new THREE.Vector3(0, 1, 0);
+const _shoulderPos = new THREE.Vector3(-0.16, 0.37, 0.02);
+const _frogLocal = new THREE.Vector3();
+const _frogInTorso = new THREE.Vector3();
+const _elbowPos = new THREE.Vector3();
+const _armDir = new THREE.Vector3();
+const _midPt = new THREE.Vector3();
+const _sideVec = new THREE.Vector3();
+const _poleDir = new THREE.Vector3(-0.72, -0.58, -0.38).normalize();
+const _qScratch = new THREE.Quaternion();
+
+/** Places a cylinder limb mesh cleanly between points A and B (zero allocations) */
+function alignLimbBetween(
+  mesh: THREE.Object3D,
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+) {
+  _midPt.addVectors(a, b).multiplyScalar(0.5);
+  _armDir.subVectors(b, a);
+  const len = _armDir.length();
+  if (len > 1e-4) {
+    _armDir.divideScalar(len);
+    _qScratch.setFromUnitVectors(_upAxis, _armDir);
+    mesh.position.copy(_midPt);
+    mesh.quaternion.copy(_qScratch);
+    mesh.scale.set(1, len, 1);
+  }
+}
+
+/**
+ * Stylized low-poly 10-year-old Bohuslav Martinů (~1.35m tall, circa 1900) practicing the violin
+ * beside the wooden music stand in his Birth Room.
+ * - Violin rests firmly on his left collarbone/shoulder, angled ~35° forward-left.
+ * - Bow is parented directly in violin space so the horsehair stays physically in contact with the
+ *   strings at all times while sliding smoothly along its longitudinal axis (frog <-> tip).
+ * - Analytical 2-bone right-arm IK connects his right shoulder -> elbow -> right hand directly to
+ *   the moving bow frog with zero per-frame allocations inside useFrame.
+ */
+function YoungBohuslavViolinist({
+  position,
+  rotationY,
+}: {
+  position: [number, number, number];
+  rotationY: number;
+}) {
+  const torsoRef = useRef<THREE.Group>(null);
+  const headRef = useRef<THREE.Group>(null);
+  const violinGroupRef = useRef<THREE.Group>(null);
+  const bowGroupRef = useRef<THREE.Group>(null);
+  const rightUpperArmRef = useRef<THREE.Mesh>(null);
+  const rightForearmRef = useRef<THREE.Mesh>(null);
+  const rightHandRef = useRef<THREE.Mesh>(null);
+
+  // Violin placement in torso-local space (left collarbone/shoulder, angled ~35° forward-left)
+  const violinEuler = useMemo(() => new THREE.Euler(0.08, 0.58, -0.22, 'XYZ'), []);
+  const violinPos = useMemo(() => new THREE.Vector3(0.11, 0.41, 0.11), []);
+  const violinMat = useMemo(() => {
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion().setFromEuler(violinEuler);
+    m.compose(violinPos, q, new THREE.Vector3(1, 1, 1));
+    return m;
+  }, [violinEuler, violinPos]);
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+
+    // 1. Smooth, expressive bowing glide strictly along the bow's longitudinal X axis on the strings
+    const slide = Math.sin(t * 2.15) * 0.115 + Math.sin(t * 4.4 + 0.7) * 0.028;
+    if (bowGroupRef.current) {
+      bowGroupRef.current.position.x = slide;
+      // Subtle string-crossing roll tilt while staying anchored on the strings
+      bowGroupRef.current.rotation.z = 0.04 + Math.sin(t * 1.1) * 0.035;
+    }
+
+    // 2. Transform the bow frog (violin-local [slide - 0.19, 0.052, 0.075]) into torso-local space
+    _frogLocal.set(slide - 0.19, 0.052, 0.075);
+    _frogInTorso.copy(_frogLocal).applyMatrix4(violinMat);
+
+    // 3. Analytical 2-bone IK for right arm: shoulder -> elbow -> bow frog
+    const L1 = 0.22;
+    const L2 = 0.22;
+    _armDir.subVectors(_frogInTorso, _shoulderPos);
+    const d = Math.max(0.08, Math.min(L1 + L2 - 0.015, _armDir.length()));
+    _armDir.normalize();
+
+    const cosA = Math.max(-1, Math.min(1, (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d)));
+    const along = L1 * cosA;
+    const perp = Math.sqrt(Math.max(0, L1 * L1 - along * along));
+
+    // Orthogonalize elbow bend pole direction (down-outward-back) against shoulder->frog axis
+    const dotPole = _poleDir.dot(_armDir);
+    _sideVec.copy(_poleDir).addScaledVector(_armDir, -dotPole);
+    if (_sideVec.lengthSq() < 1e-5) _sideVec.set(-1, -1, 0);
+    _sideVec.normalize();
+
+    _elbowPos
+      .copy(_shoulderPos)
+      .addScaledVector(_armDir, along)
+      .addScaledVector(_sideVec, perp);
+
+    if (rightUpperArmRef.current) {
+      alignLimbBetween(rightUpperArmRef.current, _shoulderPos, _elbowPos);
+    }
+    if (rightForearmRef.current) {
+      alignLimbBetween(rightForearmRef.current, _elbowPos, _frogInTorso);
+    }
+    if (rightHandRef.current) {
+      rightHandRef.current.position.copy(_frogInTorso);
+    }
+
+    // 4. Gentle musical torso & head sway
+    if (torsoRef.current) {
+      torsoRef.current.rotation.z = Math.sin(t * 1.1) * 0.038;
+      torsoRef.current.rotation.x = 0.025 + Math.sin(t * 1.55 + 0.4) * 0.02;
+    }
+    if (headRef.current) {
+      // Chin resting lovingly toward the left-shoulder chinrest
+      headRef.current.rotation.z = -0.15 + Math.sin(t * 1.3) * 0.035;
+      headRef.current.rotation.y = 0.24 + Math.cos(t * 1.0) * 0.04;
+      headRef.current.rotation.x = 0.12;
+    }
+  });
+
+  // Precompute left-arm elbow & neck-grip vectors cleanly under the violin neck
+  const leftArmRig = useMemo(() => {
+    const sh = new THREE.Vector3(0.16, 0.37, 0.02);
+    const hand = new THREE.Vector3(0, -0.01, 0.24).applyMatrix4(violinMat);
+    const elbow = new THREE.Vector3(0.22, 0.22, 0.20);
+    const makeTransform = (a: THREE.Vector3, b: THREE.Vector3) => {
+      const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+      const dir = new THREE.Vector3().subVectors(b, a);
+      const len = dir.length();
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      return { mid, q, len };
+    };
+    return {
+      upper: makeTransform(sh, elbow),
+      lower: makeTransform(elbow, hand),
+      hand,
+    };
+  }, [violinMat]);
+
+  return (
+    <group
+      name="young-bohuslav-martinu"
+      position={position}
+      rotation={[0, rotationY, 0]}
+    >
+      {/* === LEGS & DARK 1900 SHOES (total child height ~1.35m) === */}
+      {([-0.085, 0.085] as const).map((lx, i) => (
+        <group key={`bm-leg-${i}`} position={[lx, 0, 0]}>
+          <mesh position={[0, 0.045, 0.03]} castShadow>
+            <boxGeometry args={[0.095, 0.085, 0.18]} />
+            <meshStandardMaterial color="#241b15" roughness={0.85} />
+          </mesh>
+          <mesh position={[0, 0.34, 0]} castShadow>
+            <cylinderGeometry args={[0.055, 0.048, 0.56, 7]} />
+            <meshStandardMaterial color="#30343d" roughness={0.92} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* === UPPER TORSO (SWAYS GENTLY WHILE PLAYING) === */}
+      <group ref={torsoRef} position={[0, 0.62, 0]}>
+        {/* Dark wool vest over white linen shirt */}
+        <mesh position={[0, 0.22, 0]} castShadow>
+          <boxGeometry args={[0.29, 0.42, 0.17]} />
+          <meshStandardMaterial color="#3d2f25" roughness={0.9} />
+        </mesh>
+        {/* White linen shirt collar & front placket */}
+        <mesh position={[0, 0.38, 0.075]}>
+          <boxGeometry args={[0.11, 0.11, 0.04]} />
+          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+        </mesh>
+        {/* Tiny brass vest buttons */}
+        {[0.12, 0.21, 0.3].map((by, idx) => (
+          <mesh key={`btn-${idx}`} position={[0, by, 0.09]}>
+            <sphereGeometry args={[0.012, 6, 5]} />
+            <meshStandardMaterial color="#d4a94c" roughness={0.4} metalness={0.7} />
+          </mesh>
+        ))}
+
+        {/* === HEAD WITH TOUSLED BROWN HAIR (TILTED TOWARD VIOLIN CHINREST) === */}
+        <group ref={headRef} position={[0, 0.49, 0.01]}>
+          <mesh position={[0, -0.02, 0]}>
+            <cylinderGeometry args={[0.045, 0.05, 0.08, 7]} />
+            <meshStandardMaterial color="#e5bc96" roughness={0.82} />
+          </mesh>
+          <mesh position={[0, 0.1, 0]} castShadow>
+            <dodecahedronGeometry args={[0.115, 1]} />
+            <meshStandardMaterial color="#e6be98" roughness={0.8} flatShading />
+          </mesh>
+          <mesh position={[0, 0.145, -0.015]} castShadow>
+            <dodecahedronGeometry args={[0.118, 1]} />
+            <meshStandardMaterial color="#543723" roughness={0.92} flatShading />
+          </mesh>
+          <mesh position={[0.02, 0.2, 0.04]} rotation={[0.3, 0.2, -0.2]}>
+            <boxGeometry args={[0.11, 0.05, 0.09]} />
+            <meshStandardMaterial color="#4a301e" roughness={0.92} />
+          </mesh>
+        </group>
+
+        {/* === LEFT ARM BENT NATURALLY UNDERNEATH VIOLIN NECK === */}
+        <mesh
+          position={leftArmRig.upper.mid}
+          quaternion={leftArmRig.upper.q}
+          scale={[1, leftArmRig.upper.len, 1]}
+          castShadow
+        >
+          <cylinderGeometry args={[0.039, 0.036, 1, 6]} />
+          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+        </mesh>
+        <mesh
+          position={leftArmRig.lower.mid}
+          quaternion={leftArmRig.lower.q}
+          scale={[1, leftArmRig.lower.len, 1]}
+          castShadow
+        >
+          <cylinderGeometry args={[0.034, 0.031, 1, 6]} />
+          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+        </mesh>
+        <mesh position={leftArmRig.hand}>
+          <sphereGeometry args={[0.036, 6, 5]} />
+          <meshStandardMaterial color="#e5bc96" roughness={0.82} />
+        </mesh>
+
+        {/* === RIGHT ARM (ANALYTICAL 2-BONE IK LOCKED TO BOW FROG) === */}
+        <mesh ref={rightUpperArmRef} castShadow>
+          <cylinderGeometry args={[0.039, 0.036, 1, 6]} />
+          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+        </mesh>
+        <mesh ref={rightForearmRef} castShadow>
+          <cylinderGeometry args={[0.034, 0.031, 1, 6]} />
+          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+        </mesh>
+        <mesh ref={rightHandRef}>
+          <sphereGeometry args={[0.036, 6, 5]} />
+          <meshStandardMaterial color="#e5bc96" roughness={0.82} />
+        </mesh>
+
+        {/* === STYLIZED WOODEN VIOLIN ON LEFT COLLARBONE + BOW PHYSICALLY ON STRINGS === */}
+        <group ref={violinGroupRef} position={violinPos} rotation={violinEuler}>
+          {/* Lower bout */}
+          <mesh position={[0, 0, -0.02]} scale={[0.94, 0.34, 1.15]} castShadow>
+            <sphereGeometry args={[0.09, 9, 7]} />
+            <meshStandardMaterial color="#8f4320" roughness={0.42} />
+          </mesh>
+          {/* Upper bout */}
+          <mesh position={[0, 0, 0.1]} scale={[0.78, 0.34, 0.95]} castShadow>
+            <sphereGeometry args={[0.082, 9, 7]} />
+            <meshStandardMaterial color="#9c4b24" roughness={0.42} />
+          </mesh>
+          {/* Dark ebony chinrest & tailpiece */}
+          <mesh position={[0.03, 0.026, -0.06]}>
+            <boxGeometry args={[0.06, 0.015, 0.07]} />
+            <meshStandardMaterial color="#231a14" roughness={0.65} />
+          </mesh>
+          {/* Ebony fingerboard & neck */}
+          <mesh position={[0, 0.022, 0.22]}>
+            <boxGeometry args={[0.032, 0.02, 0.25]} />
+            <meshStandardMaterial color="#231a14" roughness={0.6} />
+          </mesh>
+          {/* Scroll */}
+          <mesh position={[0, 0.02, 0.35]}>
+            <sphereGeometry args={[0.022, 6, 5]} />
+            <meshStandardMaterial color="#6e3116" roughness={0.5} />
+          </mesh>
+          {/* Wooden bridge */}
+          <mesh position={[0, 0.034, 0.03]}>
+            <boxGeometry args={[0.048, 0.022, 0.008]} />
+            <meshStandardMaterial color="#e0c79c" roughness={0.7} />
+          </mesh>
+          {/* Subtle violin strings running from tailpiece over bridge to scroll */}
+          <mesh position={[0, 0.044, 0.14]}>
+            <boxGeometry args={[0.024, 0.004, 0.34]} />
+            <meshStandardMaterial color="#d8d2c5" roughness={0.4} metalness={0.5} />
+          </mesh>
+
+          {/* === BOW RESTING PERPENDICULARLY ON THE STRINGS (SLIDES ALONG LOCAL X) === */}
+          <group ref={bowGroupRef} position={[0, 0.052, 0.075]}>
+            {/* Pernambuco wooden bow stick */}
+            <mesh position={[0.03, 0.008, 0]}>
+              <boxGeometry args={[0.48, 0.009, 0.009]} />
+              <meshStandardMaterial color="#5e361e" roughness={0.58} />
+            </mesh>
+            {/* Pale horsehair ribbon physically touching the strings at y = 0.044 */}
+            <mesh position={[0.03, -0.006, 0]}>
+              <boxGeometry args={[0.45, 0.004, 0.007]} />
+              <meshStandardMaterial color="#f5efe0" roughness={0.75} />
+            </mesh>
+            {/* Ebony frog gripped by right hand */}
+            <mesh position={[-0.19, 0.001, 0]}>
+              <boxGeometry args={[0.038, 0.018, 0.014]} />
+              <meshStandardMaterial color="#1f1712" roughness={0.6} />
+            </mesh>
+          </group>
+        </group>
+      </group>
+    </group>
+  );
+}
+
 /** Multi-pane 1900 wooden window with warm sunlit glass & white lace valance curtain */
 function PeriodWindow({
   position,
@@ -300,15 +604,9 @@ function PeriodWindow({
         <boxGeometry args={[1.36, 1.48, 0.14]} />
         <meshStandardMaterial color="#f2ece0" roughness={0.9} />
       </mesh>
-      {/* Glowing warm golden-hour exterior pane */}
-      <mesh position={[0, 0, 0.01]}>
+      {/* Exterior sky glow pane (tints smoothly with exterior time of day: gold -> twilight -> moonlight) */}
+      <mesh position={[0, 0, 0.01]} material={NIGHT_MATERIALS.birthRoomWindowGlow}>
         <planeGeometry args={[1.14, 1.28]} />
-        <meshStandardMaterial
-          color="#fff0cc"
-          emissive="#ffd694"
-          emissiveIntensity={1.35}
-          roughness={0.2}
-        />
       </mesh>
       {/* Warm wooden outer frame & multi-pane muntins */}
       <mesh position={[0, 0.65, 0.04]}>
@@ -786,6 +1084,9 @@ export function BirthRoomInterior({
           </mesh>
         </group>
       </group>
+
+      {/* === 6B. YOUNG BOHUSLAV MARTINŮ (~10 YEARS OLD, 1900) PRACTICING THE VIOLIN === */}
+      <YoungBohuslavViolinist position={[-1.08, 0, -0.94]} rotationY={0.58} />
 
       {/* === 7. VINTAGE BLACK CAST-IRON TREADLE SEWING MACHINE CENTERED BELOW NORTH WINDOW === */}
       <group position={[1.18, 0, -hd + 0.42]}>

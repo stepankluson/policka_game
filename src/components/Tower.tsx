@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import * as THREE from 'three';
 import { TOWER_DIMENSIONS } from '../game/constants';
+import { NIGHT_MATERIALS } from '../game/timeOfDay';
 
 interface TowerProps {
   cameraCollidersRef?: RefObject<THREE.Object3D[]>;
@@ -71,18 +72,35 @@ function GothicWindow({
         <meshStandardMaterial color={COLORS.sandstoneDark} roughness={0.95} />
       </mesh>
 
-      {/* Recessed window / shutter opening */}
-      <mesh position={[0, -archH * 0.35, 0.05]}>
-        <boxGeometry args={[width, rectH, 0.09]} />
-        <meshStandardMaterial color={shutterColor} roughness={0.92} />
-      </mesh>
-      <mesh
-        position={[0, rectH / 2 - archH * 0.14, 0.05]}
-        rotation={[0, 0, Math.PI / 4]}
-      >
-        <boxGeometry args={[width * 0.71, width * 0.71, 0.09]} />
-        <meshStandardMaterial color={COLORS.windowDark} roughness={0.95} />
-      </mesh>
+      {/* Recessed window / shutter opening (stained-glass nave windows glow warmly at night) */}
+      {shutterColor === COLORS.windowDark ? (
+        <>
+          <mesh position={[0, -archH * 0.35, 0.05]} material={NIGHT_MATERIALS.churchStainedGlass}>
+            <boxGeometry args={[width, rectH, 0.09]} />
+          </mesh>
+          <mesh
+            position={[0, rectH / 2 - archH * 0.14, 0.05]}
+            rotation={[0, 0, Math.PI / 4]}
+            material={NIGHT_MATERIALS.churchStainedGlass}
+          >
+            <boxGeometry args={[width * 0.71, width * 0.71, 0.09]} />
+          </mesh>
+        </>
+      ) : (
+        <>
+          <mesh position={[0, -archH * 0.35, 0.05]}>
+            <boxGeometry args={[width, rectH, 0.09]} />
+            <meshStandardMaterial color={shutterColor} roughness={0.92} />
+          </mesh>
+          <mesh
+            position={[0, rectH / 2 - archH * 0.14, 0.05]}
+            rotation={[0, 0, Math.PI / 4]}
+          >
+            <boxGeometry args={[width * 0.71, width * 0.71, 0.09]} />
+            <meshStandardMaterial color={COLORS.windowDark} roughness={0.95} />
+          </mesh>
+        </>
+      )}
 
       {/* Central vertical Gothic mullion & tracery bar */}
       <mesh position={[0, -archH * 0.12, 0.095]}>
@@ -574,27 +592,6 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
             <torusGeometry args={[0.065, 0.018, 6, 12]} />
             <meshStandardMaterial color={COLORS.gold} roughness={0.35} metalness={0.8} />
           </mesh>
-          {/* Warm glowing lantern above Martinů's birth room door */}
-          <group position={[0, 2.95, 0.18]}>
-            <mesh position={[0, 0.12, -0.1]}>
-              <boxGeometry args={[0.06, 0.06, 0.24]} />
-              <meshStandardMaterial color={COLORS.iron} roughness={0.5} metalness={0.7} />
-            </mesh>
-            <mesh position={[0, 0.08, 0]}>
-              <coneGeometry args={[0.14, 0.12, 6]} />
-              <meshStandardMaterial color={COLORS.iron} roughness={0.5} metalness={0.7} />
-            </mesh>
-            <mesh position={[0, -0.07, 0]}>
-              <cylinderGeometry args={[0.095, 0.075, 0.2, 6]} />
-              <meshStandardMaterial
-                color="#ffe099"
-                emissive="#ffaa3d"
-                emissiveIntensity={2.4}
-                roughness={0.25}
-              />
-            </mesh>
-            <pointLight color="#ffbe6b" intensity={2.2} distance={5.5} decay={2} />
-          </group>
         </group>
 
         {/* Paired watchman's windows on East, North & West gallery room walls (matches photo 2) */}
@@ -780,22 +777,6 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
             <cylinderGeometry args={[0.02, 0.03, 0.8, 6]} />
             <meshStandardMaterial color={COLORS.gold} roughness={0.28} metalness={0.85} />
           </mesh>
-          {/* Warm brass gallery lantern mounted on the inward side of each corner turret */}
-          <group position={[-sx * 0.34, 1.55, -sz * 0.34]}>
-            <mesh>
-              <cylinderGeometry args={[0.08, 0.065, 0.2, 6]} />
-              <meshStandardMaterial
-                color="#ffd27d"
-                emissive="#ff9f38"
-                emissiveIntensity={2.0}
-                roughness={0.3}
-              />
-            </mesh>
-            <mesh position={[0, 0.14, 0]}>
-              <coneGeometry args={[0.11, 0.1, 6]} />
-              <meshStandardMaterial color={COLORS.iron} roughness={0.5} metalness={0.7} />
-            </mesh>
-          </group>
         </group>
       ))}
 

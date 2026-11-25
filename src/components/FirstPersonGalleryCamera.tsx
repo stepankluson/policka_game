@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { RING_BOUNDS } from '../game/constants';
 import { churchLocalToWorld } from '../game/pois';
 import { constrainToSquareRing } from '../game/ringCollision';
+import { NIGHT_MATERIALS, timeOfDayState } from '../game/timeOfDay';
 
 interface FirstPersonGalleryCameraProps {
   playerLocalPosRef: RefObject<THREE.Vector3>;
@@ -35,6 +36,13 @@ export function FirstPersonGalleryCamera({
   const pitchRef = useRef(-0.08);
   const isLockedRef = useRef(false);
   const forwardScratchRef = useRef(new THREE.Vector3());
+
+  // First-person handheld brass lantern viewmodel + decoupled warm PointLight
+  const lanternGroupRef = useRef<THREE.Group>(null);
+  const lanternLightRef = useRef<THREE.PointLight>(null);
+  const prevWorldPosRef = useRef(new THREE.Vector3());
+  const bobPhaseRef = useRef(0);
+  const offsetScratchRef = useRef(new THREE.Vector3());
 
   // Initialize yaw/pitch from current camera heading when activating first-person mode,
   // set tight near plane (0.08) to prevent wall slicing, and cleanly restore on exit
@@ -122,9 +130,14 @@ export function FirstPersonGalleryCamera({
     };
   }, [active, camera, gl, playerLocalPosRef, playerWorldPosRef, onPointerLockChange]);
 
-  useFrame(() => {
-    if (!active) return;
+  useFrame((_, rawDelta) => {
+    if (!active) {
+      if (lanternGroupRef.current) lanternGroupRef.current.visible = false;
+      if (lanternLightRef.current) lanternLightRef.current.intensity = 0;
+      return;
+    }
 
+    const dt = Math.min(rawDelta, 0.05);
     const persp = camera as THREE.PerspectiveCamera;
     if (persp.isPerspectiveCamera && persp.near !== FIRST_PERSON_NEAR) {
       persp.near = FIRST_PERSON_NEAR;
@@ -153,7 +166,68 @@ export function FirstPersonGalleryCamera({
     camera.rotation.y = yawRef.current;
     camera.rotation.x = pitchRef.current;
     camera.rotation.z = 0;
+
+    // Update subtle First-Person handheld brass lantern viewmodel & warm PointLight
+    const moveDist = Math.hypot(
+      p.x - prevWorldPosRef.current.x,
+      p.z - prevWorldPosRef.current.z,
+    );
+    prevWorldPosRef.current.copy(p);
+    const speedRatio = Math.min(1, (dt > 1e-4 ? moveDist / dt : 0) / 4.2);
+    bobPhaseRef.current += dt * (speedRatio > 0.05 ? 9.5 : 1.8);
+
+    const bobY =
+      Math.abs(Math.sin(bobPhaseRef.current)) * 0.018 * speedRatio +
+      Math.sin(bobPhaseRef.current) * 0.004 * (1 - speedRatio);
+    const bobX = Math.cos(bobPhaseRef.current) * 0.012 * speedRatio;
+
+    if (lanternGroupRef.current) {
+      lanternGroupRef.current.visible = true;
+      // Offset in camera-local space: bottom-right corner slightly ahead of eye
+      offsetScratchRef.current
+        .set(0.28 + bobX, -0.24 + bobY, -0.44)
+        .applyQuaternion(camera.quaternion);
+      lanternGroupRef.current.position.copy(camera.position).add(offsetScratchRef.current);
+      // Keep lantern hanging upright in world Y while turning with camera yaw
+      lanternGroupRef.current.rotation.set(0, yawRef.current, -bobX * 1.8);
+    }
+
+    if (lanternLightRef.current) {
+      const nf = timeOfDayState.nightFactor;
+      lanternLightRef.current.intensity = 1.6 + nf * 3.4;
+    }
   });
 
-  return null;
+  return (
+    <group ref={lanternGroupRef} name="fp-handheld-lantern" visible={false}>
+      {/* Brass top handle ring */}
+      <mesh position={[0, 0.13, 0]}>
+        <torusGeometry args={[0.035, 0.007, 6, 12]} />
+        <meshStandardMaterial color="#b88a3e" roughness={0.35} metalness={0.8} />
+      </mesh>
+      {/* Dark iron conical lantern cap */}
+      <mesh position={[0, 0.095, 0]}>
+        <coneGeometry args={[0.068, 0.06, 6]} />
+        <meshStandardMaterial color="#352a22" roughness={0.5} metalness={0.7} />
+      </mesh>
+      {/* Glowing warm glass lantern body */}
+      <mesh material={NIGHT_MATERIALS.lanternGlobe}>
+        <cylinderGeometry args={[0.052, 0.045, 0.125, 6]} />
+      </mesh>
+      {/* Brass base plate */}
+      <mesh position={[0, -0.072, 0]}>
+        <cylinderGeometry args={[0.056, 0.062, 0.028, 6]} />
+        <meshStandardMaterial color="#352a22" roughness={0.5} metalness={0.7} />
+      </mesh>
+      {/* Warm handheld lantern PointLight illuminating gallery floor, railing & Birth Room door */}
+      <pointLight
+        ref={lanternLightRef}
+        position={[0, 0.04, 0]}
+        color="#ffb85e"
+        intensity={0}
+        distance={9.5}
+        decay={1.7}
+      />
+    </group>
+  );
 }

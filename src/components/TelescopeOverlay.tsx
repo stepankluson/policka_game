@@ -1,5 +1,5 @@
 import { POIS, TELESCOPES, type PoiSpec, type TelescopeId } from '../game/pois';
-import type { ScanState } from './TelescopeCamera';
+import { telescopeHudRefs, type ScanState } from './TelescopeCamera';
 
 interface TelescopeOverlayProps {
   activeTelescope: TelescopeId | null;
@@ -120,71 +120,89 @@ export function TelescopeOverlay({
                   strokeWidth="1.5"
                 />
 
-                {/* Radial Progress Ring (only shown for undiscovered POIs) */}
-                {aimedPoi && !isAimedUnlocked && scanState.progress > 0 && (
-                  <circle
-                    cx="48"
-                    cy="48"
-                    r={RING_RADIUS}
-                    fill="none"
-                    stroke={isScanComplete ? '#6ee7b7' : '#ffd166'}
-                    strokeWidth="3.5"
-                    strokeLinecap="round"
-                    strokeDasharray={RING_CIRCUMFERENCE}
-                    strokeDashoffset={dashOffset}
-                    transform="rotate(-90 48 48)"
-                  />
-                )}
+                {/* Radial Progress Ring (updated directly via DOM ref — zero React re-renders) */}
+                <circle
+                  ref={(el) => {
+                    telescopeHudRefs.ringCircle = el;
+                  }}
+                  cx="48"
+                  cy="48"
+                  r={RING_RADIUS}
+                  fill="none"
+                  stroke={isScanComplete ? '#6ee7b7' : '#ffd166'}
+                  strokeWidth="3.5"
+                  strokeLinecap="round"
+                  strokeDasharray={RING_CIRCUMFERENCE}
+                  strokeDashoffset={dashOffset}
+                  transform="rotate(-90 48 48)"
+                  style={{ opacity: aimedPoi && !isAimedUnlocked && scanState.progress > 0 ? 1 : 0 }}
+                />
               </svg>
 
-              {/* Target Lock Caption */}
+              {/* Target Lock Caption (lightweight translucent fill — zero GPU backdrop-blur over WebGL) */}
               {aimedPoi &&
                 (isAimedUnlocked ? (
-                  <div className="absolute top-26 whitespace-nowrap rounded-full border border-amber-100/15 bg-stone-950/60 px-3 py-1 text-center text-[11px] tracking-wide text-amber-100/65 backdrop-blur-md">
+                  <div className="absolute top-26 whitespace-nowrap rounded-full border border-amber-100/20 bg-stone-950/82 px-3 py-1 text-center text-[11px] tracking-wide text-amber-100/75">
                     {aimedPoi.titleCz} · Objeveno
                   </div>
                 ) : (
-                  <div className="absolute top-26 flex flex-col items-center whitespace-nowrap rounded-full border border-amber-200/30 bg-stone-950/75 px-3.5 py-1 text-center backdrop-blur-md">
+                  <div className="absolute top-26 flex flex-col items-center whitespace-nowrap rounded-full border border-amber-200/35 bg-stone-950/88 px-3.5 py-1 text-center">
                     <span className="text-xs font-semibold tracking-wide text-amber-200">
                       {aimedPoi.titleCz}
                     </span>
-                    <span className="text-[10px] text-amber-100/70">
+                    <span
+                      ref={(el) => {
+                        telescopeHudRefs.scanPercentLabel = el;
+                      }}
+                      className="text-[10px] text-amber-100/75"
+                    >
                       {`Zaměřování… ${Math.round(scanState.progress * 100)} %`}
                     </span>
                   </div>
                 ))}
             </div>
 
-            {/* Subtle Zoom Indicator Badge inside bottom of lens rim */}
-            <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-2.5 rounded-full border border-amber-200/20 bg-stone-950/70 px-3 py-1 backdrop-blur-md">
-              <span className="text-[10px] font-semibold tracking-[0.18em] text-amber-200/70 uppercase">
+            {/* Subtle Zoom Indicator Badge inside bottom of lens rim (direct DOM refs, zero backdrop-blur) */}
+            <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-2.5 rounded-full border border-amber-200/25 bg-stone-950/85 px-3 py-1">
+              <span className="text-[10px] font-semibold tracking-[0.18em] text-amber-200/75 uppercase">
                 Zoom
               </span>
               <div className="h-1 w-16 overflow-hidden rounded-full bg-amber-100/15">
                 <div
-                  className="h-full rounded-full bg-amber-300/85 transition-[width] duration-75"
+                  ref={(el) => {
+                    telescopeHudRefs.zoomBar = el;
+                  }}
+                  className="h-full rounded-full bg-amber-300/85"
                   style={{ width: `${Math.max(4, zoomPercent)}%` }}
                 />
               </div>
-              <span className="min-w-[2.4rem] text-right font-mono text-xs font-semibold text-amber-200">
+              <span
+                ref={(el) => {
+                  telescopeHudRefs.zoomLabel = el;
+                }}
+                className="min-w-[2.4rem] text-right font-mono text-xs font-semibold text-amber-200"
+              >
                 {clampedZoom.toFixed(1)}x
               </span>
             </div>
           </div>
 
-          {/* Top-Left Active Telescope & Controls Hint (edge-safe, never collides with top-right tracker) */}
-          <div className="pointer-events-auto fixed top-4 left-4 flex max-w-[min(32rem,calc(100vw-2rem))] flex-wrap items-center gap-x-2.5 gap-y-1 rounded-2xl border border-amber-200/20 bg-stone-950/75 px-3.5 py-2 text-xs text-amber-100 backdrop-blur-md sm:top-5 sm:left-6">
+          {/* Top-Left Active Telescope & Controls Hint (lightweight translucent fill — zero backdrop-blur) */}
+          <div className="pointer-events-auto fixed top-4 left-4 flex max-w-[min(32rem,calc(100vw-2rem))] flex-wrap items-center gap-x-2.5 gap-y-1 rounded-2xl border border-amber-200/25 bg-stone-950/85 px-3.5 py-2 text-xs text-amber-100 sm:top-5 sm:left-6">
             <span className="font-semibold text-amber-300">{scope.label}</span>
             <span className="text-amber-200/35">·</span>
             <span className="text-amber-100/80">
-              Drag / Arrows to pan · Scroll / W·S / ± to zoom
+              Tažení / Šipky otáčení · Kolečko / W·S přiblížení
             </span>
             <button
               type="button"
-              onClick={onExitTelescope}
+              onClick={(e) => {
+                e.stopPropagation();
+                onExitTelescope();
+              }}
               className="cursor-pointer rounded-full bg-amber-300/15 px-2.5 py-0.5 font-medium text-amber-200 transition hover:bg-amber-300/25"
             >
-              [E] / [Esc] Exit
+              [E] / [Esc] Zavřít
             </button>
           </div>
         </div>

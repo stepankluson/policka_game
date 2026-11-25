@@ -16,6 +16,21 @@ export interface ScanState {
   progress: number;
 }
 
+/** Direct DOM element refs updated from useFrame with ZERO React re-renders during telescope panning/zooming */
+export const telescopeHudRefs: {
+  zoomBar: HTMLDivElement | null;
+  zoomLabel: HTMLSpanElement | null;
+  ringCircle: SVGCircleElement | null;
+  scanPercentLabel: HTMLSpanElement | null;
+} = {
+  zoomBar: null,
+  zoomLabel: null,
+  ringCircle: null,
+  scanPercentLabel: null,
+};
+
+const RING_CIRCUMFERENCE = 2 * Math.PI * 38;
+
 interface TelescopeCameraProps {
   activeTelescope: TelescopeId | null;
   unlockedPois: ReadonlySet<string>;
@@ -272,20 +287,30 @@ export function TelescopeCamera({
       );
     }
 
-    // 2. Smooth FOV interpolation & zoom multiplier reporting
+    // 2. Frame-rate-independent FOV damping (only calls updateProjectionMatrix when actively zooming)
     if (persp.isPerspectiveCamera) {
-      const fovT = 1 - Math.exp(-10 * dt);
-      const nextFov = persp.fov + (targetFovRef.current - persp.fov) * fovT;
-      if (Math.abs(nextFov - persp.fov) > 0.005) {
-        persp.fov = nextFov;
+      const fovDiff = Math.abs(persp.fov - targetFovRef.current);
+      if (fovDiff > 0.01) {
+        persp.fov = THREE.MathUtils.damp(persp.fov, targetFovRef.current, 11, dt);
+        if (Math.abs(persp.fov - targetFovRef.current) <= 0.01) {
+          persp.fov = targetFovRef.current;
+        }
         persp.updateProjectionMatrix();
       }
       currentFovRef.current = persp.fov;
 
+      // Update zoom HUD directly via DOM refs (ZERO React re-renders!)
       const currentZoom = TELESCOPE_CONFIG.maxFov / Math.max(persp.fov, TELESCOPE_CONFIG.minFov);
-      if (Math.abs(currentZoom - lastReportedZoomRef.current) >= 0.05) {
+      if (Math.abs(currentZoom - lastReportedZoomRef.current) >= 0.03) {
         lastReportedZoomRef.current = currentZoom;
-        onZoomChange(currentZoom);
+        const clamped = Math.max(1, Math.min(6, currentZoom));
+        const pct = Math.max(4, ((clamped - 1) / 5) * 100);
+        if (telescopeHudRefs.zoomBar) {
+          telescopeHudRefs.zoomBar.style.width = `${pct}%`;
+        }
+        if (telescopeHudRefs.zoomLabel) {
+          telescopeHudRefs.zoomLabel.textContent = `${clamped.toFixed(1)}x`;
+        }
       }
     }
 
@@ -310,10 +335,14 @@ export function TelescopeCamera({
       Math.min(TELESCOPE_CONFIG.maxPitch, targetPitchRef.current),
     );
 
-    // 4. Smooth damping on yaw and pitch
-    const dampT = 1 - Math.exp(-12 * dt);
-    currentYawRef.current += (targetYawRef.current - currentYawRef.current) * dampT;
-    currentPitchRef.current += (targetPitchRef.current - currentPitchRef.current) * dampT;
+    // 4. Fluid weighted brass-spyglass damping via THREE.MathUtils.damp
+    currentYawRef.current = THREE.MathUtils.damp(currentYawRef.current, targetYawRef.current, 13, dt);
+    currentPitchRef.current = THREE.MathUtils.damp(
+      currentPitchRef.current,
+      targetPitchRef.current,
+      13,
+      dt,
+    );
 
     // 5. Position camera at rotated world telescope lens & orient along (yaw, pitch)
     const [lensX, lensY, lensZ] = churchLocalToWorld(
@@ -333,11 +362,12 @@ export function TelescopeCamera({
     lookTargetRef.current.copy(camera.position).add(forward);
     camera.lookAt(lookTargetRef.current);
 
-    // 6. Check crosshair alignment against all 4 POIs
+    // 6. Fast analytical aim detection (pure dot-product vector math, ZERO scene raycasting)
     let aimedPoi: PoiSpec | null = null;
     let bestAngle: number = TELESCOPE_CONFIG.aimToleranceRad;
 
-    for (const poi of POIS) {
+    for (let i = 0; i < POIS.length; i++) {
+      const poi = POIS[i];
       const toPoi = toPoiRef.current.set(
         poi.position[0] - camera.position.x,
         poi.position[1] + 1.4 - camera.position.y,
@@ -352,16 +382,12 @@ export function TelescopeCamera({
     }
 
     if (aimedPoi) {
-      // Never re-scan or re-trigger already discovered POIs
       if (unlockedPoisRef.current.has(aimedPoi.id)) {
         scanningPoiRef.current = null;
         scanTimerRef.current = 0;
         triggeredPoiRef.current = null;
 
-        if (
-          lastReportedScanRef.current.poiId !== aimedPoi.id ||
-          lastReportedScanRef.current.progress !== 0
-        ) {
+        if (lastReportedScanRef.current.poiId !== aimedPoi.id) {
           const next: ScanState = { poiId: aimedPoi.id, progress: 0 };
           lastReportedScanRef.current = next;
           onScanChange(next);
@@ -379,20 +405,27 @@ export function TelescopeCamera({
         }
 
         const progress = scanTimerRef.current / TELESCOPE_CONFIG.scanDuration;
-        if (progress >= 1 && triggeredPoiRef.current !== aimedPoi.id) {
-          triggeredPoiRef.current = aimedPoi.id;
-          onPoiUnlocked(aimedPoi.id);
-        }
 
-        const last = lastReportedScanRef.current;
-        if (
-          last.poiId !== aimedPoi.id ||
-          Math.abs(last.progress - progress) >= 0.015 ||
-          (progress === 1 && last.progress !== 1)
-        ) {
+        // Only notify React when aimed POI changes (discrete event), NOT every frame!
+        if (lastReportedScanRef.current.poiId !== aimedPoi.id) {
           const next: ScanState = { poiId: aimedPoi.id, progress };
           lastReportedScanRef.current = next;
           onScanChange(next);
+        }
+
+        // Update SVG progress ring & percentage label directly via DOM refs (ZERO React re-renders)
+        if (telescopeHudRefs.ringCircle) {
+          telescopeHudRefs.ringCircle.style.strokeDashoffset = `${RING_CIRCUMFERENCE * (1 - progress)}`;
+          telescopeHudRefs.ringCircle.style.stroke = progress >= 1 ? '#6ee7b7' : '#ffd166';
+          telescopeHudRefs.ringCircle.style.opacity = progress > 0.01 ? '1' : '0';
+        }
+        if (telescopeHudRefs.scanPercentLabel) {
+          telescopeHudRefs.scanPercentLabel.textContent = `Zaměřování… ${Math.round(progress * 100)} %`;
+        }
+
+        if (progress >= 1 && triggeredPoiRef.current !== aimedPoi.id) {
+          triggeredPoiRef.current = aimedPoi.id;
+          onPoiUnlocked(aimedPoi.id);
         }
       }
     } else {
@@ -400,10 +433,11 @@ export function TelescopeCamera({
       scanTimerRef.current = 0;
       triggeredPoiRef.current = null;
 
-      if (
-        lastReportedScanRef.current.poiId !== null ||
-        lastReportedScanRef.current.progress !== 0
-      ) {
+      if (telescopeHudRefs.ringCircle) {
+        telescopeHudRefs.ringCircle.style.opacity = '0';
+      }
+
+      if (lastReportedScanRef.current.poiId !== null) {
         const next: ScanState = { poiId: null, progress: 0 };
         lastReportedScanRef.current = next;
         onScanChange(next);

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { BREWERY_SMOKESTACK_LOCAL } from '../game/pois';
+import { NIGHT_MATERIALS } from '../game/timeOfDay';
 
 interface PolickaBreweryProps {
   position: [number, number, number];
@@ -73,10 +74,9 @@ function IndustrialWindow({
         <boxGeometry args={[width + 0.36, 0.14, 0.2]} />
         <meshStandardMaterial color={COLORS.stonePlinth} roughness={0.94} />
       </mesh>
-      {/* Dark glazed industrial pane */}
-      <mesh position={[0, 0, 0.07]}>
+      {/* Industrial glazed pane (illuminates warmly at dusk/night) */}
+      <mesh position={[0, 0, 0.07]} material={NIGHT_MATERIALS.industrialWindow}>
         <boxGeometry args={[width, height, 0.06]} />
-        <meshStandardMaterial color={COLORS.windowDark} roughness={0.45} metalness={0.2} />
       </mesh>
       {/* Subtle cross mullions */}
       <mesh position={[0, 0, 0.11]}>
