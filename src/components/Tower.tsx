@@ -8,236 +8,218 @@ interface TowerProps {
 
 const SIDES = [0, 1, 2, 3] as const;
 
-interface PlankSpec {
+interface FlagstoneSpec {
   key: string;
   position: [number, number, number];
   size: [number, number, number];
   color: string;
 }
 
-const WOOD_TONES = ['#7c5234', '#6f482c', '#875b3a', '#684329'] as const;
+const STONE_FLOOR_TONES = ['#cfc2aa', '#c6b89e', '#d6cab4', '#bfb096'] as const;
 
 const COLORS = {
-  plaster: '#dcc49e',
-  plasterShade: '#cfb58e',
-  stoneTrim: '#9e907d',
-  stoneDark: '#877a69',
-  louverDark: '#261f1a',
-  louverWood: '#4d3523',
-  slateSpire: '#313842',
-  slateAccent: '#3e4652',
-  terracottaRoof: '#9c4330',
-  terracottaRidge: '#7e3424',
+  sandstone: '#dcd0b8',
+  sandstoneWarm: '#d3c4a7',
+  sandstoneTrim: '#b8a88d',
+  sandstoneDark: '#9e8f75',
+  sandstoneBase: '#877a65',
+  windowDark: '#262320',
+  shutterRed: '#783428',
+  copperMain: '#528f7c',
+  copperLight: '#63a38f',
+  copperDark: '#3b6e5e',
+  naveSlateRoof: '#30363f',
+  naveSlateRidge: '#252a31',
   gold: '#e8bc5c',
-  iron: '#26272b',
+  iron: '#24262b',
 } as const;
 
-/** Reusable Neo-Gothic pointed-arch window (lomené okno) with dark louvers */
+/** Neo-Gothic pointed-arch window (lomené okno) in pale sandstone */
 function GothicWindow({
   position,
   width = 1.05,
-  height = 2.4,
-  louvers = 5,
+  height = 2.6,
+  shutterColor = COLORS.windowDark,
 }: {
   position: [number, number, number];
   width?: number;
   height?: number;
-  louvers?: number;
+  shutterColor?: string;
 }) {
   const rectH = height * 0.72;
   const archH = height * 0.28;
-  const slatOffsets = useMemo(() => {
-    const arr: number[] = [];
-    for (let i = 0; i < louvers; i++) {
-      const t = (i + 0.5) / louvers;
-      arr.push(-rectH / 2 + t * rectH);
-    }
-    return arr;
-  }, [louvers, rectH]);
 
   return (
     <group position={position}>
-      {/* Sandstone rectangular jamb frame */}
+      {/* Sandstone jamb frame */}
       <mesh position={[0, -archH * 0.35, 0]} castShadow receiveShadow>
         <boxGeometry args={[width + 0.26, rectH + 0.16, 0.14]} />
-        <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.94} />
+        <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
       </mesh>
-      {/* Pointed Gothic arch stone hood */}
+      {/* Pointed Gothic arch hood */}
       <mesh
         position={[0, rectH / 2 - archH * 0.12, 0]}
         rotation={[0, 0, Math.PI / 4]}
         castShadow
       >
         <boxGeometry args={[(width + 0.22) * 0.72, (width + 0.22) * 0.72, 0.14]} />
-        <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.94} />
+        <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
       </mesh>
       {/* Stone windowsill */}
       <mesh position={[0, -rectH / 2 - archH * 0.38, 0.06]} castShadow>
         <boxGeometry args={[width + 0.38, 0.14, 0.22]} />
-        <meshStandardMaterial color={COLORS.stoneDark} roughness={0.95} />
+        <meshStandardMaterial color={COLORS.sandstoneDark} roughness={0.95} />
       </mesh>
 
-      {/* Dark recessed window opening */}
+      {/* Recessed window / shutter opening */}
       <mesh position={[0, -archH * 0.35, 0.05]}>
         <boxGeometry args={[width, rectH, 0.09]} />
-        <meshStandardMaterial color={COLORS.louverDark} roughness={0.96} />
+        <meshStandardMaterial color={shutterColor} roughness={0.92} />
       </mesh>
       <mesh
         position={[0, rectH / 2 - archH * 0.14, 0.05]}
         rotation={[0, 0, Math.PI / 4]}
       >
         <boxGeometry args={[width * 0.71, width * 0.71, 0.09]} />
-        <meshStandardMaterial color={COLORS.louverDark} roughness={0.96} />
+        <meshStandardMaterial color={COLORS.windowDark} roughness={0.95} />
       </mesh>
 
-      {/* Central vertical Gothic mullion */}
-      <mesh position={[0, -archH * 0.15, 0.09]}>
+      {/* Central vertical Gothic mullion & tracery bar */}
+      <mesh position={[0, -archH * 0.12, 0.095]}>
         <boxGeometry args={[0.07, rectH + archH * 0.55, 0.06]} />
-        <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.92} />
+        <meshStandardMaterial color={COLORS.sandstone} roughness={0.9} />
       </mesh>
-
-      {/* Dark timber louvers */}
-      {slatOffsets.map((yOff, i) => (
-        <mesh
-          key={`slat-${i}`}
-          position={[0, yOff - archH * 0.35, 0.085]}
-          rotation={[0.38, 0, 0]}
-        >
-          <boxGeometry args={[width - 0.08, 0.09, 0.11]} />
-          <meshStandardMaterial color={COLORS.louverWood} roughness={0.9} />
-        </mesh>
-      ))}
+      <mesh position={[0, rectH * 0.18, 0.095]}>
+        <boxGeometry args={[width * 0.92, 0.06, 0.05]} />
+        <meshStandardMaterial color={COLORS.sandstone} roughness={0.9} />
+      </mesh>
     </group>
   );
 }
 
-/** Round tower clock face with white/gold dial and dark clock hands */
-function ClockFace({ position }: { position: [number, number, number] }) {
+/** Authentic Polička dark-square tower clock face with gilded bezel & hands (sits below the gallery) */
+function TowerClockFace({ position }: { position: [number, number, number] }) {
   return (
     <group position={position}>
-      {/* Outer gilded brass bezel */}
-      <mesh position={[0, 0, 0.05]}>
-        <torusGeometry args={[0.76, 0.07, 8, 24]} />
-        <meshStandardMaterial color={COLORS.gold} roughness={0.35} metalness={0.78} />
+      {/* Carved sandstone surround */}
+      <mesh position={[0, 0, 0.02]}>
+        <boxGeometry args={[1.95, 1.95, 0.08]} />
+        <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.92} />
       </mesh>
-      {/* Crisp white/ivory dial */}
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, 0.03]}>
-        <cylinderGeometry args={[0.74, 0.74, 0.06, 20]} />
-        <meshStandardMaterial color="#f7f2e4" roughness={0.55} />
+      {/* Dark slate square clock plate (matches St. James Polička photos) */}
+      <mesh position={[0, 0, 0.06]}>
+        <boxGeometry args={[1.68, 1.68, 0.05]} />
+        <meshStandardMaterial color="#25282c" roughness={0.65} metalness={0.25} />
       </mesh>
-      {/* Inner golden chapter ring */}
-      <mesh position={[0, 0, 0.07]}>
-        <torusGeometry args={[0.56, 0.02, 6, 20]} />
-        <meshStandardMaterial color={COLORS.gold} roughness={0.35} metalness={0.75} />
+      {/* Gilded outer dial ring */}
+      <mesh position={[0, 0, 0.095]}>
+        <torusGeometry args={[0.66, 0.045, 8, 24]} />
+        <meshStandardMaterial color={COLORS.gold} roughness={0.32} metalness={0.82} />
       </mesh>
-      {/* Hour hand (pointing near 4 o'clock for golden hour) */}
-      <mesh position={[0.14, -0.09, 0.085]} rotation={[0, 0, -2.1]}>
-        <boxGeometry args={[0.065, 0.36, 0.02]} />
-        <meshStandardMaterial color={COLORS.iron} roughness={0.5} metalness={0.5} />
+      {/* Golden hour hand */}
+      <mesh position={[0.14, -0.09, 0.11]} rotation={[0, 0, -2.1]}>
+        <boxGeometry args={[0.07, 0.38, 0.025]} />
+        <meshStandardMaterial color={COLORS.gold} roughness={0.3} metalness={0.82} />
       </mesh>
-      {/* Minute hand (pointing near 11 o'clock) */}
-      <mesh position={[-0.08, 0.22, 0.095]} rotation={[0, 0, 0.35]}>
-        <boxGeometry args={[0.045, 0.54, 0.02]} />
-        <meshStandardMaterial color={COLORS.iron} roughness={0.5} metalness={0.5} />
+      {/* Golden minute hand */}
+      <mesh position={[-0.08, 0.22, 0.12]} rotation={[0, 0, 0.35]}>
+        <boxGeometry args={[0.05, 0.56, 0.025]} />
+        <meshStandardMaterial color={COLORS.gold} roughness={0.3} metalness={0.82} />
       </mesh>
-      {/* Center brass boss */}
-      <mesh position={[0, 0, 0.1]}>
-        <sphereGeometry args={[0.06, 8, 8]} />
-        <meshStandardMaterial color={COLORS.gold} roughness={0.3} metalness={0.8} />
+      {/* Center gilded boss */}
+      <mesh position={[0, 0, 0.125]}>
+        <sphereGeometry args={[0.065, 8, 8]} />
+        <meshStandardMaterial color={COLORS.gold} roughness={0.28} metalness={0.85} />
       </mesh>
     </group>
   );
 }
 
-/** Main Neo-Gothic church nave (chrámová loď) extending east from the tower base */
+/** Main Neo-Gothic pale-sandstone church nave (chrámová loď) with dark slate roof & copper turret */
 function ChurchNave({ groundY, coreHalf }: { groundY: number; coreHalf: number }) {
-  const naveLength = 11.4;
-  const naveWidth = 8.4;
-  const wallHeight = 8.8;
+  const naveLength = 12.0;
+  const naveWidth = 8.6;
+  const wallHeight = 9.2;
   const naveCenterX = coreHalf + naveLength / 2 - 0.1;
 
-  // Steep pitched roof geometry parameters
-  const roofRise = 5.0;
-  const roofHalfSpan = naveWidth / 2 + 0.45;
+  // Steep pitched dark-slate roof parameters
+  const roofRise = 4.9;
+  const roofHalfSpan = naveWidth / 2 + 0.4;
   const slopeLength = Math.hypot(roofHalfSpan, roofRise);
   const slopeAngle = Math.atan2(roofRise, roofHalfSpan);
 
-  // Buttress & side-window X offsets along the nave
-  const buttressX = [-4.6, -1.55, 1.55, 4.6];
-  const windowX = [-3.08, 0, 3.08];
+  const buttressX = [-4.8, -1.6, 1.6, 4.8];
+  const windowX = [-3.2, 0, 3.2];
 
   return (
     <group name="church-nave" position={[naveCenterX, groundY, 0]}>
-      {/* Main plastered nave body */}
+      {/* Main warm pale sandstone nave body */}
       <mesh position={[0, wallHeight / 2, 0]} castShadow receiveShadow>
         <boxGeometry args={[naveLength, wallHeight, naveWidth]} />
-        <meshStandardMaterial color={COLORS.plaster} roughness={0.92} />
+        <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
       </mesh>
 
-      {/* Stone foundation plinth */}
+      {/* Weathered stone foundation plinth */}
       <mesh position={[0, 0.55, 0]} receiveShadow>
-        <boxGeometry args={[naveLength + 0.35, 1.1, naveWidth + 0.35]} />
-        <meshStandardMaterial color={COLORS.stoneDark} roughness={0.95} />
+        <boxGeometry args={[naveLength + 0.36, 1.1, naveWidth + 0.36]} />
+        <meshStandardMaterial color={COLORS.sandstoneBase} roughness={0.96} />
       </mesh>
 
-      {/* Upper stone cornice */}
+      {/* Upper sandstone cornice */}
       <mesh position={[0, wallHeight + 0.18, 0]} castShadow>
-        <boxGeometry args={[naveLength + 0.4, 0.36, naveWidth + 0.4]} />
-        <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.94} />
+        <boxGeometry args={[naveLength + 0.42, 0.36, naveWidth + 0.42]} />
+        <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
       </mesh>
 
-      {/* Steep pitched red/terracotta roof slopes (North & South) */}
+      {/* Steep pitched dark charcoal-slate roof slopes (matches photo 1 & 2) */}
       <mesh
-        position={[0, wallHeight + roofRise / 2 + 0.15, naveWidth / 4 + 0.18]}
+        position={[0, wallHeight + roofRise / 2 + 0.15, naveWidth / 4 + 0.16]}
         rotation={[slopeAngle, 0, 0]}
         castShadow
         receiveShadow
       >
-        <boxGeometry args={[naveLength + 0.65, 0.28, slopeLength]} />
-        <meshStandardMaterial color={COLORS.terracottaRoof} roughness={0.86} />
+        <boxGeometry args={[naveLength + 0.6, 0.28, slopeLength]} />
+        <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
       </mesh>
       <mesh
-        position={[0, wallHeight + roofRise / 2 + 0.15, -(naveWidth / 4 + 0.18)]}
+        position={[0, wallHeight + roofRise / 2 + 0.15, -(naveWidth / 4 + 0.16)]}
         rotation={[-slopeAngle, 0, 0]}
         castShadow
         receiveShadow
       >
-        <boxGeometry args={[naveLength + 0.65, 0.28, slopeLength]} />
-        <meshStandardMaterial color={COLORS.terracottaRoof} roughness={0.86} />
+        <boxGeometry args={[naveLength + 0.6, 0.28, slopeLength]} />
+        <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
       </mesh>
 
-      {/* Roof ridge beam */}
-      <mesh position={[0, wallHeight + roofRise + 0.22, 0]}>
-        <boxGeometry args={[naveLength + 0.72, 0.3, 0.36]} />
-        <meshStandardMaterial color={COLORS.terracottaRidge} roughness={0.88} />
+      {/* Roof ridge */}
+      <mesh position={[0, wallHeight + roofRise + 0.2, 0]}>
+        <boxGeometry args={[naveLength + 0.68, 0.28, 0.34]} />
+        <meshStandardMaterial color={COLORS.naveSlateRidge} roughness={0.8} />
       </mesh>
 
       {/* East gable wall filling under the pitched roof */}
-      <mesh
-        position={[naveLength / 2 - 0.15, wallHeight + roofRise * 0.42, 0]}
-        rotation={[0, 0, 0]}
-      >
+      <mesh position={[naveLength / 2 - 0.15, wallHeight + roofRise * 0.42, 0]}>
         <cylinderGeometry args={[0.1, naveWidth * 0.62, roofRise * 0.92, 4]} />
-        <meshStandardMaterial color={COLORS.plasterShade} roughness={0.92} />
+        <meshStandardMaterial color={COLORS.sandstoneWarm} roughness={0.92} />
       </mesh>
 
-      {/* Delicate Neo-Gothic roof ridge turret (sanktusník) */}
-      <group position={[2.6, wallHeight + roofRise + 0.2, 0]}>
+      {/* Oxidized green copper Neo-Gothic ridge turret (sanktusník) */}
+      <group position={[3.2, wallHeight + roofRise + 0.18, 0]}>
         <mesh position={[0, 0.95, 0]} castShadow>
-          <cylinderGeometry args={[0.55, 0.62, 1.9, 6]} />
-          <meshStandardMaterial color={COLORS.slateAccent} roughness={0.8} />
+          <cylinderGeometry args={[0.52, 0.58, 1.9, 6]} />
+          <meshStandardMaterial color={COLORS.copperDark} roughness={0.58} metalness={0.35} />
         </mesh>
-        <mesh position={[0, 3.05, 0]} castShadow>
-          <coneGeometry args={[0.68, 2.5, 6]} />
-          <meshStandardMaterial color={COLORS.slateSpire} roughness={0.82} />
+        <mesh position={[0, 3.1, 0]} castShadow>
+          <coneGeometry args={[0.64, 2.7, 6]} />
+          <meshStandardMaterial color={COLORS.copperMain} roughness={0.52} metalness={0.38} />
         </mesh>
-        <mesh position={[0, 4.45, 0]}>
+        <mesh position={[0, 4.6, 0]}>
           <sphereGeometry args={[0.12, 8, 8]} />
-          <meshStandardMaterial color={COLORS.gold} roughness={0.3} metalness={0.8} />
+          <meshStandardMaterial color={COLORS.gold} roughness={0.3} metalness={0.85} />
         </mesh>
       </group>
 
-      {/* Stepped Neo-Gothic Buttresses (opěrné pilíře) & Tall Gothic Side Windows */}
+      {/* Stepped Neo-Gothic Sandstone Buttresses & Two-Tier Lancet Windows (matches photo 1) */}
       {[-1, 1].map((zSign) => (
         <group key={`nave-side-${zSign}`}>
           {buttressX.map((bx, i) => (
@@ -245,49 +227,47 @@ function ChurchNave({ groundY, coreHalf }: { groundY: number; coreHalf: number }
               key={`buttress-${zSign}-${i}`}
               position={[bx, 0, zSign * (naveWidth / 2 + 0.42)]}
             >
-              {/* Lower wider buttress tier */}
-              <mesh position={[0, 2.3, 0]} castShadow receiveShadow>
-                <boxGeometry args={[0.72, 4.6, 0.95]} />
-                <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.94} />
+              <mesh position={[0, 2.4, 0]} castShadow receiveShadow>
+                <boxGeometry args={[0.72, 4.8, 0.95]} />
+                <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
               </mesh>
-              {/* Upper stepped buttress tier */}
-              <mesh position={[0, 6.2, -zSign * 0.12]} castShadow receiveShadow>
-                <boxGeometry args={[0.58, 3.6, 0.68]} />
-                <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.94} />
+              <mesh position={[0, 6.5, -zSign * 0.12]} castShadow receiveShadow>
+                <boxGeometry args={[0.58, 3.8, 0.68]} />
+                <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
               </mesh>
-              {/* Sloped stone weather cap */}
               <mesh
-                position={[0, 8.15, -zSign * 0.12]}
+                position={[0, 8.55, -zSign * 0.12]}
                 rotation={[zSign * 0.45, 0, 0]}
               >
                 <boxGeometry args={[0.66, 0.22, 0.78]} />
-                <meshStandardMaterial color={COLORS.stoneDark} roughness={0.95} />
+                <meshStandardMaterial color={COLORS.sandstoneDark} roughness={0.95} />
               </mesh>
             </group>
           ))}
 
-          {/* Tall narrow Neo-Gothic side windows between buttresses */}
+          {/* Upper & lower Gothic pointed-arch side windows */}
           {windowX.map((wx, i) => (
             <group
               key={`nave-win-${zSign}-${i}`}
-              position={[wx, 4.85, zSign * (naveWidth / 2 + 0.04)]}
+              position={[wx, 0, zSign * (naveWidth / 2 + 0.04)]}
               rotation={[0, zSign > 0 ? 0 : Math.PI, 0]}
             >
-              <GothicWindow position={[0, 0, 0]} width={1.0} height={4.4} louvers={7} />
+              <GothicWindow position={[0, 6.2, 0]} width={0.95} height={3.2} />
+              <GothicWindow position={[0, 2.5, 0]} width={0.85} height={2.2} />
             </group>
           ))}
         </group>
       ))}
 
-      {/* Polygonal Eastern Presbytery / Apse */}
-      <group position={[naveLength / 2 + 1.45, 0, 0]}>
+      {/* Polygonal Sandstone Eastern Presbytery / Apse with dark slate roof */}
+      <group position={[naveLength / 2 + 1.5, 0, 0]}>
         <mesh position={[0, (wallHeight - 0.8) / 2, 0]} castShadow receiveShadow>
-          <cylinderGeometry args={[3.15, 3.25, wallHeight - 0.8, 6]} />
-          <meshStandardMaterial color={COLORS.plaster} roughness={0.92} />
+          <cylinderGeometry args={[3.2, 3.3, wallHeight - 0.8, 6]} />
+          <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
         </mesh>
-        <mesh position={[0, wallHeight + 1.1, 0]} castShadow>
-          <coneGeometry args={[3.55, 3.9, 6]} />
-          <meshStandardMaterial color={COLORS.terracottaRoof} roughness={0.86} />
+        <mesh position={[0, wallHeight + 0.95, 0]} castShadow>
+          <coneGeometry args={[3.6, 3.6, 6]} />
+          <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
         </mesh>
       </group>
     </group>
@@ -318,44 +298,42 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
     railingHeight,
     floorThickness,
     shaftDepth,
-    belfryHeight,
   } = TOWER_DIMENSIONS;
 
   const coreWidth = coreHalf * 2;
   const galleryWidth = galleryOuterHalf * 2;
   const walkwayWidth = galleryOuterHalf - coreHalf;
   const railingSpan = railingHalf * 2;
+  const watchRoomHeight = 3.55;
   const groundY = -shaftDepth + 2;
 
-  // Generate subtle wooden floor plank strips around all four sides of the walkway
-  const planks = useMemo<PlankSpec[]>(() => {
-    const list: PlankSpec[] = [];
-    const plankCount = 8;
-    const plankWidth = walkwayWidth / plankCount;
-    const plankThickness = 0.03;
+  // Carved pale sandstone flagstones around the gallery (ochoz) floor
+  const flagstones = useMemo<FlagstoneSpec[]>(() => {
+    const list: FlagstoneSpec[] = [];
+    const stripCount = 6;
+    const stripWidth = walkwayWidth / stripCount;
+    const tileThickness = 0.035;
 
-    // North & South walkways (full outer span)
     for (const zSign of [-1, 1]) {
-      for (let i = 0; i < plankCount; i++) {
-        const offset = coreHalf + (i + 0.5) * plankWidth;
+      for (let i = 0; i < stripCount; i++) {
+        const offset = coreHalf + (i + 0.5) * stripWidth;
         list.push({
           key: `ns-${zSign}-${i}`,
-          position: [0, -plankThickness / 2 + 0.002, zSign * offset],
-          size: [galleryWidth - 0.08, plankThickness, plankWidth - 0.03],
-          color: WOOD_TONES[(i + (zSign > 0 ? 1 : 0)) % WOOD_TONES.length],
+          position: [0, -tileThickness / 2 + 0.002, zSign * offset],
+          size: [galleryWidth - 0.1, tileThickness, stripWidth - 0.03],
+          color: STONE_FLOOR_TONES[(i + (zSign > 0 ? 1 : 0)) % STONE_FLOOR_TONES.length],
         });
       }
     }
 
-    // East & West walkways (between North & South strips)
     for (const xSign of [-1, 1]) {
-      for (let i = 0; i < plankCount; i++) {
-        const offset = coreHalf + (i + 0.5) * plankWidth;
+      for (let i = 0; i < stripCount; i++) {
+        const offset = coreHalf + (i + 0.5) * stripWidth;
         list.push({
           key: `ew-${xSign}-${i}`,
-          position: [xSign * offset, -plankThickness / 2 + 0.002, 0],
-          size: [plankWidth - 0.03, plankThickness, coreWidth + 0.04],
-          color: WOOD_TONES[(i + (xSign > 0 ? 2 : 3)) % WOOD_TONES.length],
+          position: [xSign * offset, -tileThickness / 2 + 0.002, 0],
+          size: [stripWidth - 0.03, tileThickness, coreWidth + 0.04],
+          color: STONE_FLOOR_TONES[(i + (xSign > 0 ? 2 : 3)) % STONE_FLOOR_TONES.length],
         });
       }
     }
@@ -363,9 +341,9 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
     return list;
   }, [coreHalf, coreWidth, galleryWidth, walkwayWidth]);
 
-  // Baluster offsets along each railing span (excluding corner posts)
+  // Gothic stone balustrade mullions along each side of the stone gallery railing
   const balusterOffsets = useMemo(() => {
-    const count = 13;
+    const count = 14;
     const offsets: number[] = [];
     for (let i = 1; i < count; i++) {
       const t = i / count;
@@ -374,23 +352,25 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
     return offsets;
   }, [railingHalf, railingSpan]);
 
-  // Corbel bracket offsets underneath each side of the cantilevered gallery
-  const corbelOffsets = useMemo(() => [-3.0, -1.5, 0, 1.5, 3.0], []);
+  // Dense row of carved sandstone Gothic corbel brackets (krakorce) under the stone gallery
+  const corbelOffsets = useMemo(
+    () => [-3.6, -2.7, -1.8, -0.9, 0, 0.9, 1.8, 2.7, 3.6],
+    [],
+  );
 
   return (
     <group name="church-of-st-james-policka">
-      {/* === 1. NEO-GOTHIC TOWER SHAFT BELOW GALLERY === */}
-      {/* Warm light-ochre / sandstone plaster tower shaft */}
+      {/* === 1. WARM PALE SANDSTONE TOWER SHAFT BELOW GALLERY === */}
       <mesh
         position={[0, -shaftDepth / 2 - floorThickness, 0]}
         receiveShadow
         castShadow
       >
-        <boxGeometry args={[coreWidth + 0.2, shaftDepth, coreWidth + 0.2]} />
-        <meshStandardMaterial color={COLORS.plaster} roughness={0.93} metalness={0.02} />
+        <boxGeometry args={[coreWidth + 0.22, shaftDepth, coreWidth + 0.22]} />
+        <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} metalness={0.02} />
       </mesh>
 
-      {/* Darker sandstone corner quoins along the full shaft */}
+      {/* Subtle sandstone corner quoins along the shaft */}
       {[
         [-1, -1],
         [1, -1],
@@ -400,114 +380,145 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
         <mesh
           key={`shaft-quoin-${sx}-${sz}`}
           position={[
-            sx * (coreHalf + 0.12),
+            sx * (coreHalf + 0.14),
             -shaftDepth / 2 - floorThickness,
-            sz * (coreHalf + 0.12),
+            sz * (coreHalf + 0.14),
           ]}
           receiveShadow
           castShadow
         >
-          <boxGeometry args={[0.48, shaftDepth, 0.48]} />
-          <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.95} />
+          <boxGeometry args={[0.46, shaftDepth, 0.46]} />
+          <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
         </mesh>
       ))}
 
-      {/* Horizontal Neo-Gothic sandstone stringcourse bands dividing tower stories */}
-      {[-9, -19, -30].map((bandY) => (
+      {/* Horizontal sandstone stringcourse bands */}
+      {[-6.2, -16.5, -28.0].map((bandY) => (
         <mesh key={`band-${bandY}`} position={[0, bandY, 0]} castShadow receiveShadow>
-          <boxGeometry args={[coreWidth + 0.52, 0.36, coreWidth + 0.52]} />
-          <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.94} />
+          <boxGeometry args={[coreWidth + 0.54, 0.34, coreWidth + 0.54]} />
+          <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
         </mesh>
       ))}
 
-      {/* Tall narrow Neo-Gothic pointed-arch windows along the lower tower shaft */}
+      {/* 4 AUTHENTIC TOWER CLOCK FACES BELOW THE GALLERY + TALL GOTHIC WINDOWS */}
       {SIDES.map((side) => (
-        <group key={`shaft-windows-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
+        <group key={`shaft-details-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
+          {/* Square dark-slate & gold clock face directly below the stone gallery corbels */}
+          <TowerClockFace position={[0, -3.55, coreHalf + 0.12]} />
+
+          {/* Tall Neo-Gothic pointed-arch belfry window with red-brown shutters below the clock */}
           <GothicWindow
-            position={[0, -5.2, coreHalf + 0.12]}
-            width={1.15}
-            height={3.2}
-            louvers={6}
+            position={[0, -9.8, coreHalf + 0.12]}
+            width={1.25}
+            height={4.2}
+            shutterColor={COLORS.shutterRed}
           />
-          <GothicWindow
-            position={[0, -14.2, coreHalf + 0.12]}
-            width={1.1}
-            height={3.6}
-            louvers={7}
-          />
-          {/* Skip lowest window on East face where the church nave joins the tower */}
+
+          {/* Paired lancet windows on middle shaft (skip East where nave joins) */}
           {side !== 1 && (
-            <GothicWindow
-              position={[0, -24.5, coreHalf + 0.12]}
-              width={1.1}
-              height={3.6}
-              louvers={7}
-            />
+            <>
+              <GothicWindow
+                position={[-0.75, -20.5, coreHalf + 0.12]}
+                width={0.62}
+                height={3.1}
+                shutterColor={COLORS.shutterRed}
+              />
+              <GothicWindow
+                position={[0.75, -20.5, coreHalf + 0.12]}
+                width={0.62}
+                height={3.1}
+                shutterColor={COLORS.shutterRed}
+              />
+            </>
           )}
         </group>
       ))}
 
-      {/* Main Church Nave (chrámová loď) extending East from the tower base */}
+      {/* Stepped Neo-Gothic West Gable Wing flanking the tower base (matches photo 2) */}
+      <group position={[-0.2, groundY, 0]}>
+        {[-1, 1].map((zSign) => (
+          <group key={`west-wing-${zSign}`} position={[0, 0, zSign * 5.2]}>
+            <mesh position={[0, 5.2, 0]} castShadow receiveShadow>
+              <boxGeometry args={[5.6, 10.4, 3.8]} />
+              <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
+            </mesh>
+            {/* Stepped Gothic gable crenels */}
+            <mesh position={[0, 11.2, -zSign * 0.6]} castShadow>
+              <boxGeometry args={[5.7, 1.6, 2.2]} />
+              <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
+            </mesh>
+          </group>
+        ))}
+      </group>
+
+      {/* Main Neo-Gothic Church Nave (chrámová loď) below */}
       <ChurchNave groundY={groundY} coreHalf={coreHalf} />
 
-      {/* Cantilevered dark timber corbel beams supporting the wooden gallery (ochoz) */}
+      {/* Carved Sandstone Gothic Corbel Brackets (krakorce) supporting the stone ochoz */}
       {SIDES.map((side) => (
         <group key={`corbels-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
+          {/* Continuous molded stone gallery cornice band underneath deck */}
+          <mesh position={[0, -floorThickness - 0.18, coreHalf + walkwayWidth * 0.5]} castShadow>
+            <boxGeometry args={[galleryWidth - 0.1, 0.32, walkwayWidth + 0.15]} />
+            <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
+          </mesh>
           {corbelOffsets.map((offset) => (
             <group key={`corbel-${side}-${offset}`} position={[offset, -floorThickness, 0]}>
+              {/* Upper stepped stone corbel */}
               <mesh
-                position={[0, -0.14, coreHalf + walkwayWidth * 0.48]}
+                position={[0, -0.58, coreHalf + walkwayWidth * 0.44]}
                 castShadow
                 receiveShadow
               >
-                <boxGeometry args={[0.24, 0.26, walkwayWidth + 0.2]} />
-                <meshStandardMaterial color="#4e321f" roughness={0.9} />
+                <boxGeometry args={[0.32, 0.55, walkwayWidth * 0.85]} />
+                <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
               </mesh>
+              {/* Lower tapered Gothic corbel console */}
               <mesh
-                position={[0, -0.95, coreHalf + walkwayWidth * 0.34]}
-                rotation={[0.68, 0, 0]}
+                position={[0, -1.25, coreHalf + walkwayWidth * 0.22]}
+                rotation={[0.52, 0, 0]}
                 castShadow
               >
-                <boxGeometry args={[0.2, 2.1, 0.22]} />
-                <meshStandardMaterial color="#412919" roughness={0.92} />
+                <boxGeometry args={[0.26, 1.25, 0.42]} />
+                <meshStandardMaterial color={COLORS.sandstoneDark} roughness={0.95} />
               </mesh>
             </group>
           ))}
         </group>
       ))}
 
-      {/* === 2. WOODEN GALLERY (OCHOZ) FLOOR DECK === */}
+      {/* === 2. CANTILEVERED PALE SANDSTONE GALLERY (OCHOZ) FLOOR DECK === */}
       <mesh
         position={[0, -floorThickness / 2 - 0.01, 0]}
         receiveShadow
         castShadow
       >
         <boxGeometry args={[galleryWidth, floorThickness, galleryWidth]} />
-        <meshStandardMaterial color="#523520" roughness={0.9} />
+        <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
       </mesh>
 
-      {planks.map((plank) => (
-        <mesh key={plank.key} position={plank.position} receiveShadow>
-          <boxGeometry args={plank.size} />
-          <meshStandardMaterial color={plank.color} roughness={0.86} metalness={0.02} />
+      {flagstones.map((tile) => (
+        <mesh key={tile.key} position={tile.position} receiveShadow>
+          <boxGeometry args={tile.size} />
+          <meshStandardMaterial color={tile.color} roughness={0.9} metalness={0.02} />
         </mesh>
       ))}
 
-      {/* === 3. UPPER BELFRY, MARTINŮ ROOM DOOR, 4 CLOCKS & OCTAGONAL SPIRE (CAMERA COLLIDERS) === */}
+      {/* === 3. WATCHMAN'S ROOM (MARTINŮ BIRTH ROOM) & TALL OXIDIZED GREEN COPPER SPIRE (CAMERA COLLIDERS) === */}
       <group ref={collidersGroupRef} name="tower-camera-colliders">
-        {/* Main Neo-Gothic ochre-plaster upper belfry core */}
-        <mesh position={[0, belfryHeight / 2, 0]} castShadow receiveShadow>
-          <boxGeometry args={[coreWidth, belfryHeight, coreWidth]} />
-          <meshStandardMaterial color={COLORS.plaster} roughness={0.92} metalness={0.02} />
+        {/* Warm pale sandstone watchman's room core on the gallery */}
+        <mesh position={[0, watchRoomHeight / 2, 0]} castShadow receiveShadow>
+          <boxGeometry args={[coreWidth, watchRoomHeight, coreWidth]} />
+          <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} metalness={0.02} />
         </mesh>
 
-        {/* Stone plinth / baseboard around the central tower wall */}
+        {/* Stone plinth around the watchman's room base */}
         <mesh position={[0, 0.18, 0]} castShadow receiveShadow>
           <boxGeometry args={[coreWidth + 0.18, 0.36, coreWidth + 0.18]} />
-          <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.95} />
+          <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
         </mesh>
 
-        {/* Darker sandstone corner quoins on the upper belfry */}
+        {/* Sandstone corner quoins */}
         {[
           [-1, -1],
           [1, -1],
@@ -515,85 +526,71 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
           [1, 1],
         ].map(([sx, sz]) => (
           <mesh
-            key={`belfry-quoin-${sx}-${sz}`}
-            position={[sx * (coreHalf - 0.06), belfryHeight / 2, sz * (coreHalf - 0.06)]}
+            key={`room-quoin-${sx}-${sz}`}
+            position={[sx * (coreHalf - 0.06), watchRoomHeight / 2, sz * (coreHalf - 0.06)]}
             castShadow
             receiveShadow
           >
-            <boxGeometry args={[0.42, belfryHeight + 0.04, 0.42]} />
-            <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.95} />
+            <boxGeometry args={[0.42, watchRoomHeight + 0.04, 0.42]} />
+            <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
           </mesh>
         ))}
 
-        {/* Mid-belfry stone stringcourse below the clock story */}
-        <mesh position={[0, 4.15, 0]} castShadow receiveShadow>
-          <boxGeometry args={[coreWidth + 0.28, 0.22, coreWidth + 0.28]} />
-          <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.94} />
+        {/* Molded stone eaves cornice at top of watchman's room */}
+        <mesh position={[0, watchRoomHeight + 0.16, 0]} castShadow receiveShadow>
+          <boxGeometry args={[coreWidth + 0.56, 0.32, coreWidth + 0.56]} />
+          <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
         </mesh>
 
         {/* Historic Entrance to Bohuslav Martinů's Birth Room (South face, +Z) */}
         <group position={[0, 0, coreHalf + 0.03]}>
-          {/* Sandstone Neo-Gothic pointed door surround */}
-          <mesh position={[0, 1.15, 0]} castShadow receiveShadow>
-            <boxGeometry args={[1.56, 2.3, 0.14]} />
-            <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.95} />
+          <mesh position={[0, 1.12, 0]} castShadow receiveShadow>
+            <boxGeometry args={[1.52, 2.24, 0.14]} />
+            <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
           </mesh>
-          <mesh position={[0, 2.22, 0]} rotation={[0, 0, Math.PI / 4]} castShadow>
-            <boxGeometry args={[1.1, 1.1, 0.14]} />
-            <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.95} />
+          <mesh position={[0, 2.16, 0]} rotation={[0, 0, Math.PI / 4]} castShadow>
+            <boxGeometry args={[1.08, 1.08, 0.14]} />
+            <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
           </mesh>
-
-          {/* Heavy dark oak door leaf */}
-          <mesh position={[0, 1.12, 0.05]} castShadow receiveShadow>
-            <boxGeometry args={[1.18, 2.16, 0.1]} />
+          {/* Heavy dark oak door */}
+          <mesh position={[0, 1.1, 0.05]} castShadow receiveShadow>
+            <boxGeometry args={[1.16, 2.1, 0.1]} />
             <meshStandardMaterial color="#3c2517" roughness={0.88} />
           </mesh>
-          <mesh position={[0, 2.12, 0.05]} rotation={[0, 0, Math.PI / 4]}>
-            <boxGeometry args={[0.82, 0.82, 0.1]} />
+          <mesh position={[0, 2.08, 0.05]} rotation={[0, 0, Math.PI / 4]}>
+            <boxGeometry args={[0.8, 0.8, 0.1]} />
             <meshStandardMaterial color="#3c2517" roughness={0.88} />
           </mesh>
-
           {/* Wrought-iron strap hinges */}
-          <mesh position={[-0.2, 1.72, 0.11]}>
-            <boxGeometry args={[0.74, 0.08, 0.03]} />
+          <mesh position={[-0.2, 1.68, 0.11]}>
+            <boxGeometry args={[0.72, 0.08, 0.03]} />
             <meshStandardMaterial color={COLORS.iron} roughness={0.55} metalness={0.65} />
           </mesh>
-          <mesh position={[-0.2, 0.64, 0.11]}>
-            <boxGeometry args={[0.74, 0.08, 0.03]} />
+          <mesh position={[-0.2, 0.62, 0.11]}>
+            <boxGeometry args={[0.72, 0.08, 0.03]} />
             <meshStandardMaterial color={COLORS.iron} roughness={0.55} metalness={0.65} />
           </mesh>
-
           {/* Brass ring handle */}
-          <mesh position={[0.38, 1.08, 0.12]}>
+          <mesh position={[0.38, 1.06, 0.12]}>
             <torusGeometry args={[0.065, 0.018, 6, 12]} />
             <meshStandardMaterial color={COLORS.gold} roughness={0.35} metalness={0.8} />
           </mesh>
-
-          {/* Small bronze memorial plaque beside the door */}
-          <mesh position={[1.12, 1.48, 0.04]}>
-            <boxGeometry args={[0.38, 0.28, 0.04]} />
-            <meshStandardMaterial color="#6e5332" roughness={0.45} metalness={0.65} />
-          </mesh>
-
-          {/* Small warm wall lantern mounted above Bohuslav Martinů's birth room door */}
-          <group position={[0, 3.05, 0.18]}>
-            {/* Iron wall bracket */}
+          {/* Warm glowing lantern above Martinů's birth room door */}
+          <group position={[0, 2.95, 0.18]}>
             <mesh position={[0, 0.12, -0.1]}>
               <boxGeometry args={[0.06, 0.06, 0.24]} />
               <meshStandardMaterial color={COLORS.iron} roughness={0.5} metalness={0.7} />
             </mesh>
-            {/* Lantern cap */}
             <mesh position={[0, 0.08, 0]}>
               <coneGeometry args={[0.14, 0.12, 6]} />
               <meshStandardMaterial color={COLORS.iron} roughness={0.5} metalness={0.7} />
             </mesh>
-            {/* Warm glowing lantern glass */}
             <mesh position={[0, -0.07, 0]}>
               <cylinderGeometry args={[0.095, 0.075, 0.2, 6]} />
               <meshStandardMaterial
                 color="#ffe099"
                 emissive="#ffaa3d"
-                emissiveIntensity={2.5}
+                emissiveIntensity={2.4}
                 roughness={0.25}
               />
             </mesh>
@@ -601,110 +598,145 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
           </group>
         </group>
 
-        {/* Tall narrow Neo-Gothic pointed-arch windows on East, North & West gallery walls */}
+        {/* Paired watchman's windows on East, North & West gallery room walls (matches photo 2) */}
         {[1, 2, 3].map((side) => (
-          <group key={`belfry-window-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
-            <GothicWindow
-              position={[0, 2.2, coreHalf + 0.03]}
-              width={1.15}
-              height={2.8}
-              louvers={6}
-            />
+          <group key={`room-win-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
+            <group position={[0, 1.95, coreHalf + 0.04]}>
+              {/* Stone frame */}
+              <mesh castShadow>
+                <boxGeometry args={[1.85, 1.25, 0.14]} />
+                <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
+              </mesh>
+              {/* Two bright/warm watchman window panes */}
+              <mesh position={[-0.4, 0, 0.06]}>
+                <boxGeometry args={[0.62, 0.92, 0.06]} />
+                <meshStandardMaterial color="#3c464f" roughness={0.35} metalness={0.25} />
+              </mesh>
+              <mesh position={[0.4, 0, 0.06]}>
+                <boxGeometry args={[0.62, 0.92, 0.06]} />
+                <meshStandardMaterial color="#3c464f" roughness={0.35} metalness={0.25} />
+              </mesh>
+              {/* White wooden window crossbars */}
+              <mesh position={[0, 0, 0.09]}>
+                <boxGeometry args={[1.55, 0.06, 0.04]} />
+                <meshStandardMaterial color="#f0eadc" roughness={0.7} />
+              </mesh>
+            </group>
           </group>
         ))}
 
-        {/* 4 Round Tower Clock Faces on all 4 sides of the upper belfry */}
+        {/* DISTINCTIVE TALL OXIDIZED GREEN COPPER SPIRE (MĚDĚNKA) */}
+        {/* Flared copper base hip skirt transitioning from square room to octagonal needle */}
+        <mesh
+          position={[0, watchRoomHeight + 1.15, 0]}
+          rotation={[0, Math.PI / 4, 0]}
+          castShadow
+        >
+          <cylinderGeometry args={[coreHalf * 0.72, coreHalf * 1.48, 1.75, 4]} />
+          <meshStandardMaterial
+            color={COLORS.copperLight}
+            roughness={0.52}
+            metalness={0.36}
+            flatShading
+          />
+        </mesh>
+
+        {/* Upper octagonal oxidized green copper collar */}
+        <mesh position={[0, watchRoomHeight + 2.45, 0]} castShadow>
+          <cylinderGeometry args={[coreHalf * 0.56, coreHalf * 0.68, 1.1, 8]} />
+          <meshStandardMaterial
+            color={COLORS.copperDark}
+            roughness={0.55}
+            metalness={0.38}
+            flatShading
+          />
+        </mesh>
+
+        {/* Tall, slender, steep octagonal oxidized green copper main spire */}
+        <mesh position={[0, watchRoomHeight + 9.4, 0]} castShadow>
+          <coneGeometry args={[coreHalf * 0.6, 13.0, 8]} />
+          <meshStandardMaterial
+            color={COLORS.copperMain}
+            roughness={0.48}
+            metalness={0.4}
+            flatShading
+          />
+        </mesh>
+
+        {/* 4 tiny spire dormers (lucarnes) around the lower spire */}
         {SIDES.map((side) => (
-          <group key={`tower-clock-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
-            <ClockFace position={[0, 5.45, coreHalf + 0.04]} />
-          </group>
-        ))}
-
-        {/* Upper Neo-Gothic stone cornice */}
-        <mesh position={[0, belfryHeight + 0.2, 0]} castShadow receiveShadow>
-          <boxGeometry args={[coreWidth + 0.62, 0.4, coreWidth + 0.62]} />
-          <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.94} />
-        </mesh>
-
-        {/* 4 Neo-Gothic corner pinnacles framing the octagonal spire base */}
-        {[
-          [-1, -1],
-          [1, -1],
-          [-1, 1],
-          [1, 1],
-        ].map(([sx, sz]) => (
-          <group
-            key={`pinnacle-${sx}-${sz}`}
-            position={[sx * (coreHalf - 0.1), belfryHeight + 0.4, sz * (coreHalf - 0.1)]}
-          >
-            <mesh position={[0, 0.85, 0]} castShadow>
-              <boxGeometry args={[0.62, 1.7, 0.62]} />
-              <meshStandardMaterial color={COLORS.stoneTrim} roughness={0.94} />
+          <group key={`spire-dormer-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
+            <mesh position={[0, watchRoomHeight + 3.6, coreHalf * 0.56]} castShadow>
+              <boxGeometry args={[0.55, 1.05, 0.45]} />
+              <meshStandardMaterial color={COLORS.copperDark} roughness={0.55} metalness={0.35} />
             </mesh>
-            <mesh position={[0, 2.45, 0]} castShadow>
-              <coneGeometry args={[0.48, 1.65, 4]} />
-              <meshStandardMaterial color={COLORS.slateSpire} roughness={0.82} />
+            <mesh position={[0, watchRoomHeight + 4.45, coreHalf * 0.56]}>
+              <coneGeometry args={[0.42, 0.75, 4]} />
+              <meshStandardMaterial color={COLORS.copperLight} roughness={0.5} metalness={0.38} />
             </mesh>
           </group>
         ))}
+      </group>
 
-        {/* Tall, steep, dark-slate Octagonal Gothic Spire */}
-        <mesh position={[0, belfryHeight + 0.85, 0]} castShadow>
-          <cylinderGeometry args={[coreHalf * 1.04, coreHalf * 1.12, 1.1, 8]} />
-          <meshStandardMaterial color={COLORS.slateAccent} roughness={0.84} />
+      {/* Tall Golden Spire Rod, Orb (makovice) & Finial Cross at the Apex */}
+      <group position={[0, watchRoomHeight + 16.0, 0]}>
+        <mesh position={[0, 0.9, 0]}>
+          <cylinderGeometry args={[0.04, 0.06, 1.8, 6]} />
+          <meshStandardMaterial color={COLORS.iron} roughness={0.45} metalness={0.7} />
         </mesh>
-        <mesh position={[0, belfryHeight + 6.95, 0]} castShadow>
-          <coneGeometry args={[coreHalf * 1.08, 11.2, 8]} />
-          <meshStandardMaterial color={COLORS.slateSpire} roughness={0.82} metalness={0.08} />
+        <mesh position={[0, 1.45, 0]}>
+          <sphereGeometry args={[0.24, 10, 10]} />
+          <meshStandardMaterial color={COLORS.gold} roughness={0.26} metalness={0.86} />
+        </mesh>
+        <mesh position={[0, 2.35, 0]}>
+          <boxGeometry args={[0.07, 1.4, 0.07]} />
+          <meshStandardMaterial color={COLORS.gold} roughness={0.26} metalness={0.86} />
+        </mesh>
+        <mesh position={[0, 2.65, 0]}>
+          <boxGeometry args={[0.7, 0.07, 0.07]} />
+          <meshStandardMaterial color={COLORS.gold} roughness={0.26} metalness={0.86} />
         </mesh>
       </group>
 
-      {/* Golden Spire Finial & Cross at the apex */}
-      <group position={[0, belfryHeight + 12.75, 0]}>
-        <mesh>
-          <sphereGeometry args={[0.22, 10, 10]} />
-          <meshStandardMaterial color={COLORS.gold} roughness={0.28} metalness={0.85} />
-        </mesh>
-        <mesh position={[0, 0.72, 0]}>
-          <boxGeometry args={[0.08, 1.45, 0.08]} />
-          <meshStandardMaterial color={COLORS.gold} roughness={0.28} metalness={0.85} />
-        </mesh>
-        <mesh position={[0, 1.02, 0]}>
-          <boxGeometry args={[0.72, 0.08, 0.08]} />
-          <meshStandardMaterial color={COLORS.gold} roughness={0.28} metalness={0.85} />
-        </mesh>
-      </group>
-
-      {/* === 4. OUTER WOODEN RAILING AROUND ALL 4 EDGES === */}
+      {/* === 4. CARVED GOTHIC STONE GALLERY RAILING (KAMENNÉ ZÁBRADLÍ) === */}
       {SIDES.map((side) => (
-        <group key={`railing-side-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
+        <group key={`stone-railing-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
+          {/* Carved stone top coping handrail */}
           <mesh position={[0, railingHeight, railingHalf]} castShadow receiveShadow>
-            <boxGeometry args={[railingSpan + 0.22, 0.1, 0.16]} />
-            <meshStandardMaterial color="#613f26" roughness={0.82} />
+            <boxGeometry args={[railingSpan + 0.24, 0.14, 0.24]} />
+            <meshStandardMaterial color={COLORS.sandstone} roughness={0.9} />
           </mesh>
-          <mesh position={[0, railingHeight * 0.52, railingHalf]} castShadow receiveShadow>
-            <boxGeometry args={[railingSpan, 0.07, 0.08]} />
-            <meshStandardMaterial color="#583922" roughness={0.86} />
+          {/* Gothic stone tracery mid-bar */}
+          <mesh position={[0, railingHeight * 0.68, railingHalf]} castShadow receiveShadow>
+            <boxGeometry args={[railingSpan, 0.08, 0.12]} />
+            <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.92} />
           </mesh>
-          <mesh position={[0, 0.09, railingHalf]} castShadow receiveShadow>
-            <boxGeometry args={[railingSpan + 0.12, 0.18, 0.12]} />
-            <meshStandardMaterial color="#4e321e" roughness={0.9} />
+          {/* Stone parapet base plinth */}
+          <mesh position={[0, 0.15, railingHalf]} castShadow receiveShadow>
+            <boxGeometry args={[railingSpan + 0.14, 0.3, 0.2]} />
+            <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
           </mesh>
+          {/* Carved Gothic stone mullions / balusters */}
           {balusterOffsets.map((xOff, idx) => (
-            <mesh
-              key={`baluster-${side}-${idx}`}
-              position={[xOff, railingHeight / 2, railingHalf]}
-              castShadow
-              receiveShadow
-            >
-              <boxGeometry args={[0.09, railingHeight - 0.06, 0.09]} />
-              <meshStandardMaterial color="#6c472c" roughness={0.86} />
-            </mesh>
+            <group key={`stone-baluster-${side}-${idx}`} position={[xOff, 0, railingHalf]}>
+              <mesh position={[0, railingHeight * 0.52, 0]} castShadow receiveShadow>
+                <boxGeometry args={[0.12, railingHeight - 0.14, 0.14]} />
+                <meshStandardMaterial color={COLORS.sandstoneWarm} roughness={0.92} />
+              </mesh>
+              {/* Small Gothic diamond tracery accent near top of each stone mullion */}
+              <mesh
+                position={[0, railingHeight * 0.82, 0]}
+                rotation={[0, 0, Math.PI / 4]}
+              >
+                <boxGeometry args={[0.18, 0.18, 0.1]} />
+                <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
+              </mesh>
+            </group>
           ))}
         </group>
       ))}
 
-      {/* Corner railing posts with glowing brass tower lanterns */}
+      {/* === 5. 4 ICONIC OXIDIZED GREEN COPPER CORNER TURRETS RISING FROM THE GALLERY CORNERS === */}
       {[
         [-1, -1],
         [1, -1],
@@ -712,40 +744,69 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
         [1, 1],
       ].map(([sx, sz]) => (
         <group
-          key={`corner-post-${sx}-${sz}`}
+          key={`corner-turret-${sx}-${sz}`}
           position={[sx * railingHalf, 0, sz * railingHalf]}
         >
-          <mesh position={[0, (railingHeight + 0.14) / 2, 0]} castShadow receiveShadow>
-            <boxGeometry args={[0.2, railingHeight + 0.14, 0.2]} />
-            <meshStandardMaterial color="#523520" roughness={0.88} />
+          {/* Octagonal carved sandstone corner turret base & piers */}
+          <mesh position={[0, railingHeight * 0.55, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[0.34, 0.38, railingHeight + 0.2, 8]} />
+            <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.92} />
           </mesh>
-          <mesh position={[0, railingHeight + 0.18, 0]} castShadow>
-            <boxGeometry args={[0.26, 0.07, 0.26]} />
-            <meshStandardMaterial color="#422a19" roughness={0.85} />
+          {/* Slender corner stone turret shaft rising above the railing to eaves height */}
+          <mesh position={[0, 2.35, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[0.3, 0.32, 2.3, 8]} />
+            <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
           </mesh>
-          <mesh position={[0, railingHeight + 0.36, 0]}>
-            <cylinderGeometry args={[0.09, 0.07, 0.24, 6]} />
+          {/* Carved stone turret crown cornice */}
+          <mesh position={[0, 3.55, 0]} castShadow>
+            <cylinderGeometry args={[0.42, 0.34, 0.24, 8]} />
+            <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.92} />
+          </mesh>
+          {/* Tall needle-sharp oxidized green copper corner turret spire (matches photo 1 & 2) */}
+          <mesh position={[0, 6.25, 0]} castShadow>
+            <coneGeometry args={[0.46, 5.2, 8]} />
             <meshStandardMaterial
-              color="#ffd27d"
-              emissive="#ff9f38"
-              emissiveIntensity={2.0}
-              roughness={0.3}
+              color={COLORS.copperMain}
+              roughness={0.48}
+              metalness={0.4}
+              flatShading
             />
           </mesh>
-          <mesh position={[0, railingHeight + 0.52, 0]}>
-            <coneGeometry args={[0.13, 0.12, 6]} />
-            <meshStandardMaterial color={COLORS.iron} roughness={0.5} metalness={0.65} />
+          {/* Golden turret finial ball & needle */}
+          <mesh position={[0, 9.0, 0]}>
+            <sphereGeometry args={[0.11, 8, 8]} />
+            <meshStandardMaterial color={COLORS.gold} roughness={0.28} metalness={0.85} />
           </mesh>
+          <mesh position={[0, 9.45, 0]}>
+            <cylinderGeometry args={[0.02, 0.03, 0.8, 6]} />
+            <meshStandardMaterial color={COLORS.gold} roughness={0.28} metalness={0.85} />
+          </mesh>
+          {/* Warm brass gallery lantern mounted on the inward side of each corner turret */}
+          <group position={[-sx * 0.34, 1.55, -sz * 0.34]}>
+            <mesh>
+              <cylinderGeometry args={[0.08, 0.065, 0.2, 6]} />
+              <meshStandardMaterial
+                color="#ffd27d"
+                emissive="#ff9f38"
+                emissiveIntensity={2.0}
+                roughness={0.3}
+              />
+            </mesh>
+            <mesh position={[0, 0.14, 0]}>
+              <coneGeometry args={[0.11, 0.1, 6]} />
+              <meshStandardMaterial color={COLORS.iron} roughness={0.5} metalness={0.7} />
+            </mesh>
+          </group>
         </group>
       ))}
 
-      {/* === 5. VYSOČINA VALLEY GROUND PLANE FAR BELOW === */}
+      {/* === 6. VYSOČINA VALLEY GROUND PLANE FAR BELOW === */}
       <mesh
         position={[0, groundY, 0]}
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow
       >
-        <circleGeometry args={[220, 36]} />
+        <circleGeometry args={[380, 40]} />
         <meshStandardMaterial color="#758465" roughness={1} />
       </mesh>
     </group>

@@ -45,7 +45,7 @@ export function GameScene({
     <Canvas
       shadows="percentage"
       dpr={[1, 2]}
-      camera={{ fov: TELESCOPE_CONFIG.normalFov, near: 0.2, far: 350 }}
+      camera={{ fov: TELESCOPE_CONFIG.normalFov, near: 0.2, far: 1200 }}
       gl={{
         antialias: true,
         toneMapping: THREE.ACESFilmicToneMapping,

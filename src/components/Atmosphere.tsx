@@ -65,10 +65,10 @@ export function Atmosphere() {
     <>
       {/* Background fallback & subtle golden-hour atmospheric distance fog */}
       <color attach="background" args={['#e9b98c']} />
-      <fog attach="fog" args={['#e9b98c', 42, 195]} />
+      <fog attach="fog" args={['#e9b98c', 95, 420]} />
 
       {/* Custom Golden-Hour Sky Dome */}
-      <mesh name="sky-dome" scale={[220, 220, 220]} frustumCulled={false}>
+      <mesh name="sky-dome" scale={[650, 650, 650]} frustumCulled={false}>
         <sphereGeometry args={[1, 32, 24]} />
         <shaderMaterial
           side={THREE.BackSide}

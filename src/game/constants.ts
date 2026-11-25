@@ -11,8 +11,8 @@ export const TOWER_DIMENSIONS = {
   floorThickness: 0.28,
   /** Depth of the tall stone tower shaft descending below the gallery */
   shaftDepth: 48,
-  /** Height of the stone belfry rising above the gallery floor */
-  belfryHeight: 6.8,
+  /** Height of the watchman's room / upper tower core above the gallery floor */
+  belfryHeight: 4.5,
 } as const;
 
 export const PLAYER_CONFIG = {
@@ -41,37 +41,45 @@ export const INITIAL_PLAYER_POSITION: readonly [number, number, number] = [
 
 export const CAMERA_CONFIG = {
   /** Initial third-person orbit distance from the player */
-  defaultDistance: 5.8,
-  /** Closest comfortable third-person zoom distance */
+  defaultDistance: 6.2,
+  /** Closest comfortable third-person zoom distance on the gallery */
   minDistance: 3.2,
-  /** Furthest comfortable third-person zoom distance */
-  maxDistance: 10.5,
+  /** Maximum zoom-out distance to view the entire St. James Church and Polička */
+  maxDistance: 115,
   /** Initial horizontal yaw behind the player (radians) */
   defaultYaw: 0,
   /** Initial vertical pitch above the player (radians) */
-  defaultPitch: 0.42,
-  /** Minimum vertical pitch so camera never clips below the wooden gallery floor */
-  minPitch: 0.12,
+  defaultPitch: 0.4,
+  /** Minimum vertical pitch when close to the gallery (prevents floor clipping) */
+  minPitchClose: 0.12,
+  /** Minimum vertical pitch when zoomed far out (allows side / low-angle church views) */
+  minPitchFar: -0.38,
   /** Maximum vertical pitch so camera never flips straight overhead */
-  maxPitch: 1.18,
-  /** Height offset of the orbit pivot on the player character */
+  maxPitch: 1.24,
+  /** Height offset of the orbit pivot on the player character when close */
   targetHeight: 1.35,
-  /** Minimum world Y height for the camera above the gallery floor */
-  minCameraY: 0.45,
+  /** Panoramic look-at Y when zoomed all the way out (centers full church from nave to spire) */
+  farTargetHeight: -12,
+  /** Minimum world Y height for the camera when close to the gallery */
+  minCameraYClose: 0.45,
+  /** Minimum world Y height for the camera when zoomed out (clears town ground plane) */
+  minCameraYFar: -42.5,
   /** Margin kept between the camera and any collided tower wall */
   wallMargin: 0.35,
   /** Minimum safe distance from player pivot so camera never clips into player head */
   minSafeDistance: 0.8,
+  /** Distance threshold beyond which spring-arm wall pull-in releases for 360° panoramic orbit */
+  panoramicThreshold: 15,
   /** Fast spring-arm pull-in damping when obstructed by a wall */
   pullInDamping: 26,
   /** Smooth spring-arm ease-out damping when obstruction clears */
   easeOutDamping: 7,
   /** Mouse drag rotation sensitivity (radians per pixel) */
   dragSensitivity: 0.0055,
-  /** Mouse wheel zoom sensitivity */
-  zoomSensitivity: 0.0045,
+  /** Exponential mouse wheel zoom sensitivity (scales proportionally with current distance) */
+  zoomSensitivity: 0.0012,
   /** Exponential smoothing speed for orbit angles and distance */
-  orbitDamping: 12,
+  orbitDamping: 10,
   /** Exponential smoothing speed for following the player */
   followDamping: 9,
 } as const;

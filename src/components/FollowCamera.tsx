@@ -9,13 +9,21 @@ interface FollowCameraProps {
   active?: boolean;
 }
 
+function clamp(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
+}
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
 /**
- * Free-orbit third-person camera around the player character with spring-arm
- * raycast wall collision and central-tower AABB safety clamping:
- * - Click & drag mouse to orbit 360° horizontally and tilt vertically (clamped above floor)
- * - Scroll mouse wheel to smoothly zoom closer/further from the character
- * - Raycasts from player pivot to desired camera position and pulls in smoothly on tower walls
- * - Enforces an AABB safety margin around the central stone tower so corners never clip
+ * Free-orbit third-person camera around the player character & church tower:
+ * - Click & drag mouse to orbit 360° horizontally and tilt vertically
+ * - Scroll mouse wheel with distance-scaled exponential zoom from gallery close-up
+ *   all the way out to a panoramic view of St. James Church and Polička
+ * - Raycast spring-arm wall collision when close to the gallery + tower AABB safety
  */
 export function FollowCamera({
   playerPosRef,
@@ -57,7 +65,7 @@ export function FollowCamera({
     camera.position.set(
       currentPivotRef.current.x + Math.sin(yaw) * horizDist,
       Math.max(
-        CAMERA_CONFIG.minCameraY,
+        CAMERA_CONFIG.minCameraYClose,
         currentPivotRef.current.y + Math.sin(pitch) * dist,
       ),
       currentPivotRef.current.z + Math.cos(yaw) * horizDist,
@@ -66,7 +74,7 @@ export function FollowCamera({
     initializedRef.current = true;
   }, [camera, playerPosRef]);
 
-  // Mouse-drag orbit & scroll-wheel zoom listeners while third-person mode is active
+  // Mouse-drag orbit & proportional scroll-wheel zoom listeners while third-person mode is active
   useEffect(() => {
     if (!active) {
       isDraggingRef.current = false;
@@ -90,13 +98,16 @@ export function FollowCamera({
       lastPointerRef.current.x = event.clientX;
       lastPointerRef.current.y = event.clientY;
 
+      const farBlend = smoothstep(8, 36, targetDistanceRef.current);
+      const minPitch =
+        CAMERA_CONFIG.minPitchClose +
+        (CAMERA_CONFIG.minPitchFar - CAMERA_CONFIG.minPitchClose) * farBlend;
+
       targetYawRef.current -= dx * CAMERA_CONFIG.dragSensitivity;
-      targetPitchRef.current = Math.max(
-        CAMERA_CONFIG.minPitch,
-        Math.min(
-          CAMERA_CONFIG.maxPitch,
-          targetPitchRef.current + dy * CAMERA_CONFIG.dragSensitivity,
-        ),
+      targetPitchRef.current = clamp(
+        targetPitchRef.current + dy * CAMERA_CONFIG.dragSensitivity,
+        minPitch,
+        CAMERA_CONFIG.maxPitch,
       );
     };
 
@@ -107,12 +118,14 @@ export function FollowCamera({
     const handleWheel = (event: WheelEvent) => {
       if ((event.target as HTMLElement | null)?.closest('aside')) return;
       event.preventDefault();
-      targetDistanceRef.current = Math.max(
+
+      // Exponential zoom: fine control up close, fast & smooth when zooming out to 115 units
+      const clampedDelta = clamp(event.deltaY, -300, 300);
+      const zoomFactor = Math.exp(clampedDelta * CAMERA_CONFIG.zoomSensitivity);
+      targetDistanceRef.current = clamp(
+        targetDistanceRef.current * zoomFactor,
         CAMERA_CONFIG.minDistance,
-        Math.min(
-          CAMERA_CONFIG.maxDistance,
-          targetDistanceRef.current + event.deltaY * CAMERA_CONFIG.zoomSensitivity,
-        ),
+        CAMERA_CONFIG.maxDistance,
       );
     };
 
@@ -137,32 +150,55 @@ export function FollowCamera({
     const dt = Math.min(rawDelta, 0.05);
     const p = playerPosRef.current;
 
-    // 1. Smoothly follow the player's head/upper-body pivot
-    const followT = 1 - Math.exp(-CAMERA_CONFIG.followDamping * dt);
-    desiredPivotRef.current.set(p.x, p.y + CAMERA_CONFIG.targetHeight, p.z);
-    currentPivotRef.current.lerp(desiredPivotRef.current, followT);
-
-    // 2. Smoothly damp orbit angles and user-requested zoom distance
+    // Smoothly damp desired zoom distance & compute close-to-panoramic blend
     const orbitT = 1 - Math.exp(-CAMERA_CONFIG.orbitDamping * dt);
-    currentYawRef.current += (targetYawRef.current - currentYawRef.current) * orbitT;
-    currentPitchRef.current += (targetPitchRef.current - currentPitchRef.current) * orbitT;
     desiredDistanceRef.current +=
       (targetDistanceRef.current - desiredDistanceRef.current) * orbitT;
+
+    const desiredDist = desiredDistanceRef.current;
+    const farBlend = smoothstep(10, 48, desiredDist);
+
+    // Dynamically clamp pitch if user zooms back in from a low-angle panoramic view
+    const minPitch =
+      CAMERA_CONFIG.minPitchClose +
+      (CAMERA_CONFIG.minPitchFar - CAMERA_CONFIG.minPitchClose) *
+        smoothstep(8, 36, desiredDist);
+    if (targetPitchRef.current < minPitch) {
+      targetPitchRef.current = minPitch;
+    }
+
+    currentYawRef.current += (targetYawRef.current - currentYawRef.current) * orbitT;
+    currentPitchRef.current += (targetPitchRef.current - currentPitchRef.current) * orbitT;
+
+    // 1. Blend orbit pivot from player's head up close to the full church midpoint when zoomed far out
+    const pivotX = p.x * (1 - farBlend * 0.75);
+    const pivotZ = p.z * (1 - farBlend * 0.75);
+    const pivotY =
+      (p.y + CAMERA_CONFIG.targetHeight) * (1 - farBlend) +
+      CAMERA_CONFIG.farTargetHeight * farBlend;
+
+    const followT = 1 - Math.exp(-CAMERA_CONFIG.followDamping * dt);
+    desiredPivotRef.current.set(pivotX, pivotY, pivotZ);
+    currentPivotRef.current.lerp(desiredPivotRef.current, followT);
 
     const pivot = currentPivotRef.current;
     const yaw = currentYawRef.current;
     const pitch = currentPitchRef.current;
-    const desiredDist = desiredDistanceRef.current;
     const horizDist = Math.cos(pitch) * desiredDist;
 
-    // 3. Compute unobstructed desired orbit position
+    const minCamY =
+      CAMERA_CONFIG.minCameraYClose +
+      (CAMERA_CONFIG.minCameraYFar - CAMERA_CONFIG.minCameraYClose) *
+        smoothstep(8, 32, desiredDist);
+
+    // 2. Compute unobstructed desired orbit position
     const desiredCamPos = desiredCamPosRef.current.set(
       pivot.x + Math.sin(yaw) * horizDist,
-      Math.max(CAMERA_CONFIG.minCameraY, pivot.y + Math.sin(pitch) * desiredDist),
+      Math.max(minCamY, pivot.y + Math.sin(pitch) * desiredDist),
       pivot.z + Math.cos(yaw) * horizDist,
     );
 
-    // 4. Spring-arm raycast from player pivot toward desired camera position
+    // 3. Spring-arm raycast when operating close to the gallery (releases for 360° panoramic zoom-out)
     const rayDir = rayDirRef.current.subVectors(desiredCamPos, pivot);
     const rayLen = rayDir.length();
 
@@ -171,7 +207,7 @@ export function FollowCamera({
       rayDir.divideScalar(rayLen);
 
       const colliders = cameraCollidersRef.current;
-      if (colliders.length > 0) {
+      if (colliders.length > 0 && desiredDist <= CAMERA_CONFIG.panoramicThreshold) {
         const raycaster = raycasterRef.current;
         raycaster.set(pivot, rayDir);
         raycaster.near = 0.05;
@@ -190,7 +226,7 @@ export function FollowCamera({
       }
     }
 
-    // 5. Asymmetric smooth interpolation: pull in fast on wall hit, ease out smoothly when clear
+    // 4. Asymmetric smooth interpolation: pull in fast on wall hit, ease out smoothly when clear
     const pullingIn = safeDistance < actualDistanceRef.current;
     const dampRate = pullingIn
       ? CAMERA_CONFIG.pullInDamping
@@ -198,22 +234,21 @@ export function FollowCamera({
     const distT = 1 - Math.exp(-dampRate * dt);
     actualDistanceRef.current += (safeDistance - actualDistanceRef.current) * distT;
 
-    // Prevent momentary penetration when pulling in rapidly
     if (pullingIn && actualDistanceRef.current > safeDistance + 0.08) {
       actualDistanceRef.current = safeDistance + 0.08;
     }
 
-    // 6. Compute final camera position along ray
+    // 5. Compute final camera position along ray
     const finalPos = finalCamPosRef.current
       .copy(pivot)
       .addScaledVector(rayDir, actualDistanceRef.current);
-    finalPos.y = Math.max(CAMERA_CONFIG.minCameraY, finalPos.y);
+    finalPos.y = Math.max(minCamY, finalPos.y);
 
-    // 7. AABB safety check around the central stone tower footprint (+ wallMargin)
-    //    Ensures the camera can never enter the tower interior even at sharp 90° corners
+    // 6. AABB safety check around the central stone tower footprint (+ wallMargin)
     const towerSafeHalf = TOWER_DIMENSIONS.coreHalf + CAMERA_CONFIG.wallMargin;
     if (
       finalPos.y < TOWER_DIMENSIONS.belfryHeight + 1.0 &&
+      finalPos.y > -TOWER_DIMENSIONS.shaftDepth &&
       Math.abs(finalPos.x) < towerSafeHalf &&
       Math.abs(finalPos.z) < towerSafeHalf
     ) {
