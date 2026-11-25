@@ -12,6 +12,10 @@ interface PlayerProps {
   /** Player position in world coordinates (for third-person FollowCamera) */
   playerWorldPosRef: RefObject<THREE.Vector3>;
   disabled?: boolean;
+  /** Hide character mesh while in exterior first-person POV mode */
+  visible?: boolean;
+  /** Inner-cabin collision half-extent (padded in First-Person mode) */
+  innerLimit?: number;
 }
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -20,6 +24,8 @@ export function Player({
   playerPosRef,
   playerWorldPosRef,
   disabled = false,
+  visible = true,
+  innerLimit = RING_BOUNDS.innerLimit,
 }: PlayerProps) {
   const { camera } = useThree();
   const inputRef = useKeyboard();
@@ -86,7 +92,7 @@ export function Player({
     const constrained = constrainToSquareRing(
       nextX,
       nextZ,
-      RING_BOUNDS.innerLimit,
+      innerLimit,
       RING_BOUNDS.outerLimit,
     );
 
@@ -147,6 +153,7 @@ export function Player({
     <group
       ref={rootRef}
       name="tower-keeper"
+      visible={visible}
       position={[
         INITIAL_PLAYER_POSITION[0],
         INITIAL_PLAYER_POSITION[1],

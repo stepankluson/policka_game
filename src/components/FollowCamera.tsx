@@ -148,6 +148,13 @@ export function FollowCamera({
   useFrame((_, rawDelta) => {
     if (!initializedRef.current || !active) return;
 
+    // Ensure third-person near plane stays at 0.5 so distant town fields have zero z-fighting
+    const persp = camera as THREE.PerspectiveCamera;
+    if (persp.isPerspectiveCamera && persp.near !== 0.5) {
+      persp.near = 0.5;
+      persp.updateProjectionMatrix();
+    }
+
     const dt = Math.min(rawDelta, 0.05);
     const p = playerPosRef.current;
 

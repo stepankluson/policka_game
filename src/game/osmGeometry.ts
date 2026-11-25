@@ -25,6 +25,16 @@ export interface OsmTransform {
   width?: number;
 }
 
+export interface OsmRailwayData {
+  track: [number, number][];
+  lengthMeters: number;
+  station: {
+    name: string;
+    position: [number, number];
+    trackAngle: number;
+  } | null;
+}
+
 export interface PolickaOsmData {
   meta: {
     originLat: number;
@@ -40,6 +50,7 @@ export interface PolickaOsmData {
     townHall: { id: number; name: string; position: [number, number] } | null;
     plagueColumn: { name: string; position: [number, number] } | null;
   };
+  railway?: OsmRailwayData;
   buildings: OsmBuilding[];
   walls: OsmPolyline[];
   streets: OsmPolyline[];
@@ -67,9 +78,34 @@ export interface Bastion3D {
   key: string;
   x: number;
   z: number;
+  variant: 'A' | 'B';
 }
 
+/** RÚIAN OSM building polygons that are actually Polička's medieval city walls & hollow bastions */
+const CITY_WALL_RIBBON_IDS = new Set([
+  286931567,
+  286931570,
+  286931582,
+  286931583,
+  286931588,
+  316488248,
+  457337823,
+  586807237,
+  586807259,
+]);
+
+const CITY_WALL_BASTION_ONLY_IDS = new Set([
+  286931571,
+  457337821,
+  457337824,
+]);
+
 export type ChimneyTop = [number, number, number];
+
+export interface ChimneySmokeSource {
+  position: readonly [number, number, number];
+  kind: 'house' | 'industrial';
+}
 
 const WALL_PALETTE = [
   '#f0e2c6',
@@ -207,75 +243,318 @@ function isNearPolyline(
   return false;
 }
 
+/** Simplifies a 2D closed ring with Douglas-Peucker and removes sharp spikes (< 130°) */
+function simplifyAndSmoothRing(
+  ring: [number, number][],
+  dpTolerance = 4.5,
+): [number, number][] {
+  if (ring.length < 6) return ring;
+
+  // Douglas-Peucker on an open split of the closed ring
+  const dp = (pts: [number, number][], tol: number): [number, number][] => {
+    if (pts.length <= 2) return pts;
+    const sqTol = tol * tol;
+    let maxD = 0;
+    let idx = -1;
+    const a = pts[0];
+    const b = pts[pts.length - 1];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const d = pointToSegmentDistSq(pts[i][0], pts[i][1], a[0], a[1], b[0], b[1]);
+      if (d > maxD) {
+        maxD = d;
+        idx = i;
+      }
+    }
+    if (maxD > sqTol && idx !== -1) {
+      const left = dp(pts.slice(0, idx + 1), tol);
+      const right = dp(pts.slice(idx), tol);
+      return [...left.slice(0, -1), ...right];
+    }
+    return [a, b];
+  };
+
+  // Split closed ring into two halves so DP simplifies seamlessly around the loop
+  const half = Math.floor(ring.length / 2);
+  const partA = dp(ring.slice(0, half + 1), dpTolerance);
+  const partB = dp([...ring.slice(half), ring[0]], dpTolerance);
+  let pts: [number, number][] = [...partA.slice(0, -1), ...partB.slice(0, -1)];
+
+  // Remove any remaining sharp local spikes (interior turn angle sharper than 130°)
+  const minCosTurn = Math.cos((130 * Math.PI) / 180); // ~ -0.643 (180° = straight -> cos = -1)
+  let changed = true;
+  let guard = 0;
+  while (changed && pts.length > 8 && guard++ < 12) {
+    changed = false;
+    const filtered: [number, number][] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const prev = pts[(i - 1 + pts.length) % pts.length];
+      const cur = pts[i];
+      const next = pts[(i + 1) % pts.length];
+      const v1x = prev[0] - cur[0];
+      const v1z = prev[1] - cur[1];
+      const v2x = next[0] - cur[0];
+      const v2z = next[1] - cur[1];
+      const l1 = Math.hypot(v1x, v1z);
+      const l2 = Math.hypot(v2x, v2z);
+      if (l1 < 2 || l2 < 2) {
+        changed = true;
+        continue;
+      }
+      const cosAngle = (v1x * v2x + v1z * v2z) / (l1 * l2);
+      // Interior angle < 130° means cosAngle > cos(130°) = -0.643 -> drop spike vertex
+      if (cosAngle > minCosTurn) {
+        changed = true;
+        continue;
+      }
+      filtered.push(cur);
+    }
+    if (filtered.length >= 8) {
+      pts = filtered;
+    }
+  }
+
+  return pts;
+}
+
+/** Returns true if an OSM building entry is actually part of Polička's medieval fortifications */
+function isCityWallBuilding(
+  b: OsmBuilding,
+  cx: number,
+  cz: number,
+  obb: BuildingOBB,
+  wallOval: HistoricalFilterOval,
+): boolean {
+  if (CITY_WALL_RIBBON_IDS.has(b.id) || CITY_WALL_BASTION_ONLY_IDS.has(b.id)) {
+    return true;
+  }
+  if (/wall|fort|bast|hrad/i.test(`${b.kind ?? ''} ${b.name ?? ''}`)) {
+    return true;
+  }
+  const dn = Math.hypot(
+    (cx - wallOval.centerX) / wallOval.radiusX,
+    (cz - wallOval.centerZ) / wallOval.radiusZ,
+  );
+  if (dn > 0.72 && dn < 1.18) {
+    const fill = obb.area > 1e-3 ? b.area / obb.area : 1;
+    // Ultra-thin wall ribbon or long multi-vertex curved fortification monument
+    if (obb.width < 2.9 && obb.length > 10) return true;
+    if (b.points.length >= 20 && fill < 0.35 && obb.length > 40) return true;
+  }
+  return false;
+}
+
 /**
- * Builds wall segments strictly from actual OSM city wall ways (no synthetic closed ellipse).
- * Subdivides each wall edge into ~2.5m sub-segments and removes any sub-segment or bastion
- * that comes within 5m of a road or inside / within 3m of any water polygon.
+ * Stitches all real OSM fortification wall pieces into one smooth, continuous medieval ring:
+ * - Bins all real OSM wall vertices around the town centroid, smoothly bridges any gaps
+ *   (pulling inward if needed to stay strictly clear of the pond), applies circular smoothing,
+ *   Douglas-Peucker simplification (~4.5m), and removes sharp local spikes (< 130°).
+ * - Cuts clean ~7.6m openings ONLY where major through-streets actually cross the wall.
+ * - Seats alternating Type A / Type B bastions strictly ON the continuous wall every ~50m
+ *   (skipping road openings so zero bastions ever float isolated in grass).
  */
 export function buildRealOsmWalls(
   walls: readonly OsmPolyline[],
   streets: readonly OsmPolyline[],
   waterPolys: readonly OsmPolyline[],
-): { wallSegments: WallSegment3D[]; bastions: Bastion3D[] } {
+  buildings: readonly OsmBuilding[] = [],
+  wallOval: HistoricalFilterOval = { centerX: 118, centerZ: -102, radiusX: 205, radiusZ: 185 },
+): { wallSegments: WallSegment3D[]; bastions: Bastion3D[]; wallRing: [number, number][] } {
   const wallSegments: WallSegment3D[] = [];
   const bastions: Bastion3D[] = [];
-  const placedBastions: [number, number][] = [];
 
-  const ROAD_CLEARANCE = 5.0;
-  const WATER_CLEARANCE = 3.0;
-  const SUBSEG_TARGET_LEN = 2.5;
+  const cx = wallOval.centerX;
+  const cz = wallOval.centerZ;
+  const normOval = (x: number, z: number) =>
+    Math.hypot((x - cx) / wallOval.radiusX, (z - cz) / wallOval.radiusZ);
 
-  const tryAddBastion = (key: string, x: number, z: number) => {
-    if (isNearPolyline(x, z, streets, ROAD_CLEARANCE)) return;
-    if (isNearWater(x, z, waterPolys, WATER_CLEARANCE)) return;
-    for (const [bx, bz] of placedBastions) {
-      if (Math.hypot(x - bx, z - bz) < 10) return;
-    }
-    placedBastions.push([x, z]);
-    bastions.push({ key, x, z });
-  };
-
+  // 1. Gather all real OSM wall vertices (explicit wall ways + RÚIAN wall-ribbon buildings)
+  const rawPts: [number, number][] = [];
   for (const w of walls) {
-    const pts = w.points;
-    if (pts.length < 2) continue;
+    for (const p of w.points) rawPts.push(p);
+  }
+  for (const b of buildings) {
+    if (CITY_WALL_RIBBON_IDS.has(b.id)) {
+      for (const p of b.points) rawPts.push(p);
+    }
+  }
+  if (rawPts.length < 6) return { wallSegments, bastions, wallRing: [] };
 
-    for (let i = 0; i < pts.length - 1; i++) {
-      const [x0, z0] = pts[i];
-      const [x1, z1] = pts[i + 1];
-      const dx = x1 - x0;
-      const dz = z1 - z0;
-      const edgeLen = Math.hypot(dx, dz);
-      if (edgeLen < 0.5) continue;
+  // 2. Angular binning (72 bins = 5° each) using 25th-percentile inner radius to strip U-bulges
+  const BINS = 72;
+  const binR: (number[] | null)[] = new Array(BINS).fill(null);
+  for (const [x, z] of rawPts) {
+    let a = Math.atan2(z - cz, x - cx);
+    if (a < 0) a += Math.PI * 2;
+    const bi = Math.floor((a / (Math.PI * 2)) * BINS) % BINS;
+    const r = Math.hypot(x - cx, z - cz);
+    if (!binR[bi]) binR[bi] = [];
+    binR[bi]!.push(r);
+  }
 
-      const steps = Math.max(1, Math.ceil(edgeLen / SUBSEG_TARGET_LEN));
-      const subLen = edgeLen / steps;
-      const rotY = Math.atan2(dx, dz) + Math.PI / 2;
+  const radii: (number | null)[] = binR.map((arr) => {
+    if (!arr || arr.length === 0) return null;
+    arr.sort((a, b) => a - b);
+    return arr[Math.floor(arr.length * 0.25)];
+  });
 
-      for (let s = 0; s < steps; s++) {
-        const tMid = (s + 0.5) / steps;
-        const mx = x0 + dx * tMid;
-        const mz = z0 + dz * tMid;
+  // Bridge any missing angular gaps (e.g. eastern pond side) smoothly by circular linear interpolation
+  for (let i = 0; i < BINS; i++) {
+    if (radii[i] !== null) continue;
+    let l = 1;
+    while (radii[(i - l + BINS) % BINS] === null && l < BINS) l++;
+    let r = 1;
+    while (radii[(i + r) % BINS] === null && r < BINS) r++;
+    const rL = radii[(i - l + BINS) % BINS] ?? 190;
+    const rR = radii[(i + r) % BINS] ?? 190;
+    radii[i] = rL + (rR - rL) * (l / (l + r));
+  }
 
-        if (isNearPolyline(mx, mz, streets, ROAD_CLEARANCE)) continue;
-        if (isNearWater(mx, mz, waterPolys, WATER_CLEARANCE)) continue;
+  // Pull any bridged vertex strictly onto dry embankment clear of pond water (5m margin)
+  const resolvedRadii = radii.map((r, i) => {
+    let rad = r ?? 190;
+    const a = ((i + 0.5) / BINS) * Math.PI * 2;
+    let guard = 0;
+    while (
+      isNearWater(cx + Math.cos(a) * rad, cz + Math.sin(a) * rad, waterPolys, 5.0) &&
+      rad > 110 &&
+      guard++ < 30
+    ) {
+      rad -= 3.0;
+    }
+    return rad;
+  });
 
-        wallSegments.push({
-          key: `osm-wall-${w.id}-${i}-${s}`,
-          x: mx,
-          z: mz,
-          length: subLen + 0.15,
-          rotY,
-        });
-      }
+  // 4 passes of circular radial smoothing to erase jagged inner-building teeth
+  for (let pass = 0; pass < 4; pass++) {
+    const next = [...resolvedRadii];
+    for (let i = 0; i < BINS; i++) {
+      next[i] =
+        0.25 * resolvedRadii[(i - 1 + BINS) % BINS] +
+        0.5 * resolvedRadii[i] +
+        0.25 * resolvedRadii[(i + 1) % BINS];
+    }
+    for (let i = 0; i < BINS; i++) resolvedRadii[i] = next[i];
+  }
 
-      tryAddBastion(`osm-bastion-${w.id}-${i}`, x0, z0);
-      if (i === pts.length - 2) {
-        tryAddBastion(`osm-bastion-${w.id}-end`, x1, z1);
-      }
+  const denseRing: [number, number][] = resolvedRadii.map((r, i) => {
+    const a = ((i + 0.5) / BINS) * Math.PI * 2;
+    return [cx + Math.cos(a) * r, cz + Math.sin(a) * r];
+  });
+
+  // 3. Simplify with Douglas-Peucker (~4.5m) & remove any sharp spikes (< 130°)
+  const smoothRing = simplifyAndSmoothRing(denseRing, 4.5);
+
+  // Rotate ring start index to the southern vertex nearest [8.6, 69.8] so Bastion #0 anchors the POI
+  let startIdx = 0;
+  let bestSouthDist = Infinity;
+  for (let i = 0; i < smoothRing.length; i++) {
+    const d = Math.hypot(smoothRing[i][0] - 8.6, smoothRing[i][1] - 69.8);
+    if (d < bestSouthDist) {
+      bestSouthDist = d;
+      startIdx = i;
+    }
+  }
+  const orderedRing: [number, number][] = [
+    ...smoothRing.slice(startIdx),
+    ...smoothRing.slice(0, startIdx),
+  ];
+
+  // 4. Identify ONLY major wall-crossing through-streets (ignore tiny dead-end paths/alleys)
+  const majorCrossingStreets = streets.filter((st) => {
+    const kind = st.kind ?? '';
+    if (!DRIVABLE_HIGHWAYS.has(kind)) return false;
+    if (ARTERIAL_HIGHWAYS.has(kind)) return true;
+    let minD = Infinity;
+    let maxD = 0;
+    for (const [px, pz] of st.points) {
+      const d = normOval(px, pz);
+      if (d < minD) minD = d;
+      if (d > maxD) maxD = d;
+    }
+    return minD < 0.92 && maxD > 1.05;
+  });
+
+  const ROAD_OPENING_HALF = 3.9; // ~7.8m clean gate opening where major streets cross
+  const WATER_CLEARANCE = 4.0;
+  const SUBSEG_LEN = 2.8;
+
+  // 5. Subdivide the smooth continuous ring into seamless wall segments with clean major-road openings
+  for (let i = 0; i < orderedRing.length; i++) {
+    const [x0, z0] = orderedRing[i];
+    const [x1, z1] = orderedRing[(i + 1) % orderedRing.length];
+    const dx = x1 - x0;
+    const dz = z1 - z0;
+    const edgeLen = Math.hypot(dx, dz);
+    if (edgeLen < 0.5) continue;
+
+    const steps = Math.max(1, Math.ceil(edgeLen / SUBSEG_LEN));
+    const subLen = edgeLen / steps;
+    const rotY = Math.atan2(dx, dz) + Math.PI / 2;
+
+    for (let s = 0; s < steps; s++) {
+      const tMid = (s + 0.5) / steps;
+      const mx = x0 + dx * tMid;
+      const mz = z0 + dz * tMid;
+
+      if (isNearPolyline(mx, mz, majorCrossingStreets, ROAD_OPENING_HALF)) continue;
+      if (isNearWater(mx, mz, waterPolys, WATER_CLEARANCE)) continue;
+
+      wallSegments.push({
+        key: `wall-ring-${i}-${s}`,
+        x: mx,
+        z: mz,
+        // Subtle overlap ensures consecutive segments meet seamlessly at every corner
+        length: subLen + 0.45,
+        rotY,
+      });
     }
   }
 
-  return { wallSegments, bastions };
+  // 6. Place alternating A-B-A-B bastions strictly ON the continuous wall every ~50m
+  const BASTION_INTERVAL = 50.0;
+  const BASTION_ROAD_MARGIN = 9.0;
+  const MIN_BASTION_SEP = 38.0;
+
+  let nextDist = 0;
+  let acc = 0;
+  let bIdx = 0;
+
+  const hasWallUnder = (x: number, z: number) =>
+    wallSegments.some((seg) => (seg.x - x) * (seg.x - x) + (seg.z - z) * (seg.z - z) < 16);
+
+  for (let i = 0; i < orderedRing.length; i++) {
+    const [x0, z0] = orderedRing[i];
+    const [x1, z1] = orderedRing[(i + 1) % orderedRing.length];
+    const segLen = Math.hypot(x1 - x0, z1 - z0);
+    if (segLen < 1e-4) continue;
+
+    while (acc + segLen >= nextDist) {
+      const t = Math.max(0, Math.min(1, (nextDist - acc) / segLen));
+      const bx = x0 + (x1 - x0) * t;
+      const bz = z0 + (z1 - z0) * t;
+
+      const clearOfRoad = !isNearPolyline(bx, bz, majorCrossingStreets, BASTION_ROAD_MARGIN);
+      const clearOfWater = !isNearWater(bx, bz, waterPolys, 5.0);
+      const farEnough = bastions.every(
+        (existing) => Math.hypot(bx - existing.x, bz - existing.z) >= MIN_BASTION_SEP,
+      );
+
+      if (clearOfRoad && clearOfWater && farEnough && hasWallUnder(bx, bz)) {
+        bastions.push({
+          key: `bastion-ring-${bIdx}`,
+          x: bx,
+          z: bz,
+          variant: bastions.length % 2 === 0 ? 'A' : 'B',
+        });
+        bIdx++;
+      }
+
+      nextDist += BASTION_INTERVAL;
+    }
+    acc += segLen;
+  }
+
+  return { wallSegments, bastions, wallRing: orderedRing };
 }
 
 interface BuildingOBB {
@@ -358,11 +637,134 @@ function computePolygonOBB(pts: readonly [number, number][]): BuildingOBB {
   return { cx, cz, ux, uz, px, pz, length, width, area: length * width };
 }
 
+function polygonArea2D(pts: readonly [number, number][]): number {
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, z1] = pts[i];
+    const [x2, z2] = pts[(i + 1) % pts.length];
+    area += x1 * z2 - x2 * z1;
+  }
+  return Math.abs(area) * 0.5;
+}
+
+function segmentsIntersect2D(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  cx: number,
+  cz: number,
+  dx: number,
+  dz: number,
+): boolean {
+  const cross = (ux: number, uz: number, vx: number, vz: number) => ux * vz - uz * vx;
+  const d1 = cross(dx - cx, dz - cz, ax - cx, az - cz);
+  const d2 = cross(dx - cx, dz - cz, bx - cx, bz - cz);
+  const d3 = cross(bx - ax, bz - az, cx - ax, cz - az);
+  const d4 = cross(bx - ax, bz - az, dx - ax, dz - az);
+
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+    return true;
+  }
+
+  const onSeg = (px: number, pz: number, qx: number, qz: number, rx: number, rz: number) =>
+    Math.min(px, rx) - 1e-6 <= qx &&
+    qx <= Math.max(px, rx) + 1e-6 &&
+    Math.min(pz, rz) - 1e-6 <= qz &&
+    qz <= Math.max(pz, rz) + 1e-6;
+
+  if (Math.abs(d1) < 1e-7 && onSeg(cx, cz, ax, az, dx, dz)) return true;
+  if (Math.abs(d2) < 1e-7 && onSeg(cx, cz, bx, bz, dx, dz)) return true;
+  if (Math.abs(d3) < 1e-7 && onSeg(ax, az, cx, cz, bx, bz)) return true;
+  if (Math.abs(d4) < 1e-7 && onSeg(ax, az, dx, dz, bx, bz)) return true;
+  return false;
+}
+
+function segmentToSegmentDistSq(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  cx: number,
+  cz: number,
+  dx: number,
+  dz: number,
+): number {
+  if (segmentsIntersect2D(ax, az, bx, bz, cx, cz, dx, dz)) return 0;
+  return Math.min(
+    pointToSegmentDistSq(ax, az, cx, cz, dx, dz),
+    pointToSegmentDistSq(bx, bz, cx, cz, dx, dz),
+    pointToSegmentDistSq(cx, cz, ax, az, bx, bz),
+    pointToSegmentDistSq(dx, dz, ax, az, bx, bz),
+  );
+}
+
+interface WallRingClosest {
+  dist: number;
+  qx: number;
+  qz: number;
+  /** Unit normal pointing inward toward the historic town core */
+  inwardNx: number;
+  inwardNz: number;
+}
+
+function closestPointOnWallRing(
+  px: number,
+  pz: number,
+  ring: readonly [number, number][],
+  centerX: number,
+  centerZ: number,
+): WallRingClosest {
+  let bestDistSq = Infinity;
+  let bestQx = px;
+  let bestQz = pz;
+  let bestNx = 0;
+  let bestNz = 1;
+
+  for (let i = 0; i < ring.length; i++) {
+    const [ax, az] = ring[i];
+    const [bx, bz] = ring[(i + 1) % ring.length];
+    const dx = bx - ax;
+    const dz = bz - az;
+    const lenSq = dx * dx + dz * dz;
+    let t = 0;
+    if (lenSq > 1e-8) {
+      t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / lenSq));
+    }
+    const qx = ax + dx * t;
+    const qz = az + dz * t;
+    const dSq = (px - qx) * (px - qx) + (pz - qz) * (pz - qz);
+    if (dSq < bestDistSq) {
+      bestDistSq = dSq;
+      bestQx = qx;
+      bestQz = qz;
+      const len = Math.sqrt(lenSq) || 1;
+      let nx = -dz / len;
+      let nz = dx / len;
+      // Orient normal strictly inward toward town core
+      if (nx * (centerX - qx) + nz * (centerZ - qz) < 0) {
+        nx = -nx;
+        nz = -nz;
+      }
+      bestNx = nx;
+      bestNz = nz;
+    }
+  }
+
+  return {
+    dist: Math.sqrt(bestDistSq),
+    qx: bestQx,
+    qz: bestQz,
+    inwardNx: bestNx,
+    inwardNz: bestNz,
+  };
+}
+
 /**
  * Extrudes EVERY real OSM building as a solid, watertight Three.js ExtrudeGeometry block
- * (with top caps enabled so zero buildings can ever be hollow/roofless), then adds
- * bulletproof ExtrudeGeometry triangular gable roofs strictly on clean rectangular houses
- * (fillRatio > 0.80) and standard BoxGeometry brick chimneys on ~50% of historic houses.
+ * (with top caps enabled so zero buildings can ever be hollow/roofless), enforces strict
+ * zero-intersection clamping & rejection against the closed medieval wall ring and bastions
+ * (including OBB pitched roof overhang checks), and adds brick chimneys on historic houses.
  */
 export function buildMergedBuildingsGeometry(
   buildings: readonly OsmBuilding[],
@@ -370,6 +772,8 @@ export function buildMergedBuildingsGeometry(
   excludeIds: ReadonlySet<number>,
   wallOval: HistoricalFilterOval,
   osmWalls: readonly OsmPolyline[] = [],
+  wallRing: readonly [number, number][] = [],
+  bastions: readonly Bastion3D[] = [],
 ): {
   wallGeometry: THREE.BufferGeometry;
   roofGeometry: THREE.BufferGeometry;
@@ -470,10 +874,27 @@ export function buildMergedBuildingsGeometry(
     }
   };
 
+  const hasWallRing = wallRing.length >= 3;
+  // Wall coping half-width = 1.325m -> clearance buffer = 1.675m; centroid straddle rejection = 2.825m
+  const WALL_HALF_WIDTH = 1.325;
+  const WALL_CLEARANCE = WALL_HALF_WIDTH + 0.35;
+  const WALL_CLEARANCE_SQ = WALL_CLEARANCE * WALL_CLEARANCE;
+  const WALL_EDGE_CHECK_SQ = (WALL_CLEARANCE - 0.15) * (WALL_CLEARANCE - 0.15);
+  const CENTROID_WALL_REJECT = WALL_HALF_WIDTH + 1.5;
+
+  const bastionBounds = bastions.map((bst) => {
+    const r = (bst.variant === 'A' ? 4.75 : 4.2) + 0.45;
+    return {
+      x: bst.x,
+      z: bst.z,
+      r,
+      rSq: r * r,
+      edgeCheckSq: (r - 0.15) * (r - 0.15),
+    };
+  });
+
   for (const b of buildings) {
     if (excludeIds.has(b.id) || b.points.length < 3) continue;
-    // Never render fortification walls/towers as red-roofed houses
-    if (/wall|fort|bast|hrad/i.test(`${b.kind ?? ''} ${b.name ?? ''}`)) continue;
 
     let cx = 0;
     let cz = 0;
@@ -484,8 +905,150 @@ export function buildMergedBuildingsGeometry(
     cx /= b.points.length;
     cz /= b.points.length;
 
+    const rawObb = computePolygonOBB(b.points);
+
+    // Exclude ALL medieval city wall & hollow-bastion polygons from normal cream/red-roofed houses
+    if (isCityWallBuilding(b, cx, cz, rawObb, wallOval)) continue;
+
     // Skip any building polygon sitting directly on top of a real OSM medieval wall way
     if (osmWalls.length > 0 && isNearPolyline(cx, cz, osmWalls, 2.2)) continue;
+
+    // === STRICT ZERO-INTERSECTION PASS AGAINST CLOSED CITY WALL RING & BASTIONS ===
+    let safePts: [number, number][] = b.points.map(([px, pz]) => [px, pz]);
+    let centroidInside = true;
+
+    if (hasWallRing) {
+      centroidInside = isPointInPolygon(cx, cz, wallRing);
+      const centroidWall = closestPointOnWallRing(
+        cx,
+        cz,
+        wallRing,
+        wallOval.centerX,
+        wallOval.centerZ,
+      );
+
+      // 1. Hard reject any building whose centroid straddles the wall or falls inside a bastion
+      if (centroidWall.dist < CENTROID_WALL_REJECT) continue;
+      let centroidInBastion = false;
+      for (const bb of bastionBounds) {
+        if ((cx - bb.x) * (cx - bb.x) + (cz - bb.z) * (cz - bb.z) < bb.rSq) {
+          centroidInBastion = true;
+          break;
+        }
+      }
+      if (centroidInBastion) continue;
+
+      // 2. Clamp bordering vertices strictly back onto the safe side of the wall & outside bastions
+      for (let pass = 0; pass < 2; pass++) {
+        for (let i = 0; i < safePts.length; i++) {
+          let [vx, vz] = safePts[i];
+          const vInside = isPointInPolygon(vx, vz, wallRing);
+          const closest = closestPointOnWallRing(
+            vx,
+            vz,
+            wallRing,
+            wallOval.centerX,
+            wallOval.centerZ,
+          );
+          const dirX = centroidInside ? closest.inwardNx : -closest.inwardNx;
+          const dirZ = centroidInside ? closest.inwardNz : -closest.inwardNz;
+
+          if (vInside !== centroidInside || closest.dist < WALL_CLEARANCE) {
+            vx = closest.qx + dirX * WALL_CLEARANCE;
+            vz = closest.qz + dirZ * WALL_CLEARANCE;
+          }
+
+          for (const bb of bastionBounds) {
+            const dx = vx - bb.x;
+            const dz = vz - bb.z;
+            const dSq = dx * dx + dz * dz;
+            if (dSq < bb.rSq) {
+              const d = Math.sqrt(dSq);
+              if (d > 1e-4) {
+                vx = bb.x + (dx / d) * bb.r;
+                vz = bb.z + (dz / d) * bb.r;
+              } else {
+                vx = bb.x + dirX * bb.r;
+                vz = bb.z + dirZ * bb.r;
+              }
+            }
+          }
+
+          safePts[i][0] = vx;
+          safePts[i][1] = vz;
+        }
+      }
+
+      // Deduplicate collapsed vertices
+      const deduped: [number, number][] = [];
+      for (const pt of safePts) {
+        const prev = deduped[deduped.length - 1];
+        if (!prev || Math.hypot(pt[0] - prev[0], pt[1] - prev[1]) > 0.15) {
+          deduped.push(pt);
+        }
+      }
+      if (
+        deduped.length >= 2 &&
+        Math.hypot(
+          deduped[0][0] - deduped[deduped.length - 1][0],
+          deduped[0][1] - deduped[deduped.length - 1][1],
+        ) <= 0.15
+      ) {
+        deduped.pop();
+      }
+      safePts = deduped;
+
+      // Reject degenerate or tiny remaining footprints (< 20 m²)
+      if (safePts.length < 3 || polygonArea2D(safePts) < 20) continue;
+
+      // 3. Post-clamp verification: reject building if ANY vertex or edge still crosses/clips wall or bastion
+      let intersectsFortification = false;
+      for (let i = 0; i < safePts.length && !intersectsFortification; i++) {
+        const a = safePts[i];
+        const bPt = safePts[(i + 1) % safePts.length];
+
+        if (isPointInPolygon(a[0], a[1], wallRing) !== centroidInside) {
+          intersectsFortification = true;
+          break;
+        }
+
+        for (let wi = 0; wi < wallRing.length; wi++) {
+          const w0 = wallRing[wi];
+          const w1 = wallRing[(wi + 1) % wallRing.length];
+          if (
+            segmentToSegmentDistSq(a[0], a[1], bPt[0], bPt[1], w0[0], w0[1], w1[0], w1[1]) <
+            WALL_EDGE_CHECK_SQ
+          ) {
+            intersectsFortification = true;
+            break;
+          }
+        }
+
+        if (!intersectsFortification) {
+          for (const bb of bastionBounds) {
+            if (
+              pointToSegmentDistSq(bb.x, bb.z, a[0], a[1], bPt[0], bPt[1]) < bb.edgeCheckSq
+            ) {
+              intersectsFortification = true;
+              break;
+            }
+          }
+        }
+      }
+      if (intersectsFortification) continue;
+    }
+
+    // Recompute centroid, area & OBB on the guaranteed-safe polygon
+    const safeArea = polygonArea2D(safePts);
+    const obb = computePolygonOBB(safePts);
+    cx = 0;
+    cz = 0;
+    for (const [px, pz] of safePts) {
+      cx += px;
+      cz += pz;
+    }
+    cx /= safePts.length;
+    cz /= safePts.length;
 
     const dNorm = normOval(cx, cz);
 
@@ -493,7 +1056,7 @@ export function buildMergedBuildingsGeometry(
     let effectiveHeight = b.height;
     if (dNorm > 1.02) {
       if (dNorm > 1.36) continue;
-      if (b.area > 175) continue;
+      if (safeArea > 175) continue;
       if (b.height > 7.4) continue;
       effectiveHeight = Math.min(b.height, 6.2);
     }
@@ -504,9 +1067,9 @@ export function buildMergedBuildingsGeometry(
 
     // === 1. SOLID, WATERTIGHT EXTRUDED BUILDING BASE (ALWAYS WITH TOP CAP) ===
     const shape = new THREE.Shape();
-    shape.moveTo(b.points[0][0], -b.points[0][1]);
-    for (let i = 1; i < b.points.length; i++) {
-      shape.lineTo(b.points[i][0], -b.points[i][1]);
+    shape.moveTo(safePts[0][0], -safePts[0][1]);
+    for (let i = 1; i < safePts.length; i++) {
+      shape.lineTo(safePts[i][0], -safePts[i][1]);
     }
     shape.closePath();
 
@@ -537,23 +1100,66 @@ export function buildMergedBuildingsGeometry(
     baseGeom.dispose();
 
     // === 2. BULLETPROOF PITCHED GABLE ROOF VIA STANDARD EXTRUDEGEOMETRY ===
-    const obb = computePolygonOBB(b.points);
-    const fillRatio = obb.area > 1e-3 ? b.area / obb.area : 0;
-    const hasPitchedRoof =
+    const fillRatio = obb.area > 1e-3 ? safeArea / obb.area : 0;
+    let hasPitchedRoof =
       fillRatio > 0.8 &&
       obb.width >= 4.0 &&
       obb.width <= 18.0 &&
       obb.length >= 5.0 &&
       obb.length <= 45.0;
 
+    // CRITICAL: Verify all 4 OBB roof corners & edges (including overhang) stay strictly clear of walls & bastions
+    const overhang = 0.25;
+    const shortSide = obb.width + overhang * 2;
+    const longSide = obb.length + overhang * 2;
+
+    if (hasPitchedRoof && hasWallRing) {
+      const hu = longSide * 0.5;
+      const hp = shortSide * 0.5;
+      const roofCorners: [number, number][] = [
+        [obb.cx - hu * obb.ux - hp * obb.px, obb.cz - hu * obb.uz - hp * obb.pz],
+        [obb.cx + hu * obb.ux - hp * obb.px, obb.cz + hu * obb.uz - hp * obb.pz],
+        [obb.cx + hu * obb.ux + hp * obb.px, obb.cz + hu * obb.uz + hp * obb.pz],
+        [obb.cx - hu * obb.ux + hp * obb.px, obb.cz - hu * obb.uz + hp * obb.pz],
+      ];
+
+      for (let i = 0; i < 4 && hasPitchedRoof; i++) {
+        const c0 = roofCorners[i];
+        const c1 = roofCorners[(i + 1) % 4];
+
+        if (isPointInPolygon(c0[0], c0[1], wallRing) !== centroidInside) {
+          hasPitchedRoof = false;
+          break;
+        }
+
+        for (let wi = 0; wi < wallRing.length; wi++) {
+          const w0 = wallRing[wi];
+          const w1 = wallRing[(wi + 1) % wallRing.length];
+          if (
+            segmentToSegmentDistSq(c0[0], c0[1], c1[0], c1[1], w0[0], w0[1], w1[0], w1[1]) <
+            WALL_CLEARANCE_SQ
+          ) {
+            hasPitchedRoof = false;
+            break;
+          }
+        }
+
+        if (hasPitchedRoof) {
+          for (const bb of bastionBounds) {
+            if (pointToSegmentDistSq(bb.x, bb.z, c0[0], c0[1], c1[0], c1[1]) < bb.rSq) {
+              hasPitchedRoof = false;
+              break;
+            }
+          }
+        }
+      }
+    }
+
     const eaveY = groundY + effectiveHeight;
     const ridgeAngleY = Math.atan2(obb.ux, obb.uz);
     let roofHeight = 0;
 
     if (hasPitchedRoof) {
-      const overhang = 0.25;
-      const shortSide = obb.width + overhang * 2;
-      const longSide = obb.length + overhang * 2;
       roofHeight = Math.max(1.8, Math.min(4.5, obb.width * 0.34));
 
       // Simple 2D triangle extruded along local Z (= longSide), guaranteed outward normals
@@ -692,6 +1298,10 @@ export interface TreeValidatorInput {
   squarePolygon: readonly [number, number][];
   plagueColumnCenter: readonly [number, number];
   marketplacePolygon: readonly [number, number][];
+  breweryPolygon?: readonly [number, number][];
+  cemeteryPolygon?: readonly [number, number][];
+  railwayTrack?: readonly [number, number][];
+  stationPolygon?: readonly [number, number][];
   wallOval: HistoricalFilterOval;
 }
 
@@ -770,9 +1380,34 @@ export function createTreeValidator(
   if (input.marketplacePolygon.length >= 3) {
     buildingPolys.push(makePolyWithAABB(input.marketplacePolygon));
   }
+  if (input.breweryPolygon && input.breweryPolygon.length >= 3) {
+    buildingPolys.push(makePolyWithAABB(input.breweryPolygon));
+  }
+  if (input.cemeteryPolygon && input.cemeteryPolygon.length >= 3) {
+    buildingPolys.push(makePolyWithAABB(input.cemeteryPolygon));
+  }
+  if (input.stationPolygon && input.stationPolygon.length >= 3) {
+    buildingPolys.push(makePolyWithAABB(input.stationPolygon));
+  }
 
   const squarePoly =
     input.squarePolygon.length >= 3 ? makePolyWithAABB(input.squarePolygon) : null;
+
+  // Railway corridor AABB + polyline for strict 5m clearance
+  let railwayRoad: RoadWithAABB | null = null;
+  if (input.railwayTrack && input.railwayTrack.length >= 2) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const [rx, rz] of input.railwayTrack) {
+      if (rx < minX) minX = rx;
+      if (rx > maxX) maxX = rx;
+      if (rz < minZ) minZ = rz;
+      if (rz > maxZ) maxZ = rz;
+    }
+    railwayRoad = { pts: input.railwayTrack, halfW: 5.0, minX, maxX, minZ, maxZ };
+  }
 
   const waterPolys: PolyWithAABB[] = [];
   for (const w of input.water) {
@@ -785,8 +1420,11 @@ export function createTreeValidator(
       (z - input.wallOval.centerZ) / input.wallOval.radiusZ,
     );
 
-  // Include all drivable roads (and inner-core streets) for road clearance checks
+  // Include all drivable roads (and inner-core streets) + railway corridor for clearance checks
   const roadLines: RoadWithAABB[] = [];
+  if (railwayRoad) {
+    roadLines.push(railwayRoad);
+  }
   for (const st of input.streets) {
     if (st.points.length < 2) continue;
     const kind = st.kind ?? '';
@@ -1021,8 +1659,8 @@ export function buildMergedStreetsGeometry(
       if (d > maxNorm) maxNorm = d;
     }
 
-    // Outside walls: completely drop all minor path types (footway, path, service, cycleway, etc.)
-    if (isMinor && maxNorm > 0.98) continue;
+    // Drop minor paths (footway, path, service, etc.) anywhere near/outside the wall perimeter
+    if (isMinor && maxNorm > 0.9) continue;
 
     const nodeIds = st.points.map(([px, pz]) => getOrAddCluster(px, pz));
     infos.push({

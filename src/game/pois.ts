@@ -16,7 +16,15 @@ export interface TelescopeSpec {
 }
 
 export interface PoiSpec {
-  id: 'market' | 'town-hall' | 'plague-column' | 'medieval-gate';
+  id:
+    | 'market'
+    | 'town-hall'
+    | 'plague-column'
+    | 'medieval-gate'
+    | 'brewery'
+    | 'synsky-pond'
+    | 'st-michael-cemetery'
+    | 'railway';
   titleCz: string;
   subtitleCz: string;
   englishLabel: string;
@@ -51,6 +59,49 @@ export const TOWN_HALL_TRANSFORM = {
   width: 20.8,
 } as const;
 
+/**
+ * Exact transform for Měšťanský pivovar Polička (circa 1900) projected from real GPS
+ * coordinates (lat: 49.7107433, lon: 16.2600586) using the same equirectangular projection
+ * and St. James Church origin (49.713531, 16.263421) as scripts/fetch-policka.mjs.
+ */
+export const BREWERY_TRANSFORM = {
+  x: -241.98,
+  z: 310.33,
+  rotationY: -0.35,
+} as const;
+
+/** Local position of the tall brick smokestack top inside PolickaBrewery */
+export const BREWERY_SMOKESTACK_LOCAL = [-6.5, 34.5, 4.5] as const;
+
+/** Exact world-space top coordinate [x, y, z] of the tall industrial brewery smokestack */
+export const BREWERY_SMOKESTACK_TOP: readonly [number, number, number] = (() => {
+  const cos = Math.cos(BREWERY_TRANSFORM.rotationY);
+  const sin = Math.sin(BREWERY_TRANSFORM.rotationY);
+  const [lx, ly, lz] = BREWERY_SMOKESTACK_LOCAL;
+  return [
+    BREWERY_TRANSFORM.x + lx * cos + lz * sin,
+    TOWN_Y + ly,
+    BREWERY_TRANSFORM.z - lx * sin + lz * cos,
+  ] as const;
+})();
+
+/**
+ * Exact transform for Hřbitovní kostel sv. Michaela & historic cemetery on Horní předměstí
+ * snapped to its real OSM church footprint (way 66757562 in public/policka-data.json).
+ */
+export const ST_MICHAEL_TRANSFORM = {
+  x: -164.0,
+  z: 41.3,
+  rotationY: 0.032,
+} as const;
+
+/** Real OSM Polička railway station coordinates (Trať Svitavy – Polička – Žďárec, 1896) */
+export const RAILWAY_STATION_TRANSFORM = {
+  x: 40.49,
+  z: -596.71,
+  trackAngle: 1.4,
+} as const;
+
 /** Converts a point in the rotated St. James Church local frame into world OSM meters */
 export function churchLocalToWorld(
   lx: number,
@@ -72,10 +123,14 @@ export const REAL_LANDMARKS = {
   squareCenter: [155.0, -114.5] as const,
   /** Relocated 19th-century Marketplace (Tržiště) on the south / tower-facing side of the Town Hall */
   marketCenter: [152.9, -84.7] as const,
-  /** Real stone bastion on OSM city wall segment 586807258 */
-  wallBastion: [18.6, 71.7] as const,
-  /** Real Synský rybník pond centroid */
-  pondCenter: [254, 14] as const,
+  /** Unified warm-stone bastion anchored on the continuous southern fortification ring */
+  wallBastion: [8.6, 69.8] as const,
+  /** Historic Polička Municipal Brewery (Měšťanský pivovar) southwest outside the walls */
+  brewery: [BREWERY_TRANSFORM.x, BREWERY_TRANSFORM.z] as const,
+  /** Hřbitovní kostel sv. Michaela & historic cemetery west of the walls */
+  stMichael: [ST_MICHAEL_TRANSFORM.x, ST_MICHAEL_TRANSFORM.z] as const,
+  /** Real Synský rybník main open-water basin center (southeast/east of the walls) */
+  pondCenter: [115, 108] as const,
   /** Approximate historic walled core oval (used only for inner/outer filtering) */
   wallOval: {
     centerX: 118,
@@ -181,6 +236,62 @@ export const POIS: readonly PoiSpec[] = [
     storyCz:
       'Poličku obepíná téměř dokonale zachovaný prstenec kamenných gotických hradeb z doby Karla IV. o délce přes 1,2 kilometru. Devatenáct půlválcových bašt chránilo královské město před nájezdy po celá staletí.',
     color: '#a8e6ff',
+  },
+  {
+    id: 'brewery',
+    titleCz: 'Měšťanský pivovar',
+    subtitleCz: 'Založen 1517 · Nová budova 1865',
+    englishLabel: 'Polička Municipal Brewery',
+    position: [
+      BREWERY_TRANSFORM.x,
+      TOWN_Y + 24.0,
+      BREWERY_TRANSFORM.z,
+    ],
+    storyCz:
+      'Právo várečné získali poličští měšťané už v roce 1517. V roce 1865 vyrostl tento moderní parostrojní pivovar za městskými hradbami a kolem roku 1900 zde pod vedením proslulého sládka Františka Bittnera vznikala pověst poctivého poličského piva.',
+    color: '#f4a261',
+  },
+  {
+    id: 'synsky-pond',
+    titleCz: 'Synský rybník',
+    subtitleCz: 'Městský rybník · Ochrana před požáry',
+    englishLabel: 'Synský Pond',
+    position: [
+      REAL_LANDMARKS.pondCenter[0],
+      TOWN_Y + 4.5,
+      REAL_LANDMARKS.pondCenter[1],
+    ],
+    storyCz:
+      'Synský rybník přímo pod východními hradbami patřil po staletí k důležitému hospodářskému i obrannému zázemí města. Po ničivém požáru Poličky v roce 1845 navíc sloužil jako klíčová zásobárna vody pro hasiče a jeho hladina byla z věže neustále pod dohledem pověžného.',
+    color: '#5ec8e5',
+  },
+  {
+    id: 'st-michael-cemetery',
+    titleCz: 'Kostel sv. Michaela a hřbitov',
+    subtitleCz: 'Renesančně-barokní chrám · Založen 1576',
+    englishLabel: 'St. Michael Church & Cemetery',
+    position: [
+      ST_MICHAEL_TRANSFORM.x,
+      TOWN_Y + 21.0,
+      ST_MICHAEL_TRANSFORM.z,
+    ],
+    storyCz:
+      'Tento starobylý hřbitovní kostel na Horním předměstí pochází už z roku 1576 a kolem roku 1900 tvořil výraznou dominantu za západními hradbami. Na přilehlém hřbitově odpočívají generace poličských měšťanů – a zajímavostí pro dnešní návštěvníky je, že v roce 1979 sem byly uloženy i ostatky slavného rodáka z věže, skladatele Bohuslava Martinů.',
+    color: '#d8c4ff',
+  },
+  {
+    id: 'railway',
+    titleCz: 'Železnice a parní vlak',
+    subtitleCz: 'Trať Svitavy – Polička – Žďárec · 1896',
+    englishLabel: 'Polička Railway & Steam Train',
+    position: [
+      RAILWAY_STATION_TRANSFORM.x,
+      TOWN_Y + 18.0,
+      RAILWAY_STATION_TRANSFORM.z,
+    ],
+    storyCz:
+      'V roce 1896 dorazil do Poličky první parní vlak a o rok později byla trať prodloužena až do Žďárce u Skutče. Kolem roku 1900 byla železnice pro město obrovskou událostí – spojila Poličku se světem, zrychlila obchod s pivem i suknem a z věže kostela sv. Jakuba bylo vidět stoupající oblaka bílé páry daleko do kraje.',
+    color: '#f2e8cf',
   },
 ] as const;
 

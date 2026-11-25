@@ -7,6 +7,8 @@ const OUTPUT_PATH = path.resolve(__dirname, '../public/policka-data.json');
 
 // Bounding box for Polička historical center & immediate surroundings
 const BBOX = '49.7095,16.2580,49.7195,16.2735';
+// Wider ~1.5 km radius bounding box for the 1896–1897 Polička railway line & station
+const RAIL_BBOX = '49.7000,16.2420,49.7270,16.2850';
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
@@ -32,12 +34,28 @@ const OVERPASS_QUERY = `
   way["place"="square"](${BBOX});
   node["historic"~"^(monument|memorial|column|wayside_shrine|city_gate|tower)$"](${BBOX});
   way["historic"~"^(monument|memorial|column|city_gate|tower)$"](${BBOX});
+  way["railway"="rail"](${RAIL_BBOX});
+  node["railway"="station"](${RAIL_BBOX});
+  way["railway"="station"](${RAIL_BBOX});
+  way["building"="train_station"](${RAIL_BBOX});
 );
 (._;>;);
 out body;
 `;
 
-async function fetchOverpass() {
+const RAIL_ONLY_QUERY = `
+[out:json][timeout:25];
+(
+  way["railway"="rail"](${RAIL_BBOX});
+  node["railway"="station"](${RAIL_BBOX});
+  way["railway"="station"](${RAIL_BBOX});
+  way["building"="train_station"](${RAIL_BBOX});
+);
+(._;>;);
+out body;
+`;
+
+async function fetchOverpass(query = OVERPASS_QUERY) {
   let lastErr = null;
   for (const url of OVERPASS_ENDPOINTS) {
     console.log(`Querying Overpass: ${url} ...`);
@@ -50,7 +68,7 @@ async function fetchOverpass() {
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
           'User-Agent': 'TheTowerKeeper-PolickaPrototype/1.0',
         },
-        body: `data=${encodeURIComponent(OVERPASS_QUERY)}`,
+        body: `data=${encodeURIComponent(query)}`,
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -186,6 +204,146 @@ function assembleRelationRings(rel, waysById, nodesById) {
 }
 
 async function main() {
+  const railOnly = process.argv.includes('--rail-only');
+  if (railOnly) {
+    const existing = JSON.parse(await fs.readFile(OUTPUT_PATH, 'utf8'));
+    const { originLat, originLon } = existing.meta;
+    const mLat = 111_320;
+    const mLon = 111_320 * Math.cos((originLat * Math.PI) / 180);
+    const toLocal = (lat, lon) => [(lon - originLon) * mLon, -(lat - originLat) * mLat];
+
+    const raw = await fetchOverpass(RAIL_ONLY_QUERY);
+    const nodesById = new Map();
+    const ways = [];
+    const taggedNodes = [];
+    for (const el of raw.elements) {
+      if (el.type === 'node') {
+        nodesById.set(el.id, el);
+        if (el.tags && Object.keys(el.tags).length > 0) taggedNodes.push(el);
+      } else if (el.type === 'way') {
+        ways.push(el);
+      }
+    }
+
+    const mainRailWays = [];
+    let stationPos = null;
+    let stationName = 'Nádraží Polička';
+
+    for (const n of taggedNodes) {
+      const t = n.tags ?? {};
+      if (t.railway === 'station' || t.railway === 'halt') {
+        const [sx, sz] = toLocal(n.lat, n.lon);
+        if (!stationPos || (t.name && /poli/i.test(t.name))) {
+          stationPos = [r2(sx), r2(sz)];
+          if (t.name) stationName = t.name;
+        }
+      }
+    }
+    for (const w of ways) {
+      const t = w.tags ?? {};
+      if (t.railway === 'rail') {
+        if (t.service && /^(siding|spur|yard|crossover)$/i.test(t.service)) continue;
+        if (w.nodes && w.nodes.length >= 2) mainRailWays.push([...w.nodes]);
+      }
+      if ((t.building === 'train_station' || t.railway === 'station') && w.nodes && w.nodes.length >= 3) {
+        const pts = w.nodes.map((id) => nodesById.get(id)).filter(Boolean).map((n) => toLocal(n.lat, n.lon));
+        if (pts.length >= 3) {
+          const c = polygonCentroid(pts);
+          if (!stationPos || (t.name && /poli/i.test(t.name))) {
+            stationPos = [r2(c[0]), r2(c[1])];
+            if (t.name) stationName = t.name;
+          }
+        }
+      }
+    }
+
+    const remainingRail = mainRailWays.map((nodes) => [...nodes]);
+    const stitchedChains = [];
+    while (remainingRail.length > 0) {
+      const chain = remainingRail.shift();
+      let extended = true;
+      while (extended) {
+        extended = false;
+        const head = chain[0];
+        const tail = chain[chain.length - 1];
+        for (let i = 0; i < remainingRail.length; i++) {
+          const seg = remainingRail[i];
+          const sHead = seg[0];
+          const sTail = seg[seg.length - 1];
+          if (sHead === tail) {
+            chain.push(...seg.slice(1));
+            remainingRail.splice(i, 1);
+            extended = true;
+            break;
+          } else if (sTail === tail) {
+            chain.push(...seg.slice(0, -1).reverse());
+            remainingRail.splice(i, 1);
+            extended = true;
+            break;
+          } else if (sTail === head) {
+            chain.unshift(...seg.slice(0, -1));
+            remainingRail.splice(i, 1);
+            extended = true;
+            break;
+          } else if (sHead === head) {
+            chain.unshift(...seg.slice(1).reverse());
+            remainingRail.splice(i, 1);
+            extended = true;
+            break;
+          }
+        }
+      }
+      stitchedChains.push(chain);
+    }
+
+    let railwayTrack = [];
+    let bestRailLen = 0;
+    for (const chain of stitchedChains) {
+      const pts = chain.map((id) => nodesById.get(id)).filter(Boolean).map((n) => toLocal(n.lat, n.lon));
+      let len = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        len += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+      }
+      if (len > bestRailLen) {
+        bestRailLen = len;
+        railwayTrack = simplifyPoints(pts, 1.4).map(([x, z]) => [r2(x), r2(z)]);
+      }
+    }
+
+    let stationTrackAngle = 0;
+    if (stationPos && railwayTrack.length >= 2) {
+      let bestD = Infinity;
+      for (let i = 0; i < railwayTrack.length - 1; i++) {
+        const [ax, az] = railwayTrack[i];
+        const [bx, bz] = railwayTrack[i + 1];
+        const mx = (ax + bx) * 0.5;
+        const mz = (az + bz) * 0.5;
+        const d = Math.hypot(stationPos[0] - mx, stationPos[1] - mz);
+        if (d < bestD) {
+          bestD = d;
+          stationTrackAngle = Math.atan2(bx - ax, bz - az);
+        }
+      }
+    }
+
+    existing.railway = {
+      track: railwayTrack,
+      lengthMeters: r2(bestRailLen),
+      station: stationPos
+        ? { name: stationName, position: stationPos, trackAngle: r2(stationTrackAngle) }
+        : null,
+    };
+    await fs.writeFile(OUTPUT_PATH, JSON.stringify(existing), 'utf8');
+    console.log('Merged real OSM railway into public/policka-data.json:', {
+      points: railwayTrack.length,
+      lengthMeters: existing.railway.lengthMeters,
+      station: existing.railway.station,
+      firstPt: railwayTrack[0],
+      lastPt: railwayTrack[railwayTrack.length - 1],
+    });
+    return;
+  }
+
   const raw = await fetchOverpass();
 
   const nodesById = new Map();
@@ -589,6 +747,122 @@ async function main() {
   const chT = computePolyTransform(churchPoly, true);
   const thT = townHall ? computePolyTransform(townHall.points, false) : null;
 
+  // === STITCH MAIN-LINE RAILWAY TRACK (1896–1897 Trať Svitavy – Polička – Žďárec) ===
+  const mainRailWays = [];
+  let stationPos = null;
+  let stationName = 'Nádraží Polička';
+
+  for (const n of taggedNodes) {
+    const t = n.tags ?? {};
+    if (t.railway === 'station' || t.railway === 'halt') {
+      const [sx, sz] = toLocal(n.lat, n.lon);
+      if (!stationPos || (t.name && /poli/i.test(t.name))) {
+        stationPos = [r2(sx), r2(sz)];
+        if (t.name) stationName = t.name;
+      }
+    }
+  }
+
+  for (const w of ways) {
+    const t = w.tags ?? {};
+    if (t.railway === 'rail') {
+      // Skip tiny industrial sidings, yards, spurs, and crossovers to keep one clean main line
+      if (t.service && /^(siding|spur|yard|crossover)$/i.test(t.service)) continue;
+      if (w.nodes && w.nodes.length >= 2) {
+        mainRailWays.push([...w.nodes]);
+      }
+    }
+    if ((t.building === 'train_station' || t.railway === 'station') && w.nodes && w.nodes.length >= 3) {
+      const pts = w.nodes
+        .map((id) => nodesById.get(id))
+        .filter(Boolean)
+        .map((n) => toLocal(n.lat, n.lon));
+      if (pts.length >= 3) {
+        const c = polygonCentroid(pts);
+        if (!stationPos || (t.name && /poli/i.test(t.name))) {
+          stationPos = [r2(c[0]), r2(c[1])];
+          if (t.name) stationName = t.name;
+        }
+      }
+    }
+  }
+
+  // Stitch connected main-line rail ways into continuous chains by shared node IDs
+  const remainingRail = mainRailWays.map((nodes) => [...nodes]);
+  const stitchedChains = [];
+
+  while (remainingRail.length > 0) {
+    const chain = remainingRail.shift();
+    let extended = true;
+    while (extended) {
+      extended = false;
+      const head = chain[0];
+      const tail = chain[chain.length - 1];
+      for (let i = 0; i < remainingRail.length; i++) {
+        const seg = remainingRail[i];
+        const sHead = seg[0];
+        const sTail = seg[seg.length - 1];
+        if (sHead === tail) {
+          chain.push(...seg.slice(1));
+          remainingRail.splice(i, 1);
+          extended = true;
+          break;
+        } else if (sTail === tail) {
+          chain.push(...seg.slice(0, -1).reverse());
+          remainingRail.splice(i, 1);
+          extended = true;
+          break;
+        } else if (sTail === head) {
+          chain.unshift(...seg.slice(0, -1));
+          remainingRail.splice(i, 1);
+          extended = true;
+          break;
+        } else if (sHead === head) {
+          chain.unshift(...seg.slice(1).reverse());
+          remainingRail.splice(i, 1);
+          extended = true;
+          break;
+        }
+      }
+    }
+    stitchedChains.push(chain);
+  }
+
+  // Pick the longest continuous main-line chain by physical meter length
+  let railwayTrack = [];
+  let bestRailLen = 0;
+  for (const chain of stitchedChains) {
+    const pts = chain
+      .map((id) => nodesById.get(id))
+      .filter(Boolean)
+      .map((n) => toLocal(n.lat, n.lon));
+    let len = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      len += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    }
+    if (len > bestRailLen) {
+      bestRailLen = len;
+      railwayTrack = simplifyPoints(pts, 1.4).map(([x, z]) => [r2(x), r2(z)]);
+    }
+  }
+
+  // Compute local tangent angle of the track nearest to the Polička station
+  let stationTrackAngle = 0;
+  if (stationPos && railwayTrack.length >= 2) {
+    let bestD = Infinity;
+    for (let i = 0; i < railwayTrack.length - 1; i++) {
+      const [ax, az] = railwayTrack[i];
+      const [bx, bz] = railwayTrack[i + 1];
+      const mx = (ax + bx) * 0.5;
+      const mz = (az + bz) * 0.5;
+      const d = Math.hypot(stationPos[0] - mx, stationPos[1] - mz);
+      if (d < bestD) {
+        bestD = d;
+        stationTrackAngle = Math.atan2(bx - ax, bz - az);
+      }
+    }
+  }
+
   const output = {
     meta: {
       originLat: r2(originLat * 10000) / 10000,
@@ -626,6 +900,17 @@ async function main() {
         : null,
       plagueColumn,
     },
+    railway: {
+      track: railwayTrack,
+      lengthMeters: r2(bestRailLen),
+      station: stationPos
+        ? {
+            name: stationName,
+            position: stationPos,
+            trackAngle: r2(stationTrackAngle),
+          }
+        : null,
+    },
     buildings,
     walls,
     streets,
@@ -644,6 +929,11 @@ async function main() {
     churchCentroid: output.meta.churchCentroid,
     townHall: output.landmarks.townHall,
     plagueColumn: output.landmarks.plagueColumn,
+    railway: {
+      points: railwayTrack.length,
+      lengthMeters: output.railway.lengthMeters,
+      station: output.railway.station,
+    },
     counts: {
       buildings: buildings.length,
       walls: walls.length,

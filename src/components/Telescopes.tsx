@@ -1,44 +1,14 @@
-import { useRef, type RefObject } from 'react';
-import { useFrame } from '@react-three/fiber';
-import * as THREE from 'three';
-import { TELESCOPES, TELESCOPE_CONFIG, type TelescopeId } from '../game/pois';
+import { TELESCOPES, type TelescopeId } from '../game/pois';
 
 interface TelescopesProps {
-  playerPosRef: RefObject<THREE.Vector3>;
   nearbyTelescope: TelescopeId | null;
   activeTelescope: TelescopeId | null;
-  onNearbyChange: (id: TelescopeId | null) => void;
 }
 
 export function Telescopes({
-  playerPosRef,
   nearbyTelescope,
   activeTelescope,
-  onNearbyChange,
 }: TelescopesProps) {
-  const lastReportedRef = useRef<TelescopeId | null>(null);
-
-  useFrame(() => {
-    const p = playerPosRef.current;
-    let closestId: TelescopeId | null = null;
-    let closestDist: number = TELESCOPE_CONFIG.interactionRadius;
-
-    for (const scope of TELESCOPES) {
-      const dx = p.x - scope.mountPosition[0];
-      const dz = p.z - scope.mountPosition[2];
-      const dist = Math.hypot(dx, dz);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closestId = scope.id;
-      }
-    }
-
-    if (closestId !== lastReportedRef.current) {
-      lastReportedRef.current = closestId;
-      onNearbyChange(closestId);
-    }
-  });
-
   return (
     <group name="gallery-telescopes">
       {TELESCOPES.map((scope) => {

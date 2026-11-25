@@ -19,6 +19,7 @@ export interface ScanState {
 interface TelescopeCameraProps {
   activeTelescope: TelescopeId | null;
   unlockedPois: ReadonlySet<string>;
+  disabled?: boolean;
   onScanChange: (scan: ScanState) => void;
   onZoomChange: (zoom: number) => void;
   onPoiUnlocked: (poiId: PoiSpec['id']) => void;
@@ -36,6 +37,7 @@ interface TelescopeKeys {
 export function TelescopeCamera({
   activeTelescope,
   unlockedPois,
+  disabled = false,
   onScanChange,
   onZoomChange,
   onPoiUnlocked,
@@ -232,6 +234,7 @@ export function TelescopeCamera({
   }, [activeTelescope]);
 
   useFrame((_, rawDelta) => {
+    if (disabled) return;
     const dt = Math.min(rawDelta, 0.05);
     const persp = camera as THREE.PerspectiveCamera;
 

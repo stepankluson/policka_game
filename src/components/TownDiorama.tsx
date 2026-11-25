@@ -7,21 +7,32 @@ import {
   buildMergedStreetsGeometry,
   buildRealOsmWalls,
   createTreeValidator,
+  type ChimneySmokeSource,
   type ChimneyTop,
   type PolickaOsmData,
 } from '../game/osmGeometry';
 import {
+  BREWERY_SMOKESTACK_TOP,
+  BREWERY_TRANSFORM,
   POIS,
+  RAILWAY_STATION_TRANSFORM,
   REAL_LANDMARKS,
+  ST_MICHAEL_TRANSFORM,
   TOWN_HALL_TRANSFORM,
   TOWN_Y,
 } from '../game/pois';
 import { Marketplace } from './Marketplace';
+import { PolickaBrewery } from './PolickaBrewery';
+import {
+  StMichaelCemetery,
+  SynskyRybnikDetails,
+} from './PolickaCemeteryAndPond';
 import { BaroqueTownHall, PlagueColumn } from './PolickaLandmarks';
+import { PolickaRailway } from './PolickaRailway';
 
 interface TownDioramaProps {
   unlockedPois: ReadonlySet<string>;
-  onChimneyTopsReady?: (tops: ChimneyTop[]) => void;
+  onChimneyTopsReady?: (tops: ChimneyTop[], sources?: ChimneySmokeSource[]) => void;
 }
 
 interface TreeInstance {
@@ -172,13 +183,45 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
     };
   }, []);
 
-  // Build merged BufferGeometries once OSM data loads
+  // Render ALL real OSM medieval city wall segments + RÚIAN wall ribbons in unified warm weathered stone
+  // with clean road/water openings and evenly spaced alternating A-B-A-B bastions.
+  // Computed BEFORE buildings so buildings & OBB pitched roofs strictly respect the closed wall ring & bastions.
+  const { wallSegments, bastions, wallRing } = useMemo(() => {
+    if (!osmData) return { wallSegments: [], bastions: [], wallRing: [] as [number, number][] };
+    return buildRealOsmWalls(
+      osmData.walls,
+      osmData.streets,
+      osmData.water,
+      osmData.buildings,
+      REAL_LANDMARKS.wallOval,
+    );
+  }, [osmData]);
+
+  // Build merged BufferGeometries once OSM data & wall ring load
   const merged = useMemo(() => {
     if (!osmData) return null;
 
     const excludeIds = new Set<number>();
     if (osmData.landmarks.townHall) {
       excludeIds.add(osmData.landmarks.townHall.id);
+    }
+    // Exclude any raw OSM building polygons overlapping the custom historic Polička Brewery footprint
+    for (const b of osmData.buildings) {
+      if (b.points.length === 0) continue;
+      let cx = 0;
+      let cz = 0;
+      for (const [px, pz] of b.points) {
+        cx += px;
+        cz += pz;
+      }
+      cx /= b.points.length;
+      cz /= b.points.length;
+      if (
+        Math.hypot(cx - BREWERY_TRANSFORM.x, cz - BREWERY_TRANSFORM.z) < 55 ||
+        Math.hypot(cx - ST_MICHAEL_TRANSFORM.x, cz - ST_MICHAEL_TRANSFORM.z) < 38
+      ) {
+        excludeIds.add(b.id);
+      }
     }
 
     const { wallGeometry, roofGeometry, chimneyGeometry, chimneyTops } =
@@ -188,6 +231,8 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
         excludeIds,
         REAL_LANDMARKS.wallOval,
         osmData.walls,
+        wallRing,
+        bastions,
       );
     const streetsGeometry = buildMergedStreetsGeometry(
       osmData.streets,
@@ -206,12 +251,21 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
       parksGeometry,
       waterGeometry,
     };
-  }, [osmData]);
+  }, [osmData, wallRing, bastions]);
 
-  // Export world-space chimney top coordinates for future rising smoke particles
+  // Export world-space chimney top coordinates (houses + tall industrial brewery smokestack)
+  // for future rising smoke particles
   useEffect(() => {
     if (merged && onChimneyTopsReady) {
-      onChimneyTopsReady(merged.chimneyTops);
+      const allTops: ChimneyTop[] = [
+        ...merged.chimneyTops,
+        [BREWERY_SMOKESTACK_TOP[0], BREWERY_SMOKESTACK_TOP[1], BREWERY_SMOKESTACK_TOP[2]],
+      ];
+      const sources: ChimneySmokeSource[] = [
+        ...merged.chimneyTops.map((pos) => ({ position: pos, kind: 'house' as const })),
+        { position: BREWERY_SMOKESTACK_TOP, kind: 'industrial' as const },
+      ];
+      onChimneyTopsReady(allTops, sources);
     }
   }, [merged, onChimneyTopsReady]);
 
@@ -227,12 +281,6 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
       merged.waterGeometry.dispose();
     };
   }, [merged]);
-
-  // Render ONLY actual OSM city wall segments with clean 5m road gaps & 3m water clearance
-  const { wallSegments, bastions } = useMemo(() => {
-    if (!osmData) return { wallSegments: [], bastions: [] };
-    return buildRealOsmWalls(osmData.walls, osmData.streets, osmData.water);
-  }, [osmData]);
 
   // Helper to construct a rotated 2D rectangle polygon in world XZ space
   const makeRectPoly = (
@@ -281,6 +329,31 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
       squarePolygon: makeRectPoly(sqCx - 1, sqCz + 1, 136, 114, thRot),
       plagueColumnCenter: REAL_LANDMARKS.plagueColumn,
       marketplacePolygon: makeRectPoly(mkCx, mkCz, 30, 14, thRot),
+      // Brewery footprint (46x36m) padded by ~5m margin on all sides -> 56x46m exclusion
+      breweryPolygon: makeRectPoly(
+        BREWERY_TRANSFORM.x,
+        BREWERY_TRANSFORM.z,
+        56,
+        46,
+        BREWERY_TRANSFORM.rotationY,
+      ),
+      // St. Michael Church & Cemetery enclosure (56x44m) padded by 4m margin on all sides -> 64x52m
+      cemeteryPolygon: makeRectPoly(
+        ST_MICHAEL_TRANSFORM.x,
+        ST_MICHAEL_TRANSFORM.z,
+        64,
+        52,
+        ST_MICHAEL_TRANSFORM.rotationY,
+      ),
+      // Real 1896–1897 Polička railway corridor (5m clearance) & station footprint
+      railwayTrack: osmData.railway?.track,
+      stationPolygon: makeRectPoly(
+        osmData.railway?.station?.position[0] ?? RAILWAY_STATION_TRANSFORM.x,
+        osmData.railway?.station?.position[1] ?? RAILWAY_STATION_TRANSFORM.z,
+        48,
+        24,
+        osmData.railway?.station?.trackAngle ?? RAILWAY_STATION_TRANSFORM.trackAngle,
+      ),
       wallOval: REAL_LANDMARKS.wallOval,
     });
 
@@ -361,7 +434,9 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
       const ring = 1.6 + rand() * 0.9;
       const x = centerX + Math.sin(a) * radiusX * ring;
       const z = centerZ + Math.cos(a) * radiusZ * ring;
-      if (Math.hypot(x - POND_CENTER[0], z - POND_CENTER[1]) < 82) continue;
+      if (Math.hypot(x - POND_CENTER[0], z - POND_CENTER[1]) < 95) continue;
+      if (Math.hypot(x - BREWERY_TRANSFORM.x, z - BREWERY_TRANSFORM.z) < 62) continue;
+      if (Math.hypot(x - ST_MICHAEL_TRANSFORM.x, z - ST_MICHAEL_TRANSFORM.z) < 52) continue;
 
       const w = 58 + rand() * 68;
       const d = 42 + rand() * 52;
@@ -605,12 +680,12 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
             />
           </mesh>
 
-          {/* Real OSM Water (Synský rybník, y = +0.25) */}
+          {/* Real OSM Water (Synský rybník, y = +0.25) with rich reflective golden-hour teal-blue */}
           <mesh geometry={merged.waterGeometry} renderOrder={50}>
             <meshStandardMaterial
-              color="#396c75"
-              roughness={0.82}
-              metalness={0.05}
+              color="#2d6678"
+              roughness={0.25}
+              metalness={0.15}
               polygonOffset
               polygonOffsetFactor={-2}
               polygonOffsetUnits={-2}
@@ -674,36 +749,102 @@ export function TownDiorama({ unlockedPois, onChimneyTopsReady }: TownDioramaPro
         rotationY={thRotY}
       />
 
-      {/* === 3. REAL OSM MEDIEVAL STONE CITY WALLS & BASTIONS (CLEAN ROAD & WATER GAPS) === */}
+      {/* Historic Polička Municipal Brewery (Měšťanský pivovar, circa 1900) at exact real-world GPS */}
+      <PolickaBrewery
+        position={[BREWERY_TRANSFORM.x, TOWN_Y, BREWERY_TRANSFORM.z]}
+        rotationY={BREWERY_TRANSFORM.rotationY}
+      />
+
+      {/* Hřbitovní kostel sv. Michaela (1576) & Historic 1900 Cemetery on Horní předměstí */}
+      <StMichaelCemetery
+        position={[ST_MICHAEL_TRANSFORM.x, TOWN_Y, ST_MICHAEL_TRANSFORM.z]}
+        rotationY={ST_MICHAEL_TRANSFORM.rotationY}
+      />
+
+      {/* Synský rybník shoreline details (wooden pier, moored rowboat, reeds & cattails) */}
+      <SynskyRybnikDetails />
+
+      {/* Real 1896–1897 Polička Railway Line, Historic Station & Animated Steam Train */}
+      {osmData?.railway && osmData.railway.track.length >= 2 && (
+        <PolickaRailway railway={osmData.railway} />
+      )}
+
+      {/* === 3. CONTINUOUS WARM WEATHERED-STONE MEDIEVAL CITY WALLS & A-B-A-B BASTIONS === */}
       {wallSegments.map((seg) => (
         <group
           key={seg.key}
           position={[seg.x, TOWN_Y, seg.z]}
           rotation={[0, seg.rotY, 0]}
         >
+          {/* Warm medium-brown weathered ochre stone curtain wall */}
           <mesh position={[0, 3.6, 0]} castShadow receiveShadow>
             <boxGeometry args={[seg.length, 7.2, 2.2]} />
-            <meshStandardMaterial color="#918779" roughness={0.94} />
+            <meshStandardMaterial color="#9c8263" roughness={0.88} />
           </mesh>
-          <mesh position={[0, 7.5, 0.4]}>
-            <boxGeometry args={[seg.length, 0.8, 0.7]} />
-            <meshStandardMaterial color="#7e7569" roughness={0.95} />
+          {/* Slightly protruding darker stone coping/ledge along the very top */}
+          <mesh position={[0, 7.45, 0]} castShadow receiveShadow>
+            <boxGeometry args={[seg.length + 0.06, 0.55, 2.65]} />
+            <meshStandardMaterial color="#856d51" roughness={0.9} />
           </mesh>
         </group>
       ))}
 
-      {bastions.map((b) => (
-        <group key={b.key} position={[b.x, TOWN_Y, b.z]}>
-          <mesh position={[0, 4.8, 0]} castShadow receiveShadow>
-            <cylinderGeometry args={[3.2, 3.6, 9.6, 10]} />
-            <meshStandardMaterial color="#877d70" roughness={0.94} />
-          </mesh>
-          <mesh position={[0, 11.4, 0]} castShadow>
-            <coneGeometry args={[4.0, 4.2, 10]} />
-            <meshStandardMaterial color="#3c3734" roughness={0.85} />
-          </mesh>
-        </group>
-      ))}
+      {/* Evenly spaced alternating Type A (Main) and Type B (Watch) bastions seated on the ring */}
+      {bastions.map((b) =>
+        b.variant === 'A' ? (
+          <group key={b.key} position={[b.x, TOWN_Y, b.z]}>
+            {/* Type A: Classic wider cylindrical warm-stone main bastion */}
+            <mesh position={[0, 4.8, 0]} castShadow receiveShadow>
+              <cylinderGeometry args={[3.7, 4.1, 9.6, 12]} />
+              <meshStandardMaterial color="#967c5e" roughness={0.88} />
+            </mesh>
+            {/* Subtle stone eaves ring */}
+            <mesh position={[0, 9.7, 0]}>
+              <cylinderGeometry args={[3.95, 3.8, 0.4, 12]} />
+              <meshStandardMaterial color="#856d51" roughness={0.9} />
+            </mesh>
+            {/* Tall, steep overhanging dark-brown conical roof */}
+            <mesh position={[0, 12.5, 0]} castShadow>
+              <coneGeometry args={[4.75, 5.4, 12]} />
+              <meshStandardMaterial color="#3d2e22" roughness={0.85} />
+            </mesh>
+            {/* Dark spire finial tip */}
+            <mesh position={[0, 15.5, 0]}>
+              <cylinderGeometry args={[0.06, 0.1, 0.85, 6]} />
+              <meshStandardMaterial color="#3d2e22" roughness={0.82} />
+            </mesh>
+          </group>
+        ) : (
+          <group key={b.key} position={[b.x, TOWN_Y, b.z]}>
+            {/* Type B: Slightly slimmer, taller warm-stone watch bastion */}
+            <mesh position={[0, 5.2, 0]} castShadow receiveShadow>
+              <cylinderGeometry args={[3.05, 3.4, 10.4, 12]} />
+              <meshStandardMaterial color="#967c5e" roughness={0.88} />
+            </mesh>
+            {/* 4 subtle narrow arrow-slit windows around the cylinder */}
+            {[0, Math.PI / 2, Math.PI, -Math.PI / 2].map((ry, idx) => (
+              <mesh
+                key={`slit-${idx}`}
+                position={[Math.sin(ry) * 3.16, 6.9, Math.cos(ry) * 3.16]}
+                rotation={[0, ry, 0]}
+              >
+                <boxGeometry args={[0.32, 1.45, 0.14]} />
+                <meshStandardMaterial color="#2a2018" roughness={0.95} />
+              </mesh>
+            ))}
+            {/* Corbelled weathered stone ring collar just beneath the roof */}
+            <mesh position={[0, 10.1, 0]} castShadow>
+              <cylinderGeometry args={[3.65, 3.2, 0.95, 12]} />
+              <meshStandardMaterial color="#856d51" roughness={0.9} />
+            </mesh>
+            {/* Slightly lower-pitched overhanging dark-brown conical roof */}
+            <mesh position={[0, 12.45, 0]} castShadow>
+              <coneGeometry args={[4.2, 3.9, 12]} />
+              <meshStandardMaterial color="#3d2e22" roughness={0.85} />
+            </mesh>
+          </group>
+        ),
+      )}
 
       {/* === 4. INSTANCED LOW-POLY PARK & COUNTRYSIDE TREES === */}
       {treeInstances.length > 0 && (

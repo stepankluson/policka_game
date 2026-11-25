@@ -28,7 +28,9 @@ export const PLAYER_CONFIG = {
 
 export const RING_BOUNDS = {
   /** Minimum |x| or |z| outside the inner stone tower wall */
-  innerLimit: TOWER_DIMENSIONS.coreHalf + PLAYER_CONFIG.radius,
+  innerLimit: TOWER_DIMENSIONS.coreHalf + 0.52,
+  /** Strict padded inner-cabin clearance in First-Person mode (0.55m outside cabin walls) */
+  innerLimitFirstPerson: TOWER_DIMENSIONS.coreHalf + 0.55,
   /** Maximum |x| or |z| inside the outer wooden railing */
   outerLimit: TOWER_DIMENSIONS.railingHalf - PLAYER_CONFIG.radius - 0.1,
 } as const;
