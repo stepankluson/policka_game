@@ -141,6 +141,7 @@ export function Player({
   const facingYawRef = useRef(Math.PI / 2);
   const walkPhaseRef = useRef(0);
   const idleTimeRef = useRef(0);
+  const hiddenByCameraRef = useRef(false);
 
   useFrame((_, rawDelta) => {
     if (disabled) {
@@ -214,10 +215,26 @@ export function Player({
       );
     }
 
-    // Apply transform to character root
+    // Apply transform & camera-proximity visibility hysteresis (prevents camera ever slicing into torso/head)
     if (rootRef.current) {
       rootRef.current.position.copy(playerPosRef.current);
       rootRef.current.rotation.y = facingYawRef.current;
+
+      if (!visible) {
+        hiddenByCameraRef.current = false;
+        rootRef.current.visible = false;
+      } else {
+        const dxCam = camera.position.x - wx;
+        const dyCam = camera.position.y - (wy + 1.32);
+        const dzCam = camera.position.z - wz;
+        const camDistSq = dxCam * dxCam + dyCam * dyCam + dzCam * dzCam;
+        if (!hiddenByCameraRef.current && camDistSq < 0.85 * 0.85) {
+          hiddenByCameraRef.current = true;
+        } else if (hiddenByCameraRef.current && camDistSq > 0.92 * 0.92) {
+          hiddenByCameraRef.current = false;
+        }
+        rootRef.current.visible = !hiddenByCameraRef.current;
+      }
     }
 
     // Natural upright idle breathing & gallery patrol walk animation
@@ -472,19 +489,19 @@ export function Player({
             <boxGeometry args={[0.022, 0.046, 0.026]} />
           </mesh>
 
-          {/* Traditional Wide-Brimmed "Pověžný" Hat (#36302b) with Dark Hatband, exposing face clearly */}
-          <group position={[0, 0.115, -0.012]} rotation={[-0.09, 0, 0]}>
-            {/* Wide brim */}
+          {/* Traditional Wide-Brimmed "Pověžný" Hat (#36302b) sized & seated snugly on his head */}
+          <group position={[0, 0.078, -0.008]} rotation={[-0.055, 0, 0]}>
+            {/* Proportionate brim */}
             <mesh material={KEEPER_MATS.hat} castShadow>
-              <cylinderGeometry args={[0.29, 0.315, 0.032, 9]} />
+              <cylinderGeometry args={[0.215, 0.23, 0.026, 9]} />
             </mesh>
             {/* Dark leather hatband */}
-            <mesh position={[0, 0.036, 0]} material={KEEPER_MATS.hatBand} castShadow>
-              <cylinderGeometry args={[0.145, 0.152, 0.046, 9]} />
+            <mesh position={[0, 0.028, 0]} material={KEEPER_MATS.hatBand} castShadow>
+              <cylinderGeometry args={[0.122, 0.128, 0.038, 9]} />
             </mesh>
-            {/* Tapered crown */}
-            <mesh position={[0, 0.105, 0]} material={KEEPER_MATS.hat} castShadow>
-              <cylinderGeometry args={[0.112, 0.145, 0.125, 9]} />
+            {/* Snug tapered crown covering upper cranium cleanly with zero clipping */}
+            <mesh position={[0, 0.082, 0]} material={KEEPER_MATS.hat} castShadow>
+              <cylinderGeometry args={[0.102, 0.122, 0.096, 9]} />
             </mesh>
           </group>
         </group>

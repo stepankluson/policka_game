@@ -19,6 +19,8 @@ interface BirthRoomInteriorProps {
   visitedHotspots: ReadonlySet<string>;
   onSelectHotspot: (id: BirthRoomHotspot['id']) => void;
   onAimedHotspotChange: (id: BirthRoomHotspot['id'] | null) => void;
+  onAimedRifleChange: (aimed: boolean) => void;
+  onInteractRifle: () => void;
   onPointerLockChange: (locked: boolean) => void;
   onNearExitDoorChange: (near: boolean) => void;
 }
@@ -48,16 +50,22 @@ const EXIT_DOOR_RADIUS = 1.95;
  */
 function InteriorFPSControls({
   hotspotMeshesRef,
+  rifleHitMeshRef,
   modalOpen,
   onSelectHotspot,
   onAimedHotspotChange,
+  onAimedRifleChange,
+  onInteractRifle,
   onPointerLockChange,
   onNearExitDoorChange,
 }: {
   hotspotMeshesRef: RefObject<THREE.Object3D[]>;
+  rifleHitMeshRef: RefObject<THREE.Object3D | null>;
   modalOpen: boolean;
   onSelectHotspot: (id: BirthRoomHotspot['id']) => void;
   onAimedHotspotChange: (id: BirthRoomHotspot['id'] | null) => void;
+  onAimedRifleChange: (aimed: boolean) => void;
+  onInteractRifle: () => void;
   onPointerLockChange: (locked: boolean) => void;
   onNearExitDoorChange: (near: boolean) => void;
 }) {
@@ -74,7 +82,9 @@ function InteriorFPSControls({
   modalOpenRef.current = modalOpen;
 
   const aimedIdRef = useRef<BirthRoomHotspot['id'] | null>(null);
+  const aimedRifleRef = useRef(false);
   const nearDoorRef = useRef(false);
+  const rayTargetsScratchRef = useRef<THREE.Object3D[]>([]);
 
   const forwardRef = useRef(new THREE.Vector3());
   const rightRef = useRef(new THREE.Vector3());
@@ -113,6 +123,10 @@ function InteriorFPSControls({
         aimedIdRef.current = null;
         onAimedHotspotChange(null);
       }
+      if (!locked && aimedRifleRef.current) {
+        aimedRifleRef.current = false;
+        onAimedRifleChange(false);
+      }
     };
 
     const handleCanvasMouseDown = (event: MouseEvent) => {
@@ -121,8 +135,12 @@ function InteriorFPSControls({
         return;
       }
 
-      // If pointer is locked and player is aiming at a hotspot, Left Click opens its story card
+      // If pointer is locked and player is aiming at the wall rifle or a hotspot, Left Click interacts
       if (document.pointerLockElement === domElement) {
+        if (aimedRifleRef.current) {
+          onInteractRifle();
+          return;
+        }
         if (aimedIdRef.current) {
           const targetId = aimedIdRef.current;
           document.exitPointerLock();
@@ -159,6 +177,7 @@ function InteriorFPSControls({
       }
       onPointerLockChange(false);
       onAimedHotspotChange(null);
+      onAimedRifleChange(false);
       onNearExitDoorChange(false);
 
       if (persp.isPerspectiveCamera) {
@@ -172,6 +191,8 @@ function InteriorFPSControls({
     gl,
     onSelectHotspot,
     onAimedHotspotChange,
+    onAimedRifleChange,
+    onInteractRifle,
     onPointerLockChange,
     onNearExitDoorChange,
   ]);
@@ -259,10 +280,16 @@ function InteriorFPSControls({
       onNearExitDoorChange(isNearDoor);
     }
 
-    // 3. Crosshair raycast from screen center (0, 0) against 3D hotspot targets while locked
+    // 3. Crosshair raycast from screen center (0, 0) against 3D hotspot targets & wall-mounted hunting rifle
     if (isLockedRef.current && !modalOpenRef.current) {
-      const targets = hotspotMeshesRef.current;
+      const targets = rayTargetsScratchRef.current;
+      targets.length = 0;
+      const hsList = hotspotMeshesRef.current;
+      for (let i = 0; i < hsList.length; i++) targets.push(hsList[i]);
+      if (rifleHitMeshRef.current) targets.push(rifleHitMeshRef.current);
+
       let nextAimed: BirthRoomHotspot['id'] | null = null;
+      let nextAimedRifle = false;
       if (targets.length > 0) {
         const raycaster = raycasterRef.current;
         raycaster.setFromCamera(ndcCenterRef.current, camera);
@@ -272,13 +299,22 @@ function InteriorFPSControls({
         hits.length = 0;
         raycaster.intersectObjects(targets, false, hits);
         if (hits.length > 0) {
-          const id = hits[0].object.userData.hotspotId as BirthRoomHotspot['id'] | undefined;
-          if (id) nextAimed = id;
+          const hit = hits[0];
+          if (hit.object.userData.isHuntingRifle && hit.distance <= 3.2) {
+            nextAimedRifle = true;
+          } else {
+            const id = hit.object.userData.hotspotId as BirthRoomHotspot['id'] | undefined;
+            if (id) nextAimed = id;
+          }
         }
       }
       if (nextAimed !== aimedIdRef.current) {
         aimedIdRef.current = nextAimed;
         onAimedHotspotChange(nextAimed);
+      }
+      if (nextAimedRifle !== aimedRifleRef.current) {
+        aimedRifleRef.current = nextAimedRifle;
+        onAimedRifleChange(nextAimedRifle);
       }
     }
   });
@@ -777,11 +813,14 @@ export function BirthRoomInterior({
   visitedHotspots,
   onSelectHotspot,
   onAimedHotspotChange,
+  onAimedRifleChange,
+  onInteractRifle,
   onPointerLockChange,
   onNearExitDoorChange,
 }: BirthRoomInteriorProps) {
   const hotspotMeshesRef = useRef<THREE.Object3D[]>([]);
   const hotspotMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
+  const rifleHitMeshRef = useRef<THREE.Object3D | null>(null);
 
   const textures = useMemo(() => {
     return {
@@ -812,9 +851,12 @@ export function BirthRoomInterior({
 
       <InteriorFPSControls
         hotspotMeshesRef={hotspotMeshesRef}
+        rifleHitMeshRef={rifleHitMeshRef}
         modalOpen={activeHotspotId !== null}
         onSelectHotspot={onSelectHotspot}
         onAimedHotspotChange={onAimedHotspotChange}
+        onAimedRifleChange={onAimedRifleChange}
+        onInteractRifle={onInteractRifle}
         onPointerLockChange={onPointerLockChange}
         onNearExitDoorChange={onNearExitDoorChange}
       />
@@ -1185,6 +1227,77 @@ export function BirthRoomInterior({
         <mesh position={[0, 0.52, -0.72]} rotation={[0, 0, Math.PI / 2]} castShadow>
           <cylinderGeometry args={[0.13, 0.13, 0.78, 10]} />
           <meshStandardMaterial color="#2c4469" roughness={0.9} />
+        </mesh>
+      </group>
+
+      {/* === 9B. ~1900 WATCHMAN'S HUNTING RIFLE ON WOODEN WALL PEGS (EAST WALL BESIDE DOOR — UNLOCKS LOV KAVEK) === */}
+      <group position={[hw - 0.055, 1.48, -1.66]} rotation={[0, -Math.PI / 2, 0]}>
+        {/* Two simple dark-oak wooden wall pegs */}
+        <mesh position={[-0.24, -0.04, 0.025]} castShadow>
+          <boxGeometry args={[0.045, 0.045, 0.08]} />
+          <meshStandardMaterial color={WOOD_DARK} roughness={0.85} />
+        </mesh>
+        <mesh position={[0.24, -0.04, 0.025]} castShadow>
+          <boxGeometry args={[0.045, 0.045, 0.08]} />
+          <meshStandardMaterial color={WOOD_DARK} roughness={0.85} />
+        </mesh>
+
+        {/* Low-poly ~1900 wooden-stock hunting rifle resting horizontally on the pegs */}
+        <group position={[0, 0.01, 0.045]}>
+          {/* Walnut Buttstock */}
+          <mesh position={[-0.34, -0.03, 0]} rotation={[0, 0, -0.1]} castShadow>
+            <boxGeometry args={[0.3, 0.085, 0.042]} />
+            <meshStandardMaterial color="#4f301b" roughness={0.78} flatShading />
+          </mesh>
+          {/* Brass Buttplate */}
+          <mesh position={[-0.495, -0.045, 0]}>
+            <boxGeometry args={[0.015, 0.088, 0.044]} />
+            <meshStandardMaterial color="#cfa83c" roughness={0.3} metalness={0.82} />
+          </mesh>
+          {/* Walnut Fore-end Stock */}
+          <mesh position={[0.08, -0.008, 0]} castShadow>
+            <boxGeometry args={[0.56, 0.046, 0.04]} />
+            <meshStandardMaterial color="#4f301b" roughness={0.78} flatShading />
+          </mesh>
+          {/* Brass Barrel Band & Trigger Guard */}
+          <mesh position={[0.26, 0.002, 0]}>
+            <boxGeometry args={[0.022, 0.056, 0.046]} />
+            <meshStandardMaterial color="#cfa83c" roughness={0.3} metalness={0.82} />
+          </mesh>
+          <mesh position={[-0.14, -0.042, 0]}>
+            <boxGeometry args={[0.075, 0.032, 0.018]} />
+            <meshStandardMaterial color="#cfa83c" roughness={0.3} metalness={0.82} />
+          </mesh>
+          {/* Dark Iron Receiver & Long Barrel */}
+          <mesh position={[-0.1, 0.018, 0]}>
+            <boxGeometry args={[0.16, 0.042, 0.038]} />
+            <meshStandardMaterial color="#272a2e" roughness={0.42} metalness={0.78} />
+          </mesh>
+          <mesh position={[0.25, 0.024, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[0.013, 0.017, 0.66, 7]} />
+            <meshStandardMaterial color="#272a2e" roughness={0.42} metalness={0.78} />
+          </mesh>
+          {/* Front Brass Bead Sight */}
+          <mesh position={[0.55, 0.044, 0]}>
+            <boxGeometry args={[0.012, 0.018, 0.006]} />
+            <meshStandardMaterial color="#cfa83c" roughness={0.3} metalness={0.82} />
+          </mesh>
+        </group>
+
+        {/* Generous invisible hit box for crosshair raycast & click interaction */}
+        <mesh
+          ref={(el) => {
+            rifleHitMeshRef.current = el;
+          }}
+          position={[0.04, 0.01, 0.05]}
+          userData={{ isHuntingRifle: true }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onInteractRifle();
+          }}
+        >
+          <boxGeometry args={[1.18, 0.34, 0.24]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
         </mesh>
       </group>
 

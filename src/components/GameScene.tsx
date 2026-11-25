@@ -20,6 +20,7 @@ import {
   pickSpreadDurationSec,
   type FireWatchState,
 } from '../game/fireWatch';
+import type { JackdawHuntState } from '../game/jackdawHunt';
 import {
   smoothstep,
   timeOfDayState,
@@ -30,6 +31,7 @@ import { BirthRoomInterior } from './BirthRoomInterior';
 import { FireWatchGalleryProps } from './FireWatchGalleryProps';
 import { FirstPersonGalleryCamera } from './FirstPersonGalleryCamera';
 import { FollowCamera } from './FollowCamera';
+import { JackdawHuntWorld } from './JackdawHuntWorld';
 import { Player } from './Player';
 import { TelescopeCamera, type ScanState } from './TelescopeCamera';
 import { Telescopes } from './Telescopes';
@@ -190,6 +192,8 @@ interface GameSceneProps {
   onPoiUnlocked: (poiId: PoiSpec['id']) => void;
   onSelectHotspot: (id: BirthRoomHotspot['id']) => void;
   onAimedHotspotChange: (id: BirthRoomHotspot['id'] | null) => void;
+  onAimedRifleChange: (aimed: boolean) => void;
+  onInteractRifle: () => void;
   onPointerLockChange: (locked: boolean) => void;
   onNearInteriorExitDoorChange: (near: boolean) => void;
   fireWatch: FireWatchState;
@@ -200,47 +204,58 @@ interface GameSceneProps {
   onNearSignalHookChange: (near: boolean) => void;
   onFireEngineArrived: () => void;
   onExtinguishComplete: () => void;
+  jackdawHunt: JackdawHuntState;
+  onJackdawHuntFinished: (summary: { hits: number; shots: number; score: number }) => void;
 }
 
 const TELESCOPE_LOOK_DOT_THRESHOLD = 0.35;
+const BELL_ROPE_FREE_ROAM_RADIUS = 1.45;
+const BELL_ROPE_FREE_ROAM_LOOK_DOT = 0.42;
+const BELL_ROPE_FIRE_WATCH_RADIUS = 1.9;
 
 /**
- * Unified exterior gallery interaction sensor using BOTH proximity and 3D look direction.
- * Guarantees that looking at Bohuslav Martinů's wooden door within 2.5m (dot > 0.45)
- * ALWAYS takes priority over a telescope behind the player, and telescopes only trigger
- * when the player is near AND facing toward the telescope / outward railing (dot > 0.35).
+ * Unified exterior gallery interaction sensor using a combined distance + horizontal look-direction score.
+ * Evaluates ALL nearby interactables (Birth Room door, bell rope, telescopes) and selects the single
+ * highest-scoring target so the displayed [E] HUD prompt and [E] action are always 100% in sync.
  */
 function GalleryInteractionSensor({
   playerLocalPosRef,
   playerWorldPosRef,
   galleryCameraMode,
   active,
-  disableDoor,
+  fireWatchActive,
+  fireWatchStep,
   onNearDoorChange,
+  onNearBellRopeChange,
   onNearbyTelescopeChange,
 }: {
   playerLocalPosRef: RefObject<THREE.Vector3>;
   playerWorldPosRef: RefObject<THREE.Vector3>;
   galleryCameraMode: GalleryCameraMode;
   active: boolean;
-  disableDoor: boolean;
+  fireWatchActive: boolean;
+  fireWatchStep: FireWatchState['step'];
   onNearDoorChange: (near: boolean) => void;
+  onNearBellRopeChange: (near: boolean) => void;
   onNearbyTelescopeChange: (id: TelescopeId | null) => void;
 }) {
   const { camera } = useThree();
   const lastNearDoorRef = useRef(false);
+  const lastNearBellRef = useRef(false);
   const lastTelescopeRef = useRef<TelescopeId | null>(null);
 
   const camDirRef = useRef(new THREE.Vector3());
   const eyePosRef = useRef(new THREE.Vector3());
-  const targetPosRef = useRef(new THREE.Vector3());
-  const toTargetRef = useRef(new THREE.Vector3());
 
   useFrame(() => {
     if (!active) {
       if (lastNearDoorRef.current) {
         lastNearDoorRef.current = false;
         onNearDoorChange(false);
+      }
+      if (lastNearBellRef.current) {
+        lastNearBellRef.current = false;
+        onNearBellRopeChange(false);
       }
       if (lastTelescopeRef.current !== null) {
         lastTelescopeRef.current = null;
@@ -254,77 +269,120 @@ function GalleryInteractionSensor({
 
     const camDir = camDirRef.current;
     camera.getWorldDirection(camDir);
+    const camHorizLen = Math.hypot(camDir.x, camDir.z);
+    const camDirX = camHorizLen > 1e-5 ? camDir.x / camHorizLen : 0;
+    const camDirZ = camHorizLen > 1e-5 ? camDir.z / camHorizLen : -1;
 
-    // In 1st person, camera.position IS the eye; in 3rd person, measure from the player's eye height
+    // In 1st person, camera.position IS the eye; in 3rd person, measure from the player's world position
     const eyePos =
       galleryCameraMode === 'first'
         ? eyePosRef.current.copy(camera.position)
         : eyePosRef.current.set(pWorld.x, pWorld.y + 1.55, pWorld.z);
 
-    // 1. Evaluate Bohuslav Martinů's Birth Room Door first (highest priority when looking at it)
-    const doorDx = pLocal.x - DOOR_INTERACTION.localPosition[0];
-    const doorDz = pLocal.z - DOOR_INTERACTION.localPosition[2];
-    const distToDoor = Math.hypot(doorDx, doorDz);
+    let bestKind: 'door' | 'bell' | 'telescope' | null = null;
+    let bestTelescopeId: TelescopeId | null = null;
+    let bestScore = -Infinity;
 
-    const [doorWx, doorWy, doorWz] = churchLocalToWorld(
-      DOOR_INTERACTION.localPosition[0],
-      DOOR_INTERACTION.localPosition[1],
-      DOOR_INTERACTION.localPosition[2],
-    );
-    const toDoor = toTargetRef.current
-      .set(doorWx, doorWy, doorWz)
-      .sub(eyePos)
-      .normalize();
-    const dotDoor = camDir.dot(toDoor);
-
-    let nextNearDoor = false;
-    let nextTelescope: TelescopeId | null = null;
-
-    if (
-      !disableDoor &&
-      distToDoor <= DOOR_INTERACTION.radius &&
-      dotDoor > DOOR_INTERACTION.lookDotThreshold
-    ) {
-      nextNearDoor = true;
-    } else {
-      // 2. Evaluate telescopes: require proximity AND facing toward telescope / outward railing
-      let closestId: TelescopeId | null = null;
-      let closestDist: number = TELESCOPE_CONFIG.interactionRadius;
-
-      for (const scope of TELESCOPES) {
-        const dx = pLocal.x - scope.mountPosition[0];
-        const dz = pLocal.z - scope.mountPosition[2];
-        const dist = Math.hypot(dx, dz);
-        if (dist >= closestDist) continue;
-
-        const [swx, swy, swz] = churchLocalToWorld(
-          scope.mountPosition[0],
-          scope.mountPosition[1] + 0.35,
-          scope.mountPosition[2],
+    // 1. Evaluate Bohuslav Martinů's Birth Room Door (free-roam only)
+    if (!fireWatchActive) {
+      const distDoor = Math.hypot(
+        pLocal.x - DOOR_INTERACTION.localPosition[0],
+        pLocal.z - DOOR_INTERACTION.localPosition[2],
+      );
+      if (distDoor <= DOOR_INTERACTION.radius) {
+        const [doorWx, , doorWz] = churchLocalToWorld(
+          DOOR_INTERACTION.localPosition[0],
+          DOOR_INTERACTION.localPosition[1],
+          DOOR_INTERACTION.localPosition[2],
         );
-        const toScope = targetPosRef.current
-          .set(swx, swy, swz)
-          .sub(eyePos)
-          .normalize();
-        const dotScope = camDir.dot(toScope);
+        const dx = doorWx - eyePos.x;
+        const dz = doorWz - eyePos.z;
+        const dLen = Math.hypot(dx, dz) || 1;
+        const dotDoor = (dx * camDirX + dz * camDirZ) / dLen;
 
-        if (dotScope > TELESCOPE_LOOK_DOT_THRESHOLD) {
-          closestDist = dist;
-          closestId = scope.id;
+        if (
+          dotDoor > DOOR_INTERACTION.lookDotThreshold ||
+          (galleryCameraMode === 'third' && distDoor < 1.35)
+        ) {
+          const score = dotDoor * 2.2 - distDoor * 0.55 + 0.18;
+          if (score > bestScore) {
+            bestScore = score;
+            bestKind = 'door';
+          }
         }
       }
+    }
 
-      if (closestId !== null) {
-        nextTelescope = closestId;
-      } else if (!disableDoor && galleryCameraMode === 'third' && distToDoor < 1.35) {
-        // Gentle fallback in 3rd-person orbit when standing directly against the door from a steep angle
-        nextNearDoor = true;
+    // 2. Evaluate Bell Rope (tight radius + facing check in free-roam; responsive in Fire Watch ring-bell step)
+    const canRingBell = !fireWatchActive || fireWatchStep === 'ring-bell';
+    if (canRingBell) {
+      const distBell = Math.hypot(
+        pLocal.x - BELL_ROPE_LOCAL_POS[0],
+        pLocal.z - BELL_ROPE_LOCAL_POS[2],
+      );
+      const maxBellRadius = fireWatchActive ? BELL_ROPE_FIRE_WATCH_RADIUS : BELL_ROPE_FREE_ROAM_RADIUS;
+      if (distBell <= maxBellRadius) {
+        const [bellWx, , bellWz] = churchLocalToWorld(
+          BELL_ROPE_LOCAL_POS[0],
+          1.3,
+          BELL_ROPE_LOCAL_POS[2],
+        );
+        const bx = bellWx - eyePos.x;
+        const bz = bellWz - eyePos.z;
+        const bLen = Math.hypot(bx, bz) || 1;
+        const dotBell = (bx * camDirX + bz * camDirZ) / bLen;
+
+        if (fireWatchActive || dotBell > BELL_ROPE_FREE_ROAM_LOOK_DOT) {
+          const score = fireWatchActive
+            ? dotBell * 2.0 - distBell * 0.5 + 1.0
+            : dotBell * 2.2 - distBell * 0.65;
+          if (score > bestScore) {
+            bestScore = score;
+            bestKind = 'bell';
+          }
+        }
       }
     }
+
+    // 3. Evaluate Telescopes (proximity + facing toward telescope / outward railing)
+    for (const scope of TELESCOPES) {
+      const distScope = Math.hypot(
+        pLocal.x - scope.mountPosition[0],
+        pLocal.z - scope.mountPosition[2],
+      );
+      if (distScope >= TELESCOPE_CONFIG.interactionRadius) continue;
+
+      const [swx, , swz] = churchLocalToWorld(
+        scope.mountPosition[0],
+        scope.mountPosition[1] + 0.35,
+        scope.mountPosition[2],
+      );
+      const sx = swx - eyePos.x;
+      const sz = swz - eyePos.z;
+      const sLen = Math.hypot(sx, sz) || 1;
+      const dotScope = (sx * camDirX + sz * camDirZ) / sLen;
+
+      if (dotScope > TELESCOPE_LOOK_DOT_THRESHOLD) {
+        const score = dotScope * 2.0 - distScope * 0.5;
+        if (score > bestScore) {
+          bestScore = score;
+          bestKind = 'telescope';
+          bestTelescopeId = scope.id;
+        }
+      }
+    }
+
+    const nextNearDoor = bestKind === 'door';
+    const nextNearBell = bestKind === 'bell';
+    const nextTelescope = bestKind === 'telescope' ? bestTelescopeId : null;
 
     if (nextNearDoor !== lastNearDoorRef.current) {
       lastNearDoorRef.current = nextNearDoor;
       onNearDoorChange(nextNearDoor);
+    }
+    if (nextNearBell !== lastNearBellRef.current) {
+      lastNearBellRef.current = nextNearBell;
+      onNearBellRopeChange(nextNearBell);
     }
     if (nextTelescope !== lastTelescopeRef.current) {
       lastTelescopeRef.current = nextTelescope;
@@ -375,7 +433,6 @@ function FireWatchDriver({
   onFireSpotted,
   onFireMaxSpread,
   onAimingAtFireChange,
-  onNearBellRopeChange,
   onNearSignalHookChange,
 }: {
   fireWatch: FireWatchState;
@@ -383,7 +440,6 @@ function FireWatchDriver({
   onFireSpotted: () => void;
   onFireMaxSpread: () => void;
   onAimingAtFireChange: (aiming: boolean) => void;
-  onNearBellRopeChange: (near: boolean) => void;
   onNearSignalHookChange: (near: boolean) => void;
 }) {
   const { camera } = useThree();
@@ -399,7 +455,6 @@ function FireWatchDriver({
     spottedTriggered: false,
     maxSpreadTriggered: false,
     lastAiming: false,
-    lastNearBell: false,
     lastNearHook: false,
     lastPct: -1,
   });
@@ -411,17 +466,7 @@ function FireWatchDriver({
     const targetKey = activeTarget
       ? `${fireWatch.roundIndex}-${fireWatch.chainJumpsInRound}-${activeTarget.id}`
       : '';
-
-    // Always evaluate bell rope proximity on the gallery (for BOTH free-roam bell tolling & Fire Watch Step 2)
     const pLocal = playerLocalPosRef.current;
-    const canRingBell = !fireWatch.active || fireWatch.step === 'ring-bell';
-    const nearBell =
-      canRingBell &&
-      Math.hypot(pLocal.x - BELL_ROPE_LOCAL_POS[0], pLocal.z - BELL_ROPE_LOCAL_POS[2]) <= 2.4;
-    if (nearBell !== st.lastNearBell) {
-      st.lastNearBell = nearBell;
-      onNearBellRopeChange(nearBell);
-    }
 
     if (
       !fireWatch.active ||
@@ -575,6 +620,8 @@ export function GameScene({
   onPoiUnlocked,
   onSelectHotspot,
   onAimedHotspotChange,
+  onAimedRifleChange,
+  onInteractRifle,
   onPointerLockChange,
   onNearInteriorExitDoorChange,
   fireWatch,
@@ -585,6 +632,8 @@ export function GameScene({
   onNearSignalHookChange,
   onFireEngineArrived,
   onExtinguishComplete,
+  jackdawHunt,
+  onJackdawHuntFinished,
 }: GameSceneProps) {
   const playerLocalPosRef = useRef<THREE.Vector3>(
     new THREE.Vector3(
@@ -644,7 +693,6 @@ export function GameScene({
         onFireSpotted={onFireSpotted}
         onFireMaxSpread={onFireMaxSpread}
         onAimingAtFireChange={onAimingAtFireChange}
-        onNearBellRopeChange={onNearBellRopeChange}
         onNearSignalHookChange={onNearSignalHookChange}
       />
 
@@ -668,9 +716,11 @@ export function GameScene({
             playerLocalPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
             galleryCameraMode={galleryCameraMode}
-            active={isPlaying && !isInterior && !isInTelescope}
-            disableDoor={fireWatch.active}
+            active={isPlaying && !isInterior && !isInTelescope && !jackdawHunt.active}
+            fireWatchActive={fireWatch.active}
+            fireWatchStep={fireWatch.step}
             onNearDoorChange={onNearDoorChange}
+            onNearBellRopeChange={onNearBellRopeChange}
             onNearbyTelescopeChange={onNearbyTelescopeChange}
           />
           <Player
@@ -691,6 +741,7 @@ export function GameScene({
           fireWatch={fireWatch}
           onFireEngineArrived={onFireEngineArrived}
           onExtinguishComplete={onExtinguishComplete}
+          hideAmbientJackdaws={jackdawHunt.active}
         />
       </group>
 
@@ -705,6 +756,11 @@ export function GameScene({
         playerWorldPosRef={playerWorldPosRef}
         active={isExteriorFirstPerson}
         onPointerLockChange={onPointerLockChange}
+        jackdawHuntActive={jackdawHunt.active && jackdawHunt.phase === 'playing'}
+      />
+      <JackdawHuntWorld
+        hunt={jackdawHunt}
+        onHuntFinished={onJackdawHuntFinished}
       />
       <TelescopeCamera
         activeTelescope={!isPlaying || isInterior ? null : activeTelescope}
@@ -723,6 +779,8 @@ export function GameScene({
           visitedHotspots={visitedHotspots}
           onSelectHotspot={onSelectHotspot}
           onAimedHotspotChange={onAimedHotspotChange}
+          onAimedRifleChange={onAimedRifleChange}
+          onInteractRifle={onInteractRifle}
           onPointerLockChange={onPointerLockChange}
           onNearExitDoorChange={onNearInteriorExitDoorChange}
         />

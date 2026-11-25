@@ -963,6 +963,151 @@ class PolickaSoundEngine {
     }
   }
 
+  /** ~1900 black-powder hunting rifle shot: punchy filtered crack + low-mid thump + town-square echo */
+  public playRifleShot(): void {
+    if (this.isMuted) return;
+    this.ensureStarted();
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // 1. Sharp filtered white-noise crack
+    if (this.whiteNoiseBuffer) {
+      const crack = ctx.createBufferSource();
+      crack.buffer = this.whiteNoiseBuffer;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(1550, now);
+      bp.frequency.exponentialRampToValueAtTime(380, now + 0.16);
+      bp.Q.setValueAtTime(0.85, now);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, now);
+      g.gain.linearRampToValueAtTime(0.55, now + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0008, now + 0.22);
+
+      crack.connect(bp);
+      bp.connect(g);
+      g.connect(this.masterGain);
+      crack.start(now, Math.random() * 0.6, 0.25);
+
+      // 2. Subtle open-air town-square echoes
+      for (const [delay, peak, lpFreq] of [
+        [0.21, 0.13, 720],
+        [0.46, 0.055, 480],
+      ] as const) {
+        const echo = ctx.createBufferSource();
+        echo.buffer = this.whiteNoiseBuffer;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(lpFreq, now + delay);
+        const eg = ctx.createGain();
+        eg.gain.setValueAtTime(0.0001, now + delay);
+        eg.gain.linearRampToValueAtTime(peak, now + delay + 0.025);
+        eg.gain.exponentialRampToValueAtTime(0.0005, now + delay + 0.32);
+        echo.connect(lp);
+        lp.connect(eg);
+        eg.connect(this.masterGain);
+        echo.start(now + delay, Math.random() * 0.5, 0.35);
+      }
+    }
+
+    // 3. Low-mid black-powder punch/thump
+    const thump = ctx.createOscillator();
+    thump.type = 'triangle';
+    thump.frequency.setValueAtTime(175, now);
+    thump.frequency.exponentialRampToValueAtTime(42, now + 0.14);
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.001, now);
+    tg.gain.linearRampToValueAtTime(0.42, now + 0.008);
+    tg.gain.exponentialRampToValueAtTime(0.0008, now + 0.17);
+    thump.connect(tg);
+    tg.connect(this.masterGain);
+    thump.start(now);
+    thump.stop(now + 0.19);
+  }
+
+  /** Subtle metallic bolt-action reload click-clack as the rifle finishes cycling */
+  public playRifleReloadClick(): void {
+    if (this.isMuted) return;
+    this.ensureStarted();
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    for (const [offset, freq, gainPeak] of [
+      [0, 2150, 0.09],
+      [0.075, 2900, 0.11],
+    ] as const) {
+      const t0 = now + offset;
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(freq, t0);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.55, t0 + 0.032);
+
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(freq, t0);
+      bp.Q.setValueAtTime(4.0, t0);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(gainPeak, t0 + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.04);
+
+      osc.connect(bp);
+      bp.connect(g);
+      g.connect(this.masterGain);
+      osc.start(t0);
+      osc.stop(t0 + 0.045);
+    }
+  }
+
+  /** Crisp hit confirmation tick + short startled jackdaw caw */
+  public playJackdawHitFeedback(): void {
+    if (this.isMuted) return;
+    this.ensureStarted();
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // 1. Crisp wooden/chime hit tick
+    const tick = ctx.createOscillator();
+    tick.type = 'sine';
+    tick.frequency.setValueAtTime(1380, now);
+    tick.frequency.exponentialRampToValueAtTime(920, now + 0.055);
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.0001, now);
+    tg.gain.linearRampToValueAtTime(0.16, now + 0.005);
+    tg.gain.exponentialRampToValueAtTime(0.0005, now + 0.07);
+    tick.connect(tg);
+    tg.connect(this.masterGain);
+    tick.start(now);
+    tick.stop(now + 0.08);
+
+    // 2. Short startled jackdaw caw
+    const caw = ctx.createOscillator();
+    caw.type = 'sawtooth';
+    caw.frequency.setValueAtTime(940 + Math.random() * 140, now + 0.02);
+    caw.frequency.exponentialRampToValueAtTime(560, now + 0.16);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(1320, now + 0.02);
+    bp.Q.setValueAtTime(2.6, now + 0.02);
+    const cg = ctx.createGain();
+    cg.gain.setValueAtTime(0.0001, now + 0.02);
+    cg.gain.linearRampToValueAtTime(0.13, now + 0.045);
+    cg.gain.exponentialRampToValueAtTime(0.0005, now + 0.18);
+    caw.connect(bp);
+    bp.connect(cg);
+    cg.connect(this.masterGain);
+    caw.start(now + 0.02);
+    caw.stop(now + 0.19);
+  }
+
   /** Cleanly stops all schedulers, oscillators, sources, and closes AudioContext */
   public dispose(): void {
     if (this.clockIntervalId !== null) {

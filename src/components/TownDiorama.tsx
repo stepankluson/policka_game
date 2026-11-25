@@ -21,6 +21,7 @@ import {
   buildRealOsmWalls,
   buildSuburbanFacadeDetails,
   createTreeValidator,
+  POND_WOODEN_BRIDGE,
   type ChimneySmokeSource,
   type ChimneyTop,
   type PolickaOsmData,
@@ -59,6 +60,7 @@ interface TownDioramaProps {
   fireWatch?: FireWatchState;
   onFireEngineArrived?: () => void;
   onExtinguishComplete?: () => void;
+  hideAmbientJackdaws?: boolean;
 }
 
 interface TreeInstance {
@@ -96,6 +98,98 @@ function mulberry32(seed: number) {
   };
 }
 
+/** Historic ~1900 low-poly wooden footbridge spanning the narrow eastern river neck of Synský rybník */
+function SynskyWoodenFootbridge() {
+  const [ax, az] = POND_WOODEN_BRIDGE.northBank;
+  const [bx, bz] = POND_WOODEN_BRIDGE.southBank;
+  const cx = (ax + bx) * 0.5;
+  const cz = (az + bz) * 0.5;
+  const spanLen = Math.hypot(bx - ax, bz - az);
+  const rotY = Math.atan2(bx - ax, bz - az);
+  const bridgeW = 2.4;
+  const deckY = 0.24;
+  const plankCount = 14;
+  const postZs = [-spanLen * 0.44, -spanLen * 0.22, 0, spanLen * 0.22, spanLen * 0.44];
+
+  return (
+    <group
+      name="synsky-wooden-footbridge"
+      position={[cx, TOWN_Y + 0.45, cz]}
+      rotation={[0, rotY, 0]}
+    >
+      {/* Stone bank abutments on both ends */}
+      {([-1, 1] as const).map((endSign) => (
+        <mesh
+          key={`abut-${endSign}`}
+          position={[0, -0.05, endSign * (spanLen * 0.5 - 0.55)]}
+          receiveShadow
+        >
+          <boxGeometry args={[bridgeW + 0.35, 0.48, 1.35]} />
+          <meshStandardMaterial color="#8c7d6b" roughness={0.95} flatShading />
+        </mesh>
+      ))}
+
+      {/* Twin longitudinal dark weathered timber stringer beams */}
+      {([-0.82, 0.82] as const).map((sx, idx) => (
+        <mesh key={`beam-${idx}`} position={[sx, deckY - 0.14, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.24, 0.24, spanLen]} />
+          <meshStandardMaterial color="#422c1b" roughness={0.92} flatShading />
+        </mesh>
+      ))}
+
+      {/* Weathered timber deck planks */}
+      {Array.from({ length: plankCount }, (_, i) => {
+        const z = -spanLen * 0.46 + (i / (plankCount - 1)) * (spanLen * 0.92);
+        return (
+          <mesh key={`plank-${i}`} position={[0, deckY, z]} castShadow receiveShadow>
+            <boxGeometry args={[bridgeW, 0.1, (spanLen * 0.88) / plankCount]} />
+            <meshStandardMaterial
+              color={i % 2 === 0 ? '#5c3f26' : '#523720'}
+              roughness={0.94}
+              flatShading
+            />
+          </mesh>
+        );
+      })}
+
+      {/* Gentle wooden approach ramps flush with the dirt footpath */}
+      {([-1, 1] as const).map((endSign) => (
+        <mesh
+          key={`ramp-${endSign}`}
+          position={[0, deckY * 0.48, endSign * (spanLen * 0.5 + 0.35)]}
+          rotation={[endSign * 0.2, 0, 0]}
+          receiveShadow
+        >
+          <boxGeometry args={[bridgeW - 0.08, 0.09, 1.15]} />
+          <meshStandardMaterial color="#573b23" roughness={0.94} />
+        </mesh>
+      ))}
+
+      {/* Sturdy wooden railing posts & low rails along both sides */}
+      {([-bridgeW * 0.5 + 0.1, bridgeW * 0.5 - 0.1] as const).map((rx, sideIdx) => (
+        <group key={`rail-side-${sideIdx}`} position={[rx, 0, 0]}>
+          {postZs.map((pz, pi) => (
+            <mesh key={`post-${pi}`} position={[0, deckY + 0.52, pz]} castShadow>
+              <boxGeometry args={[0.14, 1.04, 0.14]} />
+              <meshStandardMaterial color="#3d2818" roughness={0.92} />
+            </mesh>
+          ))}
+          {/* Top handrail */}
+          <mesh position={[0, deckY + 0.98, 0]} castShadow>
+            <boxGeometry args={[0.12, 0.1, spanLen * 0.94]} />
+            <meshStandardMaterial color="#543822" roughness={0.9} />
+          </mesh>
+          {/* Mid rail */}
+          <mesh position={[0, deckY + 0.56, 0]}>
+            <boxGeometry args={[0.09, 0.08, spanLen * 0.92]} />
+            <meshStandardMaterial color="#4a311e" roughness={0.92} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
 /** Octagonal stone fountain with painterly muted blue-green water */
 function StoneFountain({ position }: { position: [number, number, number] }) {
   return (
@@ -126,6 +220,7 @@ export function TownDiorama({
   fireWatch,
   onFireEngineArrived,
   onExtinguishComplete,
+  hideAmbientJackdaws = false,
 }: TownDioramaProps) {
   const [osmData, setOsmData] = useState<PolickaOsmData | null>(null);
 
@@ -372,6 +467,7 @@ export function TownDiorama({
       connectorRoads: streetsResult.connectorRoads,
       stationForecourtPolygon: streetsResult.stationForecourtPolygon,
       roadGraph: streetsResult.roadGraph,
+      pedestrianGraph: streetsResult.pedestrianGraph,
       parksGeometry,
       waterGeometry,
     };
@@ -848,8 +944,9 @@ export function TownDiorama({
         rotationY={ST_MICHAEL_TRANSFORM.rotationY}
       />
 
-      {/* Synský rybník shoreline details (wooden pier, moored rowboat, reeds & cattails) */}
+      {/* Synský rybník shoreline details (wooden pier, moored rowboat, reeds & cattails) + Wooden Footbridge */}
       <SynskyRybnikDetails />
+      <SynskyWoodenFootbridge />
 
       {/* 1839 Cadastral Additions: Historic Watermill, South-Bank Buildings & Horní předměstí Suburbs */}
       <PolickaCadastral1839 burnedIds={burnedSourceIds} />
@@ -901,8 +998,8 @@ export function TownDiorama({
         />
       )}
 
-      {/* Realistic Flying Jackdaws (Kavky) Circling St. James Tower & Soaring Over Polička */}
-      <PolickaJackdaws />
+      {/* Realistic Flying Jackdaws (hidden during Lov kavek so every visible bird is a hittable target) */}
+      {!hideAmbientJackdaws && <PolickaJackdaws />}
 
       {/* === 3. CONTINUOUS WARM WEATHERED-STONE MEDIEVAL CITY WALLS & A-B-A-B BASTIONS === */}
       {wallSegments.map((seg) => (
@@ -1005,10 +1102,10 @@ export function TownDiorama({
         </>
       )}
 
-      {/* === 5. ARTICULATED ~1900 POLIČKA TOWNSPEOPLE (2x INNER TOWN + SUBURBAN ROAD WALKERS & HOUSE-FRONT VILLAGERS) === */}
-      {merged && merged.roadGraph.nodes.length > 1 && (
+      {/* === 5. ARTICULATED ~1900 POLIČKA TOWNSPEOPLE (2x INNER TOWN + SUBURBAN ROAD & WALL-SIDE FOOTPATH WALKERS) === */}
+      {merged && merged.pedestrianGraph.nodes.length > 1 && (
         <Townspeople
-          roadGraph={merged.roadGraph}
+          roadGraph={merged.pedestrianGraph}
           renderedRoads={streetsResult?.renderedRoadPolylines}
           waterPolys={osmData?.water}
         />

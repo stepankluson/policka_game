@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { RING_BOUNDS } from '../game/constants';
 import { churchLocalToWorld } from '../game/pois';
 import { constrainToSquareRing } from '../game/ringCollision';
+import { jackdawHuntRuntime } from '../game/jackdawHunt';
 import { NIGHT_MATERIALS, timeOfDayState } from '../game/timeOfDay';
 
 interface FirstPersonGalleryCameraProps {
@@ -11,13 +12,16 @@ interface FirstPersonGalleryCameraProps {
   playerWorldPosRef: RefObject<THREE.Vector3>;
   active: boolean;
   onPointerLockChange: (locked: boolean) => void;
+  jackdawHuntActive?: boolean;
 }
 
 const EYE_HEIGHT = 1.65;
 const MAX_PITCH = (80 * Math.PI) / 180;
 const MOUSE_SENSITIVITY = 0.0022;
 const FIRST_PERSON_NEAR = 0.08;
-const THIRD_PERSON_NEAR = 0.5;
+const THIRD_PERSON_NEAR = 0.1;
+const DEFAULT_FOV = 50;
+const ADS_FOV = 42;
 
 /**
  * Minecraft-style First-Person POV camera on the exterior St. James Church gallery (ochoz).
@@ -29,6 +33,7 @@ export function FirstPersonGalleryCamera({
   playerWorldPosRef,
   active,
   onPointerLockChange,
+  jackdawHuntActive = false,
 }: FirstPersonGalleryCameraProps) {
   const { camera, gl } = useThree();
 
@@ -125,6 +130,7 @@ export function FirstPersonGalleryCamera({
 
       if (persp.isPerspectiveCamera) {
         persp.near = THIRD_PERSON_NEAR;
+        persp.fov = DEFAULT_FOV;
         persp.updateProjectionMatrix();
       }
     };
@@ -139,9 +145,22 @@ export function FirstPersonGalleryCamera({
 
     const dt = Math.min(rawDelta, 0.05);
     const persp = camera as THREE.PerspectiveCamera;
-    if (persp.isPerspectiveCamera && persp.near !== FIRST_PERSON_NEAR) {
-      persp.near = FIRST_PERSON_NEAR;
-      persp.updateProjectionMatrix();
+    if (persp.isPerspectiveCamera) {
+      let projDirty = false;
+      if (persp.near !== FIRST_PERSON_NEAR) {
+        persp.near = FIRST_PERSON_NEAR;
+        projDirty = true;
+      }
+      const targetFov = jackdawHuntActive
+        ? DEFAULT_FOV + (ADS_FOV - DEFAULT_FOV) * jackdawHuntRuntime.aimBlend
+        : DEFAULT_FOV;
+      if (Math.abs(persp.fov - targetFov) > 0.02) {
+        persp.fov += (targetFov - persp.fov) * Math.min(1, dt * 14);
+        projDirty = true;
+      }
+      if (projDirty) {
+        persp.updateProjectionMatrix();
+      }
     }
 
     // Strict inner-cabin collision safeguard every frame so camera never clips into central tower walls
@@ -160,14 +179,28 @@ export function FirstPersonGalleryCamera({
       playerWorldPosRef.current.set(wx, wy, wz);
     }
 
+    // Decay brief rifle recoil pitch kick smoothly when Lov kavek is active
+    let recoilPitch = 0;
+    if (jackdawHuntActive && jackdawHuntRuntime.cameraRecoilPitch > 0.0002) {
+      recoilPitch = jackdawHuntRuntime.cameraRecoilPitch;
+      jackdawHuntRuntime.cameraRecoilPitch *= Math.exp(-11 * dt);
+    } else if (!jackdawHuntActive) {
+      jackdawHuntRuntime.cameraRecoilPitch = 0;
+    }
+
     const p = playerWorldPosRef.current;
     camera.position.set(p.x, p.y + EYE_HEIGHT, p.z);
     camera.rotation.order = 'YXZ';
     camera.rotation.y = yawRef.current;
-    camera.rotation.x = pitchRef.current;
+    camera.rotation.x = Math.min(MAX_PITCH, pitchRef.current + recoilPitch);
     camera.rotation.z = 0;
 
-    // Update subtle First-Person handheld brass lantern viewmodel & warm PointLight
+    // Update subtle First-Person handheld brass lantern viewmodel & warm PointLight (hidden when rifle is equipped)
+    if (jackdawHuntActive) {
+      if (lanternGroupRef.current) lanternGroupRef.current.visible = false;
+      if (lanternLightRef.current) lanternLightRef.current.intensity = 0;
+      return;
+    }
     const moveDist = Math.hypot(
       p.x - prevWorldPosRef.current.x,
       p.z - prevWorldPosRef.current.z,

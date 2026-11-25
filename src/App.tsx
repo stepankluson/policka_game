@@ -27,6 +27,15 @@ import {
   getRoundTimeProgress,
   type FireWatchState,
 } from './game/fireWatch';
+import {
+  INACTIVE_JACKDAW_HUNT_STATE,
+  jackdawHuntHudRefs,
+  jackdawHuntRuntime,
+  loadJackdawHuntBestScore,
+  resetJackdawHuntRuntime,
+  saveJackdawHuntBestScore,
+  type JackdawHuntState,
+} from './game/jackdawHunt';
 import { POIS, TELESCOPE_CONFIG, type PoiSpec, type TelescopeId } from './game/pois';
 import {
   computeTargetTimeProgress,
@@ -36,6 +45,24 @@ import {
 } from './game/timeOfDay';
 
 const DEFAULT_ZOOM = TELESCOPE_CONFIG.maxFov / TELESCOPE_CONFIG.defaultZoomFov;
+const UNLOCK_FIRE_WATCH_KEY = 'policka_unlocked_fire_watch';
+const UNLOCK_JACKDAW_HUNT_KEY = 'policka_unlocked_jackdaw_hunt';
+
+function readBoolFlag(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeBoolFlag(key: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(key, value ? '1' : '0');
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 const COMPASS_CARDINALS: Record<number, string> = {
   0: 'S',
@@ -89,6 +116,28 @@ export function App() {
   const [visitedHotspots, setVisitedHotspots] = useState<Set<string>>(() => new Set());
   const [activeHotspotId, setActiveHotspotId] = useState<BirthRoomHotspot['id'] | null>(null);
   const [aimedHotspotId, setAimedHotspotId] = useState<BirthRoomHotspot['id'] | null>(null);
+  const [aimedRifle, setAimedRifle] = useState(false);
+
+  // In-world minigame discovery unlock flags (persisted in localStorage, hidden in HUD until discovered)
+  const [unlockedFireWatch, setUnlockedFireWatch] = useState<boolean>(() =>
+    readBoolFlag(UNLOCK_FIRE_WATCH_KEY),
+  );
+  const [unlockedJackdawHunt, setUnlockedJackdawHunt] = useState<boolean>(() =>
+    readBoolFlag(UNLOCK_JACKDAW_HUNT_KEY),
+  );
+  const [unlockToast, setUnlockToast] = useState<string | null>(null);
+  const unlockToastTimerRef = useRef<number | null>(null);
+
+  const showUnlockToast = useCallback((message: string) => {
+    setUnlockToast(message);
+    if (unlockToastTimerRef.current !== null) {
+      window.clearTimeout(unlockToastTimerRef.current);
+    }
+    unlockToastTimerRef.current = window.setTimeout(() => {
+      unlockToastTimerRef.current = null;
+      setUnlockToast(null);
+    }, 4000);
+  }, []);
 
   // Fire Watch ("Požární hlídka") mode state
   const [fireWatch, setFireWatch] = useState<FireWatchState>(INACTIVE_FIRE_WATCH_STATE);
@@ -99,6 +148,9 @@ export function App() {
   const nextRoundTimerRef = useRef<number | null>(null);
   const alertTimerRef = useRef<number | null>(null);
   const lastFreeBellTollMsRef = useRef(0);
+
+  // Jackdaw Hunt ("Lov kavek") 60s 1st-person arcade minigame state
+  const [jackdawHunt, setJackdawHunt] = useState<JackdawHuntState>(INACTIVE_JACKDAW_HUNT_STATE);
 
   const exitPointerLockIfActive = useCallback(() => {
     if (document.pointerLockElement) {
@@ -146,10 +198,62 @@ export function App() {
   }, []);
 
   const handleToggleGalleryCamera = useCallback(() => {
-    if (fireWatch.active) return; // Strict First-Person lock during Fire Watch
+    if (fireWatch.active || jackdawHunt.active) return; // Strict First-Person lock during minigames
     exitPointerLockIfActive();
     setGalleryCameraMode((prev) => (prev === 'third' ? 'first' : 'third'));
-  }, [exitPointerLockIfActive, fireWatch.active]);
+  }, [exitPointerLockIfActive, fireWatch.active, jackdawHunt.active]);
+
+  const handleStartJackdawHunt = useCallback(() => {
+    soundEngine.ensureStarted();
+    resetJackdawHuntRuntime();
+    setViewMode('exterior');
+    setGalleryCameraMode('first');
+    setActiveTelescope(null);
+    setActiveStoryPoiId(null);
+    setActiveHotspotId(null);
+    setAimedHotspotId(null);
+    setIsNearInteriorExitDoor(false);
+    setIsNearDoor(false);
+    setNearBellRope(false);
+    setNearbyTelescope(null);
+    setJackdawHunt({
+      active: true,
+      phase: 'playing',
+      finalHits: 0,
+      finalShots: 0,
+      finalScore: 0,
+      bestScore: loadJackdawHuntBestScore(),
+    });
+    // Request Pointer Lock right away from the user click gesture
+    window.setTimeout(() => {
+      const canvas = document.querySelector('canvas');
+      if (canvas && document.pointerLockElement !== canvas) {
+        canvas.requestPointerLock?.();
+      }
+    }, 40);
+  }, []);
+
+  const handleFinishJackdawHunt = useCallback(
+    (summary: { hits: number; shots: number; score: number }) => {
+      exitPointerLockIfActive();
+      const bestScore = saveJackdawHuntBestScore(summary.score);
+      setJackdawHunt({
+        active: true,
+        phase: 'summary',
+        finalHits: summary.hits,
+        finalShots: summary.shots,
+        finalScore: summary.score,
+        bestScore,
+      });
+    },
+    [exitPointerLockIfActive],
+  );
+
+  const handleExitJackdawHunt = useCallback(() => {
+    exitPointerLockIfActive();
+    resetJackdawHuntRuntime();
+    setJackdawHunt(INACTIVE_JACKDAW_HUNT_STATE);
+  }, [exitPointerLockIfActive]);
 
   const handleStartFireWatch = useCallback(() => {
     if (nextRoundTimerRef.current !== null) {
@@ -310,6 +414,18 @@ export function App() {
     });
   }, [exitPointerLockIfActive, scheduleNextFireWatchRound]);
 
+  const handleInteractBirthRoomRifle = useCallback(() => {
+    soundEngine.ensureStarted();
+    soundEngine.playRifleReloadClick();
+    if (!unlockedJackdawHunt) {
+      setUnlockedJackdawHunt(true);
+      writeBoolFlag(UNLOCK_JACKDAW_HUNT_KEY, true);
+      showUnlockToast('Odemčena minihra: Lov kavek');
+    } else {
+      handleStartJackdawHunt();
+    }
+  }, [unlockedJackdawHunt, showUnlockToast, handleStartJackdawHunt]);
+
   const handleFreeRoamBellToll = useCallback(() => {
     const now = performance.now();
     if (now - lastFreeBellTollMsRef.current < 4000) return; // 4s anti-spam cooldown
@@ -318,7 +434,12 @@ export function App() {
     soundEngine.playChurchBellToll();
     soundEngine.playJackdawCaws();
     triggerJackdawStartle();
-  }, []);
+    if (!unlockedFireWatch) {
+      setUnlockedFireWatch(true);
+      writeBoolFlag(UNLOCK_FIRE_WATCH_KEY, true);
+      showUnlockToast('Odemčena minihra: Požární hlídka');
+    }
+  }, [unlockedFireWatch, showUnlockToast]);
 
   const handleRingFireBell = useCallback(() => {
     fireWatchRuntime.bellPullAnim = 1;
@@ -467,6 +588,9 @@ export function App() {
       if (alertTimerRef.current !== null) {
         window.clearTimeout(alertTimerRef.current);
       }
+      if (unlockToastTimerRef.current !== null) {
+        window.clearTimeout(unlockToastTimerRef.current);
+      }
       soundEngine.dispose();
     };
   }, []);
@@ -496,7 +620,9 @@ export function App() {
 
       if (viewMode === 'interior') {
         if (event.code === 'KeyE') {
-          if (aimedHotspotId !== null && activeHotspotId === null) {
+          if (aimedRifle && activeHotspotId === null) {
+            handleInteractBirthRoomRifle();
+          } else if (aimedHotspotId !== null && activeHotspotId === null) {
             handleSelectHotspot(aimedHotspotId);
           } else if (isNearInteriorExitDoor || activeHotspotId === null) {
             transitionToMode('exterior');
@@ -515,6 +641,23 @@ export function App() {
       }
 
       // Exterior mode shortcuts
+      if (jackdawHunt.active) {
+        if (event.code === 'Escape') {
+          if (document.pointerLockElement) return;
+          if (jackdawHunt.phase === 'playing') {
+            jackdawHuntRuntime.finished = true;
+            handleFinishJackdawHunt({
+              hits: jackdawHuntRuntime.hits,
+              shots: jackdawHuntRuntime.shots,
+              score: jackdawHuntRuntime.score,
+            });
+          } else {
+            handleExitJackdawHunt();
+          }
+        }
+        return;
+      }
+
       if (event.code === 'KeyF') {
         if (fireWatch.active) {
           if (fireWatch.step === 'spot' && aimingAtFire) {
@@ -535,8 +678,12 @@ export function App() {
       } else if (event.code === 'KeyE') {
         if (activeTelescope !== null) {
           handleExitTelescope();
+        } else if (fireWatch.active && fireWatch.step === 'ring-bell' && nearBellRope) {
+          handleRingFireBell();
         } else if (isNearDoor && !fireWatch.active) {
           transitionToMode('interior');
+        } else if (!fireWatch.active && nearBellRope) {
+          handleFreeRoamBellToll();
         } else if (nearbyTelescope !== null) {
           exitPointerLockIfActive();
           soundEngine.playTelescopeClick();
@@ -566,8 +713,14 @@ export function App() {
     activeStoryPoiId,
     activeHotspotId,
     aimedHotspotId,
+    aimedRifle,
+    handleInteractBirthRoomRifle,
     fireWatch.active,
     fireWatch.step,
+    jackdawHunt.active,
+    jackdawHunt.phase,
+    handleFinishJackdawHunt,
+    handleExitJackdawHunt,
     aimingAtFire,
     nearBellRope,
     nearSignalHook,
@@ -601,6 +754,7 @@ export function App() {
     isPlaying &&
     isPointerLocked &&
     activeTelescope === null &&
+    !jackdawHunt.active &&
     (viewMode === 'interior' || galleryCameraMode === 'first');
 
   const showClickToLookHint =
@@ -609,19 +763,24 @@ export function App() {
     activeTelescope === null &&
     activeHotspot === null &&
     !(fireWatch.active && fireWatch.step === 'summary') &&
+    !(jackdawHunt.active && jackdawHunt.phase === 'summary') &&
     (viewMode === 'interior' || galleryCameraMode === 'first');
 
-  // Picturesque warm Golden Hour on Title Screen & fly-in; dynamic progression during gameplay
+  // Picturesque warm Golden Hour on Title Screen & fly-in; crisp afternoon/golden-hour during Lov kavek
   const targetTimeProgress =
     gamePhase !== 'playing'
       ? 0.30
-      : fireWatch.active
-        ? fireWatch.roundTimeProgress
-        : computeTargetTimeProgress(timeOfDayMode, unlockedPois.size, POIS.length);
+      : jackdawHunt.active
+        ? 0.24
+        : fireWatch.active
+          ? fireWatch.roundTimeProgress
+          : computeTargetTimeProgress(timeOfDayMode, unlockedPois.size, POIS.length);
   const timeModeMeta = TIME_MODE_LABELS[timeOfDayMode];
   const activeFire = fireWatch.active ? fireWatch.rounds[fireWatch.roundIndex] ?? null : null;
   const showAllPoisFireOffer =
+    unlockedFireWatch &&
     !fireWatch.active &&
+    !jackdawHunt.active &&
     !fireWatchOfferDismissed &&
     viewMode === 'exterior' &&
     activeTelescope === null &&
@@ -648,6 +807,8 @@ export function App() {
         onPoiUnlocked={handlePoiUnlocked}
         onSelectHotspot={handleSelectHotspot}
         onAimedHotspotChange={setAimedHotspotId}
+        onAimedRifleChange={setAimedRifle}
+        onInteractRifle={handleInteractBirthRoomRifle}
         onPointerLockChange={setIsPointerLocked}
         onNearInteriorExitDoorChange={setIsNearInteriorExitDoor}
         fireWatch={fireWatch}
@@ -658,6 +819,8 @@ export function App() {
         onNearSignalHookChange={setNearSignalHook}
         onFireEngineArrived={handleFireEngineArrived}
         onExtinguishComplete={handleExtinguishComplete}
+        jackdawHunt={jackdawHunt}
+        onJackdawHuntFinished={handleFinishJackdawHunt}
       />
 
       {/* Cinematic Minimalist Title Screen Overlay (fades out smoothly during 1.65s fly-in) */}
@@ -721,7 +884,9 @@ export function App() {
         <div className="pointer-events-none fixed inset-0 z-20 flex items-center justify-center">
           <div
             className={`rounded-full transition-all duration-150 ${
-              aimedHotspot || (viewMode === 'exterior' && (isNearDoor || nearbyTelescope !== null))
+              aimedHotspot ||
+              aimedRifle ||
+              (viewMode === 'exterior' && (isNearDoor || nearBellRope || nearbyTelescope !== null))
                 ? 'h-3 w-3 border border-amber-200 bg-amber-300/90 shadow-[0_0_10px_rgba(252,211,77,0.9)]'
                 : 'h-1.5 w-1.5 bg-amber-50/85 shadow-[0_0_6px_rgba(0,0,0,0.7)]'
             }`}
@@ -778,8 +943,8 @@ export function App() {
               }`}
             >
               {visitedBirthRoom
-                ? `★ Rodná světnička (${visitedHotspots.size}/${BIRTH_ROOM_HOTSPOTS.length})`
-                : '★ ???'}
+                ? `Rodná světnička (${visitedHotspots.size}/${BIRTH_ROOM_HOTSPOTS.length})`
+                : 'Rodná světnička (???)'}
             </span>
           </div>
         </div>
@@ -837,22 +1002,64 @@ export function App() {
             </div>
           </div>
 
+          {/* Lov kavek (Jackdaw Hunt) Minimal Live HUD Bar (stacked cleanly below Compass Bar) */}
+          {jackdawHunt.active && jackdawHunt.phase === 'playing' && (
+            <div className="flex items-center gap-4 rounded-full border border-amber-300/35 bg-stone-950/80 px-5 py-1.5 text-amber-50 shadow-xl backdrop-blur-md">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold tracking-wider text-amber-300/80 uppercase">
+                  Čas
+                </span>
+                <span
+                  ref={(el) => {
+                    jackdawHuntHudRefs.timerEl = el;
+                  }}
+                  className="font-mono text-sm font-bold text-amber-100"
+                >
+                  1:00
+                </span>
+              </div>
+              <div className="h-3.5 w-px bg-amber-200/20" />
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold tracking-wider text-amber-300/80 uppercase">
+                  Skóre
+                </span>
+                <span
+                  ref={(el) => {
+                    jackdawHuntHudRefs.scoreEl = el;
+                  }}
+                  className="font-mono text-sm font-bold text-amber-300"
+                >
+                  0
+                </span>
+              </div>
+              <div className="h-3.5 w-px bg-amber-200/20" />
+              <span
+                ref={(el) => {
+                  jackdawHuntHudRefs.comboEl = el;
+                }}
+                className="rounded-full border border-amber-300/40 bg-amber-400/15 px-2 py-0.5 font-mono text-xs font-bold text-amber-200"
+              >
+                ×1
+              </span>
+            </div>
+          )}
+
           {/* Fire Watch Objective & Spread Tracker (stacked cleanly below Compass Bar) */}
           {fireWatch.active && fireWatch.step !== 'summary' && activeFire && (
             <div className="w-full rounded-xl border border-amber-300/30 bg-stone-950/80 px-4 py-2.5 text-amber-50 shadow-xl backdrop-blur-md">
             <div className="flex items-center justify-between gap-2 text-[11px] font-semibold tracking-wider text-amber-300 uppercase">
               <span>
-                🔥 Požár {fireWatch.roundIndex + 1} / {fireWatch.totalRounds}
+                Požár {fireWatch.roundIndex + 1} / {fireWatch.totalRounds}
               </span>
               <span className="rounded-full border border-amber-200/25 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-100">
-                {fireWatch.signalKind === 'flag' ? '🚩 Červený prapor' : '🏮 Červená lucerna'}
+                {fireWatch.signalKind === 'flag' ? 'Červený prapor' : 'Červená lucerna'}
               </span>
             </div>
 
             {/* Dramatic Chain-Spread / Burn-Down Alert Banner */}
             {fireWatch.alertMessage && (
               <div className="mt-1.5 rounded-lg border border-rose-400/50 bg-rose-500/25 px-2.5 py-1 text-xs font-semibold text-rose-100">
-                ⚠ {fireWatch.alertMessage}
+                {fireWatch.alertMessage}
               </div>
             )}
 
@@ -933,20 +1140,20 @@ export function App() {
               )}
               {fireWatch.step === 'dispatching' && (
                 <div className="text-amber-200">
-                  🚒 Koňská hasičská stříkačka vyjíždí z Palackého náměstí k požáru (
+                  Koňská hasičská stříkačka vyjíždí z Palackého náměstí k požáru (
                   {fireWatch.currentTarget?.nameCz ?? activeFire.nameCz})…
                 </div>
               )}
               {fireWatch.step === 'extinguishing' && (
                 <div className="text-sky-200">
-                  💧 Hasiči dorazili na místo a hasí plameny!
+                  Hasiči dorazili na místo a hasí plameny!
                 </div>
               )}
               {fireWatch.step === 'between-rounds' && (
                 <div className={fireWatch.alertMessage ? 'text-rose-200' : 'text-emerald-200'}>
                   {fireWatch.alertMessage
                     ? 'Připrav se na další hlášení požáru…'
-                    : '✓ Požár uhašen! Připrav se na další hlídku…'}
+                    : 'Požár uhašen! Připrav se na další hlídku…'}
                 </div>
               )}
             </div>
@@ -973,7 +1180,7 @@ export function App() {
               }}
               className="cursor-pointer rounded-full border border-orange-300/50 bg-orange-500/25 px-3.5 py-1 text-xs font-semibold text-amber-100 transition hover:bg-orange-500/35"
             >
-              🔥 Zahájit hlídku
+              Zahájit hlídku
             </button>
             <button
               type="button"
@@ -989,8 +1196,54 @@ export function App() {
         </div>
       )}
 
+      {/* Lov kavek Central Rifle Crosshair, Hitmarker Flash & Floating Score Popup */}
+      {jackdawHunt.active && jackdawHunt.phase === 'playing' && (
+        <>
+          <div className="pointer-events-none fixed inset-0 z-20 flex items-center justify-center">
+            <div className="relative flex items-center justify-center">
+              {/* Minimal iron-sight crosshair */}
+              <div className="h-1 w-1 rounded-full bg-amber-100 shadow-[0_0_4px_rgba(0,0,0,0.9)]" />
+              <div className="absolute -top-3.5 h-2 w-px bg-amber-100/80 shadow-[0_0_3px_rgba(0,0,0,0.9)]" />
+              <div className="absolute -bottom-3.5 h-2 w-px bg-amber-100/80 shadow-[0_0_3px_rgba(0,0,0,0.9)]" />
+              <div className="absolute -left-3.5 h-px w-2 bg-amber-100/80 shadow-[0_0_3px_rgba(0,0,0,0.9)]" />
+              <div className="absolute -right-3.5 h-px w-2 bg-amber-100/80 shadow-[0_0_3px_rgba(0,0,0,0.9)]" />
+
+              {/* Crisp diagonal hitmarker flash (driven via DOM ref — zero React re-renders) */}
+              <div
+                ref={(el) => {
+                  jackdawHuntHudRefs.hitmarkerEl = el;
+                }}
+                style={{ opacity: 0 }}
+                className="absolute inset-0 flex items-center justify-center"
+              >
+                <div className="absolute h-4 w-0.5 rotate-45 bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.95)]" />
+                <div className="absolute h-4 w-0.5 -rotate-45 bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.95)]" />
+              </div>
+
+              {/* Floating points / long-shot bonus */}
+              <div
+                ref={(el) => {
+                  jackdawHuntHudRefs.bonusEl = el;
+                }}
+                style={{ opacity: 0 }}
+                className="absolute top-6 whitespace-nowrap text-xs font-bold tracking-wide text-amber-300 drop-shadow-[0_1px_4px_rgba(0,0,0,0.95)]"
+              />
+            </div>
+          </div>
+
+          {/* Subtle bottom-center controls hint during Lov kavek */}
+          <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
+            <div className="rounded-full border border-amber-200/25 bg-stone-950/75 px-4 py-1.5 text-xs text-amber-100/90 shadow-lg backdrop-blur-md">
+              <span className="font-semibold text-amber-300">[LMB]</span> Střelba ·{' '}
+              <span className="font-semibold text-amber-300">[RMB]</span> Míření ·{' '}
+              <span className="font-semibold text-amber-300">[Esc]</span> Konec
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Exterior Bottom-Center Contextual Interaction Prompts Only (no permanent controls bar) */}
-      {viewMode === 'exterior' && activeTelescope === null && (
+      {viewMode === 'exterior' && activeTelescope === null && !jackdawHunt.active && (
         <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex flex-col items-center gap-2 px-4">
           {fireWatch.active && fireWatch.step === 'spot' && aimingAtFire ? (
             <div className="max-w-full rounded-full border border-orange-400/55 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
@@ -1013,19 +1266,19 @@ export function App() {
               </span>
               Vyvěsit {fireWatch.signalKind === 'flag' ? 'červený prapor' : 'červenou lucernu'} ({COMPASS_LABELS_CZ[activeFire.direction]})
             </div>
-          ) : !fireWatch.active && nearBellRope ? (
-            <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/80 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
-              <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
-                [F]
-              </span>
-              Zazvonit na kostelní zvon
-            </div>
           ) : isNearDoor && !fireWatch.active ? (
             <div className="max-w-full rounded-full border border-amber-300/45 bg-stone-950/80 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
               <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
                 [E]
               </span>
               Vstoupit do rodné světničky
+            </div>
+          ) : !fireWatch.active && nearBellRope ? (
+            <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/80 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
+              <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
+                [E]
+              </span>
+              Zazvonit na kostelní zvon
             </div>
           ) : nearbyTelescope !== null ? (
             <div className="max-w-full rounded-full border border-amber-300/40 bg-stone-950/75 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
@@ -1076,27 +1329,63 @@ export function App() {
               title="Přepnout denní dobu (Auto → Den → Západ → Noc)"
               className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
             >
-              <span className="mr-1 text-amber-300">{timeModeMeta.icon}</span>
               {timeModeMeta.label}
             </button>
           )}
 
-          {/* Right: Fire Watch Toggle */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (fireWatch.active) handleExitFireWatch();
-              else handleStartFireWatch();
-            }}
-            className={`cursor-pointer whitespace-nowrap rounded-lg border px-3 py-1 text-xs font-semibold transition ${
-              fireWatch.active
-                ? 'border-rose-400/50 bg-rose-500/25 text-rose-100 hover:bg-rose-500/35'
-                : 'border-orange-300/40 bg-orange-400/15 text-amber-100 hover:bg-orange-400/25'
-            }`}
-          >
-            {fireWatch.active ? '✕ Ukončit hlídku' : '🔥 Požární hlídka'}
-          </button>
+          {/* Right: Minigame Buttons (hidden until discovered in the world) */}
+          {unlockedFireWatch && !jackdawHunt.active && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (fireWatch.active) handleExitFireWatch();
+                else handleStartFireWatch();
+              }}
+              className={`cursor-pointer whitespace-nowrap rounded-lg border px-3 py-1 text-xs font-semibold transition ${
+                fireWatch.active
+                  ? 'border-rose-400/50 bg-rose-500/25 text-rose-100 hover:bg-rose-500/35'
+                  : 'border-orange-300/40 bg-orange-400/15 text-amber-100 hover:bg-orange-400/25'
+              }`}
+            >
+              {fireWatch.active ? 'Ukončit hlídku' : 'Požární hlídka'}
+            </button>
+          )}
+
+          {unlockedJackdawHunt && !fireWatch.active && !jackdawHunt.active && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleStartJackdawHunt();
+              }}
+              className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-300/40 bg-amber-400/15 px-3 py-1 text-xs font-semibold text-amber-100 transition hover:bg-amber-400/25"
+            >
+              Lov kavek
+            </button>
+          )}
+
+          {jackdawHunt.active && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (jackdawHunt.phase === 'playing') {
+                  jackdawHuntRuntime.finished = true;
+                  handleFinishJackdawHunt({
+                    hits: jackdawHuntRuntime.hits,
+                    shots: jackdawHuntRuntime.shots,
+                    score: jackdawHuntRuntime.score,
+                  });
+                } else {
+                  handleExitJackdawHunt();
+                }
+              }}
+              className="cursor-pointer whitespace-nowrap rounded-lg border border-rose-400/50 bg-rose-500/25 px-3 py-1 text-xs font-semibold text-rose-100 transition hover:bg-rose-500/35"
+            >
+              Ukončit lov
+            </button>
+          )}
         </header>
       )}
 
@@ -1163,7 +1452,6 @@ export function App() {
             title="Zobrazit nebo skrýt ovládání [H]"
             className="flex cursor-pointer items-center gap-1.5 rounded-full border border-amber-200/25 bg-stone-950/65 px-3.5 py-1.5 text-xs font-medium text-amber-100 shadow-lg backdrop-blur-md transition hover:border-amber-200/45 hover:bg-stone-950/80"
           >
-            <span className="text-amber-300">⌨</span>
             <span>Ovládání</span>
             <span className="ml-0.5 text-[10px] text-amber-300/80">
               {controlsOpen ? '▾' : '▴'}
@@ -1172,22 +1460,34 @@ export function App() {
         </div>
       )}
 
+      {/* Clean 4-Second In-World Minigame Discovery Unlock Toast */}
+      {unlockToast && (
+        <div className="pointer-events-none fixed top-16 left-1/2 z-40 -translate-x-1/2 px-4">
+          <div className="rounded-full border border-amber-300/50 bg-stone-950/90 px-5 py-2 text-center text-xs font-semibold tracking-wider text-amber-200 shadow-2xl backdrop-blur-md sm:text-sm">
+            {unlockToast}
+          </div>
+        </div>
+      )}
+
       {/* Subtle Unobtrusive Birth Room Caption for Young Bohuslav Martinů (Bottom-Right while indoors) */}
       {viewMode === 'interior' && activeHotspot === null && (
         <div className="pointer-events-none fixed right-4 bottom-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
-          <span className="mr-1.5 text-amber-300">♪</span>
           Mladý Bohuslav Martinů cvičí na housle
         </div>
       )}
 
-      {/* Interior Bottom-Center Aimed Hotspot Prompt Only (no permanent controls bar or duplicate exit pill) */}
-      {viewMode === 'interior' && aimedHotspot && activeHotspot === null && (
+      {/* Interior Bottom-Center Aimed Rifle or Hotspot Prompt */}
+      {viewMode === 'interior' && activeHotspot === null && (aimedRifle || aimedHotspot) && (
         <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
           <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
             <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
               [E] / Kliknout
             </span>
-            {aimedHotspot.titleCz}
+            {aimedRifle
+              ? unlockedJackdawHunt
+                ? 'Spustit Lov kavek'
+                : 'Vzít pušku'
+              : aimedHotspot?.titleCz}
           </div>
         </div>
       )}
@@ -1218,6 +1518,97 @@ export function App() {
           </p>
         </aside>
       )}
+
+      {/* End-of-Round Lov kavek (Jackdaw Hunt) Summary Modal */}
+      {jackdawHunt.active && jackdawHunt.phase === 'summary' && (() => {
+        const accuracy =
+          jackdawHunt.finalShots > 0
+            ? Math.round((jackdawHunt.finalHits / jackdawHunt.finalShots) * 100)
+            : 0;
+        const isNewBest =
+          jackdawHunt.finalScore > 0 && jackdawHunt.finalScore >= jackdawHunt.bestScore;
+        return (
+          <div
+            onPointerDown={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-40 flex items-center justify-center bg-stone-950/70 p-4 backdrop-blur-sm"
+          >
+            <div className="w-full max-w-md rounded-2xl border border-amber-300/35 bg-stone-950/95 p-6 text-amber-50 shadow-2xl">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold tracking-[0.22em] text-amber-300/85 uppercase">
+                  Polička · Lov kavek dokončen
+                </span>
+                {isNewBest && (
+                  <span className="rounded-full border border-amber-300/45 bg-amber-400/15 px-3 py-0.5 text-xs font-semibold text-amber-200">
+                    Nový rekord
+                  </span>
+                )}
+              </div>
+
+              <h2 className="mt-2 text-2xl font-semibold tracking-wide text-amber-50">
+                Výsledky lovu kavek
+              </h2>
+
+              <div className="mt-4 grid grid-cols-2 gap-2.5 text-center sm:grid-cols-4">
+                <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
+                  <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
+                    Zásahy
+                  </div>
+                  <div className="mt-0.5 text-lg font-semibold text-emerald-300">
+                    {jackdawHunt.finalHits}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
+                  <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
+                    Přesnost
+                  </div>
+                  <div className="mt-0.5 text-lg font-semibold text-amber-100">
+                    {accuracy} %
+                  </div>
+                </div>
+                <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
+                  <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
+                    Skóre
+                  </div>
+                  <div className="mt-0.5 text-lg font-semibold text-amber-300">
+                    {jackdawHunt.finalScore}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
+                  <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
+                    Rekord
+                  </div>
+                  <div className="mt-0.5 text-lg font-semibold text-amber-200">
+                    {jackdawHunt.bestScore}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-wrap justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleExitJackdawHunt();
+                  }}
+                  className="cursor-pointer rounded-full border border-amber-200/25 bg-stone-900/80 px-4 py-2 text-xs font-medium text-amber-100/90 transition hover:border-amber-200/45 hover:text-amber-50"
+                >
+                  Zpět do volné prohlídky
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleStartJackdawHunt();
+                  }}
+                  className="cursor-pointer rounded-full border border-amber-300/50 bg-amber-500/25 px-4 py-2 text-xs font-semibold text-amber-50 transition hover:bg-amber-500/35"
+                >
+                  Hrát znovu
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* End-of-Shift Fire Watch Summary & Historical Finale Modal */}
       {fireWatch.active && fireWatch.step === 'summary' && (() => {
@@ -1311,7 +1702,7 @@ export function App() {
                   onClick={handleStartFireWatch}
                   className="cursor-pointer rounded-full border border-orange-300/50 bg-orange-500/25 px-4 py-2 text-xs font-semibold text-amber-50 transition hover:bg-orange-500/35"
                 >
-                  🔥 Hrát hlídku znovu
+                  Hrát hlídku znovu
                 </button>
               </div>
             </div>

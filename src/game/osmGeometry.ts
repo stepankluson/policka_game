@@ -2601,7 +2601,15 @@ export interface MergedStreetsResult {
   renderedRoadPolylines: RenderedRoadPolyline[];
   stationForecourtPolygon: [number, number][];
   roadGraph: RoadGraph;
+  /** Unified 2D pedestrian graph (drivable roads + scenic wall-side footpath & wooden bridge) */
+  pedestrianGraph: RoadGraph;
 }
+
+/** Exact endpoints of the ~1900 wooden footbridge spanning the narrow eastern neck of Synský rybník */
+export const POND_WOODEN_BRIDGE = {
+  northBank: [318.0, -43.5] as readonly [number, number],
+  southBank: [323.5, -31.0] as readonly [number, number],
+} as const;
 
 export function buildMergedStreetsGeometry(
   streets: readonly OsmPolyline[],
@@ -3416,99 +3424,157 @@ export function buildMergedStreetsGeometry(
     }
   }
 
-  // === BUILD UNIFIED 2D DRIVABLE ROAD GRAPH FOR TRAFFIC, PEDESTRIANS & FIRE ENGINE ===
-  // Merge nearby junction nodes within 4.5m and bridge T-junctions so zero road islands are disconnected
-  const GRAPH_CELL = 4.5;
-  const graphNodes: RoadGraphNode[] = [];
-  const graphSpatial = new Map<string, number[]>();
+  // === SCENIC ~1900 WALL-SIDE DIRT/GRAVEL FOOTPATH (PĚŠINKA KOLEM HRADEB A SYNSKÉHO RYBNÍKA) ===
+  // Runs cleanly along the grassy strip between the outer SE city walls/bastions and Synský rybník,
+  // connects the SW gate road, absorbs the mid-wall dead-end stub [248.8, -24.4], crosses the narrow
+  // river neck via the wooden footbridge, and joins the far-side suburban road at a clean T-junction.
+  const scenicFootpathWallBank: [number, number][] = [
+    [-54.5, 138.8],
+    [-52.2, 128.0],
+    [-47.5, 117.5],
+    [-37.5, 106.0],
+    [-16.0, 97.8],
+    [17.5, 93.2],
+    [56.8, 86.2],
+    [119.0, 62.0],
+    [159.8, 45.2],
+    [182.0, 33.4],
+    [216.9, 12.6],
+    [253.5, -15.5],
+    [283.5, -35.8],
+    [POND_WOODEN_BRIDGE.northBank[0], POND_WOODEN_BRIDGE.northBank[1]],
+  ];
+  const scenicFootpathMidWallBranch: [number, number][] = [
+    [248.8, -24.4],
+    [253.5, -15.5],
+  ];
+  const scenicFootpathBridgeSpan: [number, number][] = [
+    [POND_WOODEN_BRIDGE.northBank[0], POND_WOODEN_BRIDGE.northBank[1]],
+    [POND_WOODEN_BRIDGE.southBank[0], POND_WOODEN_BRIDGE.southBank[1]],
+  ];
+  const scenicFootpathFarSide: [number, number][] = [
+    [POND_WOODEN_BRIDGE.southBank[0], POND_WOODEN_BRIDGE.southBank[1]],
+    [342.0, -17.5],
+    [362.0, -4.0],
+    [378.8, 4.5],
+  ];
 
-  const getOrCreateGraphNode = (x: number, z: number): number => {
-    const gx = Math.round(x / GRAPH_CELL);
-    const gz = Math.round(z / GRAPH_CELL);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        const bucket = graphSpatial.get(`${gx + dx},${gz + dz}`);
-        if (!bucket) continue;
-        for (const nid of bucket) {
-          const n = graphNodes[nid];
-          if ((n.x - x) * (n.x - x) + (n.z - z) * (n.z - z) <= GRAPH_CELL * GRAPH_CELL) {
-            return nid;
+  // Push dirt/gravel footpath ribbons (width ~2.2m, halfW = 1.1) — skip water span under wooden bridge deck
+  const scenicDirtPaths = [
+    scenicFootpathWallBank,
+    scenicFootpathMidWallBranch,
+    scenicFootpathFarSide,
+  ];
+  for (const pathPts of scenicDirtPaths) {
+    pushPolylineRibbon(footpathPositions, pathPts, 1.1);
+    // Keep halfW < 2.0 so trees stay clear of the footpath while horse carriages & fire engine stay on main roads
+    connectorRoads.push({ points: pathPts, halfW: 1.65 });
+  }
+  const pedestrianOnlyPaths: readonly [number, number][][] = [
+    scenicFootpathWallBank,
+    scenicFootpathMidWallBranch,
+    scenicFootpathBridgeSpan,
+    scenicFootpathFarSide,
+  ];
+
+  // === BUILD UNIFIED 2D DRIVABLE ROAD GRAPH & PEDESTRIAN-ONLY GRAPH ===
+  // Merge nearby junction nodes within 4.5m and bridge T-junctions so zero road islands are disconnected
+  const buildGraphFromPolylines = (
+    polylines: readonly (readonly [number, number][])[],
+  ): RoadGraph => {
+    const GRAPH_CELL = 4.5;
+    const graphNodes: RoadGraphNode[] = [];
+    const graphSpatial = new Map<string, number[]>();
+
+    const getOrCreateGraphNode = (x: number, z: number): number => {
+      const gx = Math.round(x / GRAPH_CELL);
+      const gz = Math.round(z / GRAPH_CELL);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const bucket = graphSpatial.get(`${gx + dx},${gz + dz}`);
+          if (!bucket) continue;
+          for (const nid of bucket) {
+            const n = graphNodes[nid];
+            if ((n.x - x) * (n.x - x) + (n.z - z) * (n.z - z) <= GRAPH_CELL * GRAPH_CELL) {
+              return nid;
+            }
           }
         }
       }
-    }
-    const id = graphNodes.length;
-    graphNodes.push({ id, x, z, neighbors: [], isOuterEntry: false });
-    const key = `${gx},${gz}`;
-    let arr = graphSpatial.get(key);
-    if (!arr) {
-      arr = [];
-      graphSpatial.set(key, arr);
-    }
-    arr.push(id);
-    return id;
-  };
+      const id = graphNodes.length;
+      graphNodes.push({ id, x, z, neighbors: [], isOuterEntry: false });
+      const key = `${gx},${gz}`;
+      let arr = graphSpatial.get(key);
+      if (!arr) {
+        arr = [];
+        graphSpatial.set(key, arr);
+      }
+      arr.push(id);
+      return id;
+    };
 
-  const connectGraphNodes = (aId: number, bId: number) => {
-    if (aId === bId) return;
-    if (!graphNodes[aId].neighbors.includes(bId)) graphNodes[aId].neighbors.push(bId);
-    if (!graphNodes[bId].neighbors.includes(aId)) graphNodes[bId].neighbors.push(aId);
-  };
+    const connectGraphNodes = (aId: number, bId: number) => {
+      if (aId === bId) return;
+      if (!graphNodes[aId].neighbors.includes(bId)) graphNodes[aId].neighbors.push(bId);
+      if (!graphNodes[bId].neighbors.includes(aId)) graphNodes[bId].neighbors.push(aId);
+    };
 
-  const addGraphPolyline = (pts: readonly [number, number][]) => {
-    for (let j = 0; j < pts.length - 1; j++) {
-      const aId = getOrCreateGraphNode(pts[j][0], pts[j][1]);
-      const bId = getOrCreateGraphNode(pts[j + 1][0], pts[j + 1][1]);
-      connectGraphNodes(aId, bId);
-    }
-  };
-
-  for (const piece of clippedDrivablePolylines) {
-    addGraphPolyline(piece);
-  }
-  // Include drivable suburban extensions, Brewery & Station connecting roads (exclude narrow cemetery footpath)
-  for (const conn of connectorRoads) {
-    if (conn.halfW >= 2.0) {
-      addGraphPolyline(conn.points);
-    }
-  }
-
-  // T-junction snap pass: if any road node lies within 4.5m of another road edge, link them cleanly
-  const T_SNAP_SQ = 4.5 * 4.5;
-  const edgePairs: [number, number][] = [];
-  for (let i = 0; i < graphNodes.length; i++) {
-    for (const nb of graphNodes[i].neighbors) {
-      if (nb > i) edgePairs.push([i, nb]);
-    }
-  }
-  for (let i = 0; i < graphNodes.length; i++) {
-    const p = graphNodes[i];
-    for (let e = 0; e < edgePairs.length; e++) {
-      const [aId, bId] = edgePairs[e];
-      if (i === aId || i === bId) continue;
-      const a = graphNodes[aId];
-      const b = graphNodes[bId];
-      const minX = Math.min(a.x, b.x) - 4.5;
-      const maxX = Math.max(a.x, b.x) + 4.5;
-      const minZ = Math.min(a.z, b.z) - 4.5;
-      const maxZ = Math.max(a.z, b.z) + 4.5;
-      if (p.x < minX || p.x > maxX || p.z < minZ || p.z > maxZ) continue;
-      if (pointToSegmentDistSq(p.x, p.z, a.x, a.z, b.x, b.z) <= T_SNAP_SQ) {
-        connectGraphNodes(i, aId);
-        connectGraphNodes(i, bId);
+    for (const pts of polylines) {
+      for (let j = 0; j < pts.length - 1; j++) {
+        const aId = getOrCreateGraphNode(pts[j][0], pts[j][1]);
+        const bId = getOrCreateGraphNode(pts[j + 1][0], pts[j + 1][1]);
+        connectGraphNodes(aId, bId);
       }
     }
-  }
 
-  const outerEntryIds: number[] = [];
-  for (const node of graphNodes) {
-    if (node.neighbors.length === 0) continue;
-    const dNorm = normOval(node.x, node.z);
-    if ((node.neighbors.length === 1 && dNorm > 1.02) || dNorm > 1.18) {
-      node.isOuterEntry = true;
-      outerEntryIds.push(node.id);
+    // T-junction snap pass: if any node lies within 4.5m of another edge, link them cleanly
+    const T_SNAP_SQ = 4.5 * 4.5;
+    const edgePairs: [number, number][] = [];
+    for (let i = 0; i < graphNodes.length; i++) {
+      for (const nb of graphNodes[i].neighbors) {
+        if (nb > i) edgePairs.push([i, nb]);
+      }
     }
-  }
+    for (let i = 0; i < graphNodes.length; i++) {
+      const p = graphNodes[i];
+      for (let e = 0; e < edgePairs.length; e++) {
+        const [aId, bId] = edgePairs[e];
+        if (i === aId || i === bId) continue;
+        const a = graphNodes[aId];
+        const b = graphNodes[bId];
+        const minX = Math.min(a.x, b.x) - 4.5;
+        const maxX = Math.max(a.x, b.x) + 4.5;
+        const minZ = Math.min(a.z, b.z) - 4.5;
+        const maxZ = Math.max(a.z, b.z) + 4.5;
+        if (p.x < minX || p.x > maxX || p.z < minZ || p.z > maxZ) continue;
+        if (pointToSegmentDistSq(p.x, p.z, a.x, a.z, b.x, b.z) <= T_SNAP_SQ) {
+          connectGraphNodes(i, aId);
+          connectGraphNodes(i, bId);
+        }
+      }
+    }
+
+    const outerEntryIds: number[] = [];
+    for (const node of graphNodes) {
+      if (node.neighbors.length === 0) continue;
+      const dNorm = normOval(node.x, node.z);
+      if ((node.neighbors.length === 1 && dNorm > 1.02) || dNorm > 1.18) {
+        node.isOuterEntry = true;
+        outerEntryIds.push(node.id);
+      }
+    }
+    return { nodes: graphNodes, outerEntryIds };
+  };
+
+  const drivableGraphPolylines: (readonly [number, number][])[] = [
+    ...clippedDrivablePolylines,
+    ...connectorRoads.filter((conn) => conn.halfW >= 2.0).map((conn) => conn.points),
+  ];
+  const roadGraph = buildGraphFromPolylines(drivableGraphPolylines);
+  const pedestrianGraph = buildGraphFromPolylines([
+    ...drivableGraphPolylines,
+    ...pedestrianOnlyPaths,
+  ]);
 
   const streetsGeometry = new THREE.BufferGeometry();
   streetsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -3527,9 +3593,7 @@ export function buildMergedStreetsGeometry(
     connectorRoads,
     renderedRoadPolylines,
     stationForecourtPolygon,
-    roadGraph: {
-      nodes: graphNodes,
-      outerEntryIds,
-    },
+    roadGraph,
+    pedestrianGraph,
   };
 }

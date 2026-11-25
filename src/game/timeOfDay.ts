@@ -9,11 +9,11 @@ export const TIME_MODE_ORDER: readonly TimeOfDayMode[] = [
   'night',
 ] as const;
 
-export const TIME_MODE_LABELS: Record<TimeOfDayMode, { icon: string; label: string }> = {
-  auto: { icon: '✦', label: 'Auto' },
-  day: { icon: '☀', label: 'Den' },
-  sunset: { icon: '◐', label: 'Západ' },
-  night: { icon: '☾', label: 'Noc' },
+export const TIME_MODE_LABELS: Record<TimeOfDayMode, { label: string }> = {
+  auto: { label: 'Auto' },
+  day: { label: 'Den' },
+  sunset: { label: 'Západ' },
+  night: { label: 'Noc' },
 };
 
 export function computeTargetTimeProgress(

@@ -242,10 +242,10 @@ export function FollowCamera({
   useFrame((_, rawDelta) => {
     if (!initializedRef.current || !active) return;
 
-    // Ensure third-person near plane stays at 0.5 so distant town fields have zero z-fighting
+    // Keep near plane at 0.1 so nearby gallery geometry and the Tower Keeper never clip prematurely
     const persp = camera as THREE.PerspectiveCamera;
-    if (persp.isPerspectiveCamera && persp.near !== 0.5) {
-      persp.near = 0.5;
+    if (persp.isPerspectiveCamera && persp.near !== 0.1) {
+      persp.near = 0.1;
       persp.updateProjectionMatrix();
     }
 
@@ -260,12 +260,12 @@ export function FollowCamera({
     const desiredDist = desiredDistanceRef.current;
     const farBlend = smoothstep(10, 48, desiredDist);
 
-    // Dynamically clamp pitch if user zooms back in so camera never clips floor or overhanging spire roof
+    // Dynamically clamp pitch up close so camera never clips floor, overhanging spire roof, or player's head/hat
     const closeBlend = smoothstep(8, 36, desiredDist);
     const minPitch =
       CAMERA_CONFIG.minPitchClose +
       (CAMERA_CONFIG.minPitchFar - CAMERA_CONFIG.minPitchClose) * closeBlend;
-    const maxPitch = 1.02 + (CAMERA_CONFIG.maxPitch - 1.02) * closeBlend;
+    const maxPitch = 0.78 + (CAMERA_CONFIG.maxPitch - 0.78) * closeBlend;
     if (targetPitchRef.current < minPitch) {
       targetPitchRef.current = minPitch;
     } else if (targetPitchRef.current > maxPitch) {
@@ -278,11 +278,15 @@ export function FollowCamera({
       CAMERA_CONFIG.orbitDamping,
       dt,
     );
-    currentPitchRef.current = THREE.MathUtils.damp(
-      currentPitchRef.current,
-      targetPitchRef.current,
-      CAMERA_CONFIG.orbitDamping,
-      dt,
+    currentPitchRef.current = clamp(
+      THREE.MathUtils.damp(
+        currentPitchRef.current,
+        targetPitchRef.current,
+        CAMERA_CONFIG.orbitDamping,
+        dt,
+      ),
+      minPitch,
+      maxPitch,
     );
 
     // 1. Blend orbit pivot from player's head up close to the full church midpoint when zoomed far out
