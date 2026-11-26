@@ -45,6 +45,7 @@ import {
   computeTargetTimeProgress,
   TIME_MODE_LABELS,
   TIME_MODE_ORDER,
+  timeOfDayState,
   type TimeOfDayMode,
 } from './game/timeOfDay';
 
@@ -100,6 +101,11 @@ export function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('exterior');
   const [galleryCameraMode, setGalleryCameraMode] = useState<GalleryCameraMode>('third');
   const [timeOfDayMode, setTimeOfDayMode] = useState<TimeOfDayMode>('auto');
+  const [isWinter, setIsWinter] = useState<boolean>(false);
+
+  useEffect(() => {
+    timeOfDayState.isWinter = isWinter;
+  }, [isWinter]);
   const [, setIsMuted] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [landmarksOpen, setLandmarksOpen] = useState(true);
@@ -149,6 +155,7 @@ export function App() {
   const [fireWatchOfferDismissed, setFireWatchOfferDismissed] = useState(false);
   const [aimingAtFire, setAimingAtFire] = useState(false);
   const [nearBellRope, setNearBellRope] = useState(false);
+  const [nearGalleryRifle, setNearGalleryRifle] = useState(false);
   const [nearSignalHook, setNearSignalHook] = useState(false);
   const nextRoundTimerRef = useRef<number | null>(null);
   const alertTimerRef = useRef<number | null>(null);
@@ -260,6 +267,7 @@ export function App() {
     setIsNearInteriorExitDoor(false);
     setIsNearDoor(false);
     setNearBellRope(false);
+    setNearGalleryRifle(false);
     setNearbyTelescope(null);
     setJackdawHunt({
       active: true,
@@ -321,6 +329,7 @@ export function App() {
     setIsNearInteriorExitDoor(false);
     setAimingAtFire(false);
     setNearBellRope(false);
+    setNearGalleryRifle(false);
     setNearSignalHook(false);
     setFireWatchOfferDismissed(true);
     setFireWatch(createFireWatchShift());
@@ -337,6 +346,7 @@ export function App() {
     fireWatchRuntime.extinguishProgress = 0;
     setAimingAtFire(false);
     setNearBellRope(false);
+    setNearGalleryRifle(false);
     setNearSignalHook(false);
     setFireWatch(INACTIVE_FIRE_WATCH_STATE);
   }, [exitPointerLockIfActive]);
@@ -749,7 +759,12 @@ export function App() {
         } else if (isNearDoor && !fireWatch.active) {
           transitionToMode('interior');
         } else if (!fireWatch.active && nearBellRope) {
-          handleFreeRoamBellToll();
+          soundEngine.playChurchBell();
+          triggerJackdawStartle();
+          handleStartFireWatch();
+          fireWatchRuntime.bellPullAnim = 1;
+        } else if (!fireWatch.active && nearGalleryRifle) {
+          handleStartJackdawHunt();
         } else if (nearbyTelescope !== null) {
           exitPointerLockIfActive();
           soundEngine.playTelescopeClick();
@@ -789,11 +804,14 @@ export function App() {
     handleExitJackdawHunt,
     aimingAtFire,
     nearBellRope,
+    nearGalleryRifle,
     nearSignalHook,
     handleFireSpotted,
     handleRingFireBell,
     handleFreeRoamBellToll,
     handleHangFireSignal,
+    handleStartFireWatch,
+    handleStartJackdawHunt,
     handleSelectHotspot,
     handleExitTelescope,
     handleToggleGalleryCamera,
@@ -883,6 +901,7 @@ export function App() {
         onFireMaxSpread={handleFireMaxSpread}
         onAimingAtFireChange={setAimingAtFire}
         onNearBellRopeChange={setNearBellRope}
+        onNearGalleryRifleChange={setNearGalleryRifle}
         onNearSignalHookChange={setNearSignalHook}
         onFireEngineArrived={handleFireEngineArrived}
         onExtinguishComplete={handleExtinguishComplete}
@@ -892,6 +911,7 @@ export function App() {
         onDuskNightTransition={handleDuskNightTransition}
         activeMicroScene={activeMicroScene}
         onMicroSceneComplete={handleMicroSceneComplete}
+        isWinter={isWinter}
       />
 
       {/* Cinematic Minimalist Title Screen Overlay (fades out smoothly during 1.65s fly-in) */}
@@ -957,7 +977,8 @@ export function App() {
             className={`rounded-full transition-all duration-150 ${
               aimedHotspot ||
               aimedRifle ||
-              (viewMode === 'exterior' && (isNearDoor || nearBellRope || nearbyTelescope !== null))
+              (viewMode === 'exterior' &&
+                (isNearDoor || nearBellRope || nearGalleryRifle || nearbyTelescope !== null))
                 ? 'h-3 w-3 border border-amber-200 bg-amber-300/90 shadow-[0_0_10px_rgba(252,211,77,0.9)]'
                 : 'h-1.5 w-1.5 bg-amber-50/85 shadow-[0_0_6px_rgba(0,0,0,0.7)]'
             }`}
@@ -1386,7 +1407,14 @@ export function App() {
               <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
                 [E]
               </span>
-              Zazvonit na kostelní zvon
+              Spustit Požární hlídku
+            </div>
+          ) : !fireWatch.active && nearGalleryRifle ? (
+            <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/80 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
+              <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
+                [E]
+              </span>
+              Vzít pušku — Lov kavek
             </div>
           ) : nearbyTelescope !== null ? (
             <div className="max-w-full rounded-full border border-amber-300/40 bg-stone-950/75 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
@@ -1428,48 +1456,50 @@ export function App() {
               [E] Zpět na ochoz
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCycleTimeOfDay();
-              }}
-              title="Přepnout denní dobu (Auto → Den → Západ → Noc)"
-              className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
-            >
-              {timeModeMeta.label}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCycleTimeOfDay();
+                }}
+                title="Přepnout denní dobu (Auto → Den → Západ → Noc)"
+                className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
+              >
+                {timeModeMeta.label}
+              </button>
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsWinter((prev) => !prev);
+                }}
+                aria-pressed={isWinter}
+                title={isWinter ? 'Přepnout na léto' : 'Přepnout na zimu'}
+                className={`cursor-pointer whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+                  isWinter
+                    ? 'border-sky-200/60 bg-sky-300/25 text-sky-50 shadow-[0_0_12px_rgba(186,230,253,0.28)] hover:bg-sky-300/35'
+                    : 'border-amber-200/25 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20'
+                }`}
+              >
+                {isWinter ? 'Léto' : 'Zima'}
+              </button>
+            </div>
           )}
 
-          {/* Right: Minigame Buttons (hidden until discovered in the world) */}
-          {unlockedFireWatch && !jackdawHunt.active && (
+          {/* Active Minigame Cancel/Exit Controls (launch is now strictly diegetic via [E] on the gallery) */}
+          {fireWatch.active && !jackdawHunt.active && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                if (fireWatch.active) handleExitFireWatch();
-                else handleStartFireWatch();
+                handleExitFireWatch();
               }}
-              className={`cursor-pointer whitespace-nowrap rounded-lg border px-3 py-1 text-xs font-semibold transition ${
-                fireWatch.active
-                  ? 'border-rose-400/50 bg-rose-500/25 text-rose-100 hover:bg-rose-500/35'
-                  : 'border-orange-300/40 bg-orange-400/15 text-amber-100 hover:bg-orange-400/25'
-              }`}
+              className="cursor-pointer whitespace-nowrap rounded-lg border border-rose-400/50 bg-rose-500/25 px-3 py-1 text-xs font-semibold text-rose-100 transition hover:bg-rose-500/35"
             >
-              {fireWatch.active ? 'Ukončit hlídku' : 'Požární hlídka'}
-            </button>
-          )}
-
-          {unlockedJackdawHunt && !fireWatch.active && !jackdawHunt.active && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleStartJackdawHunt();
-              }}
-              className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-300/40 bg-amber-400/15 px-3 py-1 text-xs font-semibold text-amber-100 transition hover:bg-amber-400/25"
-            >
-              Lov kavek
+              Ukončit hlídku
             </button>
           )}
 
@@ -1525,7 +1555,7 @@ export function App() {
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   E
                 </dt>
-                <dd className="text-right text-amber-100/85">Dalekohled / Dveře</dd>
+                <dd className="text-right text-amber-100/85">Dalekohled, dveře, zvon, puška</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   V
@@ -1831,7 +1861,9 @@ export function App() {
           }`}
         >
           <div className="inline-block rounded-full border border-amber-300/40 bg-stone-950/88 px-5 py-2 text-xs font-medium tracking-wide text-amber-100 shadow-2xl backdrop-blur-md sm:text-sm">
-            {MICRO_SCENES[activeMicroScene.poiId].captionCz}
+            {isWinter && MICRO_SCENES[activeMicroScene.poiId].winterCaptionCz
+              ? MICRO_SCENES[activeMicroScene.poiId].winterCaptionCz
+              : MICRO_SCENES[activeMicroScene.poiId].captionCz}
           </div>
         </div>
       )}

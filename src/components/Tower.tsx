@@ -5,6 +5,7 @@ import { NIGHT_MATERIALS } from '../game/timeOfDay';
 
 interface TowerProps {
   cameraCollidersRef?: RefObject<THREE.Object3D[]>;
+  isWinter?: boolean;
 }
 
 const SIDES = [0, 1, 2, 3] as const;
@@ -153,8 +154,37 @@ function TowerClockFace({ position }: { position: [number, number, number] }) {
   );
 }
 
+/** Exact flat triangular masonry gable prism closing the eastern end of the nave (zero protrusion into apse) */
+const NAVE_EAST_GABLE_GEOM = (() => {
+  const halfW = 14.8 / 2;
+  const rise = 9.2;
+  const shape = new THREE.Shape();
+  shape.moveTo(-halfW, 0);
+  shape.lineTo(halfW, 0);
+  shape.lineTo(0, rise);
+  shape.closePath();
+  const geom = new THREE.ExtrudeGeometry(shape, {
+    depth: 0.72,
+    bevelEnabled: false,
+    curveSegments: 1,
+  });
+  geom.translate(0, 0, -0.36);
+  // Rotate so triangle spans local Z (nave width) and thickness is along local X
+  geom.rotateY(Math.PI / 2);
+  geom.computeVertexNormals();
+  return geom;
+})();
+
 /** Main Neo-Gothic pale-sandstone church nave (chrámová loď) scaled 1:1 (~48m total length) & aligned to real OSM orientation */
-function ChurchNave({ groundY, coreHalf }: { groundY: number; coreHalf: number }) {
+function ChurchNave({
+  groundY,
+  coreHalf,
+  isWinter = false,
+}: {
+  groundY: number;
+  coreHalf: number;
+  isWinter?: boolean;
+}) {
   const naveLength = 31.0;
   const naveWidth = 14.8;
   const wallHeight = 16.5;
@@ -197,7 +227,11 @@ function ChurchNave({ groundY, coreHalf }: { groundY: number; coreHalf: number }
           receiveShadow
         >
           <boxGeometry args={[naveLength + 1.0, 0.45, slopeLength]} />
-          <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
+          <meshStandardMaterial
+            color={isWinter ? '#dce6f0' : COLORS.naveSlateRoof}
+            roughness={isWinter ? 0.88 : 0.78}
+            metalness={isWinter ? 0.04 : 0.12}
+          />
         </mesh>
         <mesh
           position={[0, wallHeight + roofRise / 2 + 0.25, -(naveWidth / 4 + 0.28)]}
@@ -206,30 +240,62 @@ function ChurchNave({ groundY, coreHalf }: { groundY: number; coreHalf: number }
           receiveShadow
         >
           <boxGeometry args={[naveLength + 1.0, 0.45, slopeLength]} />
-          <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
+          <meshStandardMaterial
+            color={isWinter ? '#dce6f0' : COLORS.naveSlateRoof}
+            roughness={isWinter ? 0.88 : 0.78}
+            metalness={isWinter ? 0.04 : 0.12}
+          />
         </mesh>
 
         {/* Roof ridge */}
         <mesh position={[0, wallHeight + roofRise + 0.35, 0]}>
           <boxGeometry args={[naveLength + 1.1, 0.45, 0.55]} />
-          <meshStandardMaterial color={COLORS.naveSlateRidge} roughness={0.8} />
+          <meshStandardMaterial color={isWinter ? '#cfdce8' : COLORS.naveSlateRidge} roughness={0.8} />
         </mesh>
 
-        {/* East gable wall filling under the pitched roof */}
-        <mesh position={[naveLength / 2 - 0.25, wallHeight + roofRise * 0.42, 0]}>
-          <cylinderGeometry args={[0.2, naveWidth * 0.62, roofRise * 0.92, 4]} />
+        {/* Crisp flat triangular East gable wall closing the pitched roof cleanly (zero clipping into apse) */}
+        <mesh
+          geometry={NAVE_EAST_GABLE_GEOM}
+          position={[naveLength / 2 - 0.36, wallHeight + 0.15, 0]}
+          castShadow
+          receiveShadow
+        >
           <meshStandardMaterial color={COLORS.sandstoneWarm} roughness={0.92} />
         </mesh>
+        {/* Neo-Gothic sandstone gable corner pinnacles (matching ~1900 reference photo) */}
+        {[-1, 1].map((zSign) => (
+          <group
+            key={`east-pinnacle-${zSign}`}
+            position={[naveLength / 2 - 0.15, wallHeight + 0.5, zSign * (naveWidth / 2 - 0.2)]}
+          >
+            <mesh position={[0, 1.4, 0]} castShadow>
+              <boxGeometry args={[0.72, 2.8, 0.72]} />
+              <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
+            </mesh>
+            <mesh position={[0, 3.65, 0]} castShadow>
+              <coneGeometry args={[0.48, 1.8, 4]} />
+              <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
+            </mesh>
+          </group>
+        ))}
 
-        {/* Oxidized green copper Neo-Gothic ridge turret (sanktusník) */}
+        {/* Oxidized green copper Neo-Gothic ridge turret (sanktusník — frosted in Winter Mode) */}
         <group position={[9.2, wallHeight + roofRise + 0.3, 0]}>
           <mesh position={[0, 1.8, 0]} castShadow>
             <cylinderGeometry args={[0.9, 1.05, 3.6, 6]} />
-            <meshStandardMaterial color={COLORS.copperDark} roughness={0.58} metalness={0.35} />
+            <meshStandardMaterial
+              color={isWinter ? '#9dbec0' : COLORS.copperDark}
+              roughness={isWinter ? 0.78 : 0.58}
+              metalness={isWinter ? 0.12 : 0.35}
+            />
           </mesh>
           <mesh position={[0, 5.9, 0]} castShadow>
             <coneGeometry args={[1.15, 5.0, 6]} />
-            <meshStandardMaterial color={COLORS.copperMain} roughness={0.52} metalness={0.38} />
+            <meshStandardMaterial
+              color={isWinter ? '#d4e4ec' : COLORS.copperMain}
+              roughness={isWinter ? 0.82 : 0.52}
+              metalness={isWinter ? 0.08 : 0.38}
+            />
           </mesh>
           <mesh position={[0, 8.6, 0]}>
             <sphereGeometry args={[0.22, 8, 8]} />
@@ -276,22 +342,97 @@ function ChurchNave({ groundY, coreHalf }: { groundY: number; coreHalf: number }
           </group>
         ))}
 
-        {/* Polygonal Sandstone Eastern Presbytery / Apse with dark slate roof */}
-        <group position={[naveLength / 2 + 3.2, 0, 0]}>
-          <mesh position={[0, (wallHeight - 1.2) / 2, 0]} castShadow receiveShadow>
-            <cylinderGeometry args={[5.8, 6.0, wallHeight - 1.2, 6]} />
-            <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} />
-          </mesh>
-          <mesh position={[0, wallHeight + 2.1, 0]} castShadow>
-            <coneGeometry args={[6.5, 6.8, 6]} />
-            <meshStandardMaterial color={COLORS.naveSlateRoof} roughness={0.78} metalness={0.12} />
-          </mesh>
-        </group>
+        {/* Polygonal Sandstone Eastern Presbytery / Apse with Buttresses, Lancet Windows & Winter-Ready Slate Roof */}
+        {(() => {
+          const apseWallH = wallHeight - 1.4; // 15.1m — sits cleanly below the nave gable
+          const apseRadiusTop = 5.7;
+          const apseRadiusBot = 5.95;
+          // In Three.js CylinderGeometry(6), rotY = 0 already puts flat faces at 0°, ±60°, ±120° (from +X)
+          // and corner vertices at ±30°, ±90°, ±150°
+          const apseRotY = 0;
+          // 5 outward-facing apse wall facet azimuths (measured from +X around Y)
+          const windowAngles = [-2, -1, 0, 1, 2].map((k) => (k * Math.PI) / 3);
+          // 6 exterior corner buttresses around the apse (all cleanly outside the nave wall)
+          const buttressAngles = [-2.15, -1.5, -0.5, 0.5, 1.5, 2.15].map((k) => (k * Math.PI) / 3);
+          const apothem = apseRadiusTop * Math.cos(Math.PI / 6); // flat-face distance from apse center
+
+          return (
+            <group position={[naveLength / 2 + 2.75, 0, 0]}>
+              {/* Stone foundation plinth */}
+              <mesh position={[0, 0.85, 0]} rotation={[0, apseRotY, 0]} receiveShadow>
+                <cylinderGeometry args={[apseRadiusBot + 0.28, apseRadiusBot + 0.36, 1.7, 6]} />
+                <meshStandardMaterial color={COLORS.sandstoneBase} roughness={0.96} />
+              </mesh>
+              {/* Faceted 6-sided sandstone apse walls */}
+              <mesh position={[0, apseWallH / 2, 0]} rotation={[0, apseRotY, 0]} castShadow receiveShadow>
+                <cylinderGeometry args={[apseRadiusTop, apseRadiusBot, apseWallH, 6]} />
+                <meshStandardMaterial color={COLORS.sandstone} roughness={0.92} flatShading />
+              </mesh>
+              {/* Molded stone eaves cornice ring */}
+              <mesh position={[0, apseWallH + 0.14, 0]} rotation={[0, apseRotY, 0]} castShadow>
+                <cylinderGeometry args={[apseRadiusTop + 0.35, apseRadiusTop + 0.14, 0.42, 6]} />
+                <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
+              </mesh>
+              {/* Clean matching 6-sided faceted conical roof (snow-covered in Winter Mode, zero clipping) */}
+              <mesh position={[0, apseWallH + 3.45, 0]} rotation={[0, apseRotY, 0]} castShadow receiveShadow>
+                <coneGeometry args={[6.4, 6.3, 6]} />
+                <meshStandardMaterial
+                  color={isWinter ? '#dce6f0' : COLORS.naveSlateRoof}
+                  roughness={isWinter ? 0.88 : 0.78}
+                  metalness={isWinter ? 0.04 : 0.12}
+                  flatShading
+                />
+              </mesh>
+
+              {/* 6 Vertical Neo-Gothic Stone Buttresses ("opěrné pilíře") stopping cleanly below eaves */}
+              {buttressAngles.map((ang, idx) => {
+                const bx = Math.cos(ang) * (apseRadiusTop + 0.25);
+                const bz = -Math.sin(ang) * (apseRadiusTop + 0.25);
+                return (
+                  <group
+                    key={`apse-but-${idx}`}
+                    position={[bx, 0, bz]}
+                    rotation={[0, ang, 0]}
+                  >
+                    <mesh position={[0.15, 4.1, 0]} castShadow receiveShadow>
+                      <boxGeometry args={[1.35, 8.2, 0.95]} />
+                      <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
+                    </mesh>
+                    <mesh position={[0.02, 10.7, 0]} castShadow receiveShadow>
+                      <boxGeometry args={[0.98, 5.8, 0.78]} />
+                      <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.94} />
+                    </mesh>
+                    {/* Sloped sandstone weather cap stopping safely below the conical roof */}
+                    <mesh position={[0.04, 13.78, 0]} rotation={[0, 0, -0.45]}>
+                      <boxGeometry args={[1.08, 0.32, 0.86]} />
+                      <meshStandardMaterial color={COLORS.sandstoneDark} roughness={0.95} />
+                    </mesh>
+                  </group>
+                );
+              })}
+
+              {/* 5 Tall, Narrow Recessed Gothic Lancet Windows on the outward apse wall facets */}
+              {windowAngles.map((ang, idx) => {
+                const wx = Math.cos(ang) * (apothem + 0.08);
+                const wz = -Math.sin(ang) * (apothem + 0.08);
+                return (
+                  <group
+                    key={`apse-win-${idx}`}
+                    position={[wx, 7.8, wz]}
+                    rotation={[0, ang + Math.PI / 2, 0]}
+                  >
+                    <GothicWindow position={[0, 0, 0]} width={1.35} height={7.4} />
+                  </group>
+                );
+              })}
+            </group>
+          );
+        })()}
       </group>
   );
 }
 
-export function Tower({ cameraCollidersRef }: TowerProps) {
+export function Tower({ cameraCollidersRef, isWinter = false }: TowerProps) {
   const collidersGroupRef = useRef<THREE.Group>(null);
 
   useEffect(() => {
@@ -469,7 +610,7 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
       </group>
 
       {/* Main Neo-Gothic Church Nave (chrámová loď) below */}
-      <ChurchNave groundY={groundY} coreHalf={coreHalf} />
+      <ChurchNave groundY={groundY} coreHalf={coreHalf} isWinter={isWinter} />
 
       {/* Carved Sandstone Gothic Corbel Brackets (krakorce) supporting the stone ochoz */}
       {SIDES.map((side) => (
@@ -621,7 +762,7 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
           </group>
         ))}
 
-        {/* DISTINCTIVE TALL OXIDIZED GREEN COPPER SPIRE (MĚDĚNKA) */}
+        {/* DISTINCTIVE TALL OXIDIZED GREEN COPPER SPIRE (MĚDĚNKA — frosted snow-dusted in Winter Mode) */}
         {/* Flared copper base hip skirt transitioning from square room to octagonal needle */}
         <mesh
           position={[0, watchRoomHeight + 1.15, 0]}
@@ -630,9 +771,9 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
         >
           <cylinderGeometry args={[coreHalf * 0.72, coreHalf * 1.48, 1.75, 4]} />
           <meshStandardMaterial
-            color={COLORS.copperLight}
-            roughness={0.52}
-            metalness={0.36}
+            color={isWinter ? '#d8e7ee' : COLORS.copperLight}
+            roughness={isWinter ? 0.82 : 0.52}
+            metalness={isWinter ? 0.08 : 0.36}
             flatShading
           />
         </mesh>
@@ -641,9 +782,9 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
         <mesh position={[0, watchRoomHeight + 2.45, 0]} castShadow>
           <cylinderGeometry args={[coreHalf * 0.56, coreHalf * 0.68, 1.1, 8]} />
           <meshStandardMaterial
-            color={COLORS.copperDark}
-            roughness={0.55}
-            metalness={0.38}
+            color={isWinter ? '#aac4ca' : COLORS.copperDark}
+            roughness={isWinter ? 0.8 : 0.55}
+            metalness={isWinter ? 0.1 : 0.38}
             flatShading
           />
         </mesh>
@@ -652,9 +793,9 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
         <mesh position={[0, watchRoomHeight + 9.4, 0]} castShadow>
           <coneGeometry args={[coreHalf * 0.6, 13.0, 8]} />
           <meshStandardMaterial
-            color={COLORS.copperMain}
-            roughness={0.48}
-            metalness={0.4}
+            color={isWinter ? '#cce0e8' : COLORS.copperMain}
+            roughness={isWinter ? 0.82 : 0.48}
+            metalness={isWinter ? 0.08 : 0.4}
             flatShading
           />
         </mesh>
@@ -664,11 +805,19 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
           <group key={`spire-dormer-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
             <mesh position={[0, watchRoomHeight + 3.6, coreHalf * 0.56]} castShadow>
               <boxGeometry args={[0.55, 1.05, 0.45]} />
-              <meshStandardMaterial color={COLORS.copperDark} roughness={0.55} metalness={0.35} />
+              <meshStandardMaterial
+                color={isWinter ? '#aac4ca' : COLORS.copperDark}
+                roughness={isWinter ? 0.8 : 0.55}
+                metalness={isWinter ? 0.1 : 0.35}
+              />
             </mesh>
             <mesh position={[0, watchRoomHeight + 4.45, coreHalf * 0.56]}>
               <coneGeometry args={[0.42, 0.75, 4]} />
-              <meshStandardMaterial color={COLORS.copperLight} roughness={0.5} metalness={0.38} />
+              <meshStandardMaterial
+                color={isWinter ? '#dce9f2' : COLORS.copperLight}
+                roughness={isWinter ? 0.82 : 0.5}
+                metalness={isWinter ? 0.08 : 0.38}
+              />
             </mesh>
           </group>
         ))}
@@ -758,13 +907,13 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
             <cylinderGeometry args={[0.42, 0.34, 0.24, 8]} />
             <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.92} />
           </mesh>
-          {/* Tall needle-sharp oxidized green copper corner turret spire (matches photo 1 & 2) */}
+          {/* Tall needle-sharp oxidized green copper corner turret spire (frosted in Winter Mode) */}
           <mesh position={[0, 6.25, 0]} castShadow>
             <coneGeometry args={[0.46, 5.2, 8]} />
             <meshStandardMaterial
-              color={COLORS.copperMain}
-              roughness={0.48}
-              metalness={0.4}
+              color={isWinter ? '#cfe2ea' : COLORS.copperMain}
+              roughness={isWinter ? 0.82 : 0.48}
+              metalness={isWinter ? 0.08 : 0.4}
               flatShading
             />
           </mesh>
@@ -787,7 +936,7 @@ export function Tower({ cameraCollidersRef }: TowerProps) {
         receiveShadow
       >
         <circleGeometry args={[1200, 48]} />
-        <meshStandardMaterial color="#758465" roughness={1} />
+        <meshStandardMaterial color={isWinter ? '#dce6f0' : '#758465'} roughness={1} />
       </mesh>
     </group>
   );

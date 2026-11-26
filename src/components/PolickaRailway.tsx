@@ -12,6 +12,7 @@ import { NIGHT_MATERIALS, timeOfDayState } from '../game/timeOfDay';
 
 interface PolickaRailwayProps {
   railway: OsmRailwayData;
+  isWinter?: boolean;
 }
 
 const RAIL_Y = TOWN_Y + 0.28;
@@ -129,10 +130,14 @@ function buildTrackRibbon(
 function HistoricPolickaStation({
   position,
   rotationY,
+  isWinter = false,
 }: {
   position: [number, number, number];
   rotationY: number;
+  isWinter?: boolean;
 }) {
+  const stationRoofCol = isWinter ? '#e0e9f2' : COLORS.stationRoof;
+  const awningCol = isWinter ? '#d5e0ec' : COLORS.stationAwning;
   const mainRoofGeom = usePitchedRoofGeometry(10.8, 22.8, 3.8);
   const gableDormerGeom = usePitchedRoofGeometry(6.8, 10.6, 2.5);
 
@@ -182,7 +187,7 @@ function HistoricPolickaStation({
           castShadow
           receiveShadow
         >
-          <meshStandardMaterial color={COLORS.stationRoof} roughness={0.84} flatShading />
+          <meshStandardMaterial color={stationRoofCol} roughness={0.84} flatShading />
         </mesh>
         {/* Central cross-gable projection facing the railway tracks */}
         <mesh position={[0, 4.8, -0.4]} castShadow receiveShadow>
@@ -195,7 +200,7 @@ function HistoricPolickaStation({
           castShadow
           receiveShadow
         >
-          <meshStandardMaterial color={COLORS.stationRoof} roughness={0.84} flatShading />
+          <meshStandardMaterial color={stationRoofCol} roughness={0.84} flatShading />
         </mesh>
 
         {/* Two brick station chimneys */}
@@ -231,7 +236,7 @@ function HistoricPolickaStation({
         {/* Classic wooden platform awning along track side */}
         <mesh position={[0, 3.75, -6.5]} rotation={[-0.25, 0, 0]} castShadow receiveShadow>
           <boxGeometry args={[21.5, 0.2, 3.6]} />
-          <meshStandardMaterial color={COLORS.stationAwning} roughness={0.85} />
+          <meshStandardMaterial color={awningCol} roughness={0.85} />
         </mesh>
         {[-9.6, -4.8, 0, 4.8, 9.6].map((px, i) => (
           <mesh key={`aw-post-${i}`} position={[px, 1.85, -8.0]} castShadow>
@@ -261,7 +266,7 @@ function HistoricPolickaStation({
         {/* Pyramidal terracotta water-tower roof */}
         <mesh position={[0, 11.7, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
           <coneGeometry args={[4.2, 3.4, 4]} />
-          <meshStandardMaterial color={COLORS.stationRoof} roughness={0.84} flatShading />
+          <meshStandardMaterial color={stationRoofCol} roughness={0.84} flatShading />
         </mesh>
         {/* Iron water crane column beside the track */}
         <mesh position={[-3.2, 2.4, -3.4]} castShadow>
@@ -461,7 +466,7 @@ function VintageCarriage({ color }: { color: string }) {
  * Real historic 1896–1897 Polička railway line, Austro-Hungarian provincial station,
  * and animated steam train puffing white steam along the OSM track curve.
  */
-export function PolickaRailway({ railway }: PolickaRailwayProps) {
+export function PolickaRailway({ railway, isWinter = false }: PolickaRailwayProps) {
   const sleeperRef = useRef<THREE.InstancedMesh>(null);
   const steamRef = useRef<THREE.InstancedMesh>(null);
   const trainGroupRef = useRef<THREE.Group>(null);
@@ -853,6 +858,7 @@ export function PolickaRailway({ railway }: PolickaRailwayProps) {
       <HistoricPolickaStation
         position={stationWorldTransform.position}
         rotationY={stationWorldTransform.rotationY}
+        isWinter={isWinter}
       />
 
       {/* Animated 1900 Steam Train: Locomotive + Coal Tender + 2–4 Vintage Carriages */}

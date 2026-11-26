@@ -4,6 +4,16 @@ import { Sparkles } from '@react-three/drei';
 import * as THREE from 'three';
 import { timeOfDayState } from '../game/timeOfDay';
 
+// Crisp winter sky & daylight tint targets (zero per-frame allocations)
+const WINTER_SKY_TOP = new THREE.Color('#6688b0');
+const WINTER_SKY_MID = new THREE.Color('#b6cce0');
+const WINTER_SKY_HORIZON = new THREE.Color('#dce8f2');
+const WINTER_GROUND = new THREE.Color('#c8d4e0');
+const WINTER_FOG = new THREE.Color('#d2e0ec');
+const WINTER_HEMI_SKY = new THREE.Color('#d8e8f8');
+const WINTER_HEMI_GROUND = new THREE.Color('#9fb0c2');
+const WINTER_DIR_COL = new THREE.Color('#eef5ff');
+
 const SKY_VERTEX_SHADER = /* glsl */ `
   varying vec3 vSkyDirection;
   void main() {
@@ -257,6 +267,15 @@ export function Atmosphere() {
     skyUniforms.uSunStrength.value = k0.sunStrength + (k1.sunStrength - k0.sunStrength) * u;
     skyUniforms.uMoonStrength.value = timeOfDayState.starFactor;
 
+    // Subtle crisp winter cooling during daytime/sunset while keeping dusk/night warm lights cozy
+    const winterDayWeight = timeOfDayState.isWinter ? Math.max(0, 1 - timeOfDayState.nightFactor * 0.72) : 0;
+    if (winterDayWeight > 0.001) {
+      skyUniforms.uTopColor.value.lerp(WINTER_SKY_TOP, winterDayWeight * 0.32);
+      skyUniforms.uMidColor.value.lerp(WINTER_SKY_MID, winterDayWeight * 0.42);
+      skyUniforms.uHorizonColor.value.lerp(WINTER_SKY_HORIZON, winterDayWeight * 0.48);
+      skyUniforms.uGroundColor.value.lerp(WINTER_GROUND, winterDayWeight * 0.55);
+    }
+
     const sunDir = sunDirScratchRef.current
       .copy(k0.dirPos)
       .lerp(k1.dirPos, u);
@@ -264,18 +283,31 @@ export function Atmosphere() {
 
     if (bgColorRef.current) {
       bgColorRef.current.copy(k0.fog).lerp(k1.fog, u);
+      if (winterDayWeight > 0.001) {
+        bgColorRef.current.lerp(WINTER_FOG, winterDayWeight * 0.52);
+      }
     }
     if (fogRef.current) {
       fogRef.current.color.copy(k0.fog).lerp(k1.fog, u);
+      if (winterDayWeight > 0.001) {
+        fogRef.current.color.lerp(WINTER_FOG, winterDayWeight * 0.52);
+      }
     }
     if (hemiRef.current) {
       hemiRef.current.color.copy(k0.hemiSky).lerp(k1.hemiSky, u);
       hemiRef.current.groundColor.copy(k0.hemiGround).lerp(k1.hemiGround, u);
+      if (winterDayWeight > 0.001) {
+        hemiRef.current.color.lerp(WINTER_HEMI_SKY, winterDayWeight * 0.45);
+        hemiRef.current.groundColor.lerp(WINTER_HEMI_GROUND, winterDayWeight * 0.55);
+      }
       hemiRef.current.intensity = k0.hemiIntensity + (k1.hemiIntensity - k0.hemiIntensity) * u;
     }
     if (dirLightRef.current) {
       dirLightRef.current.position.copy(sunDir);
       dirLightRef.current.color.copy(k0.dirColor).lerp(k1.dirColor, u);
+      if (winterDayWeight > 0.001) {
+        dirLightRef.current.color.lerp(WINTER_DIR_COL, winterDayWeight * 0.42);
+      }
       dirLightRef.current.intensity = k0.dirIntensity + (k1.dirIntensity - k0.dirIntensity) * u;
     }
     if (rimLightRef.current) {

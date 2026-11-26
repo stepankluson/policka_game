@@ -11,6 +11,7 @@ interface FireWatchWorldProps {
   roadGraph: RoadGraph;
   onFireEngineArrived: () => void;
   onExtinguishComplete: () => void;
+  isWinter?: boolean;
 }
 
 const FLAME_COUNT = 14;
@@ -396,6 +397,7 @@ export function FireWatchWorld({
   roadGraph,
   onFireEngineArrived,
   onExtinguishComplete,
+  isWinter = false,
 }: FireWatchWorldProps) {
   const flameMeshRef = useRef<THREE.InstancedMesh>(null);
   const smokeMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -722,28 +724,54 @@ export function FireWatchWorld({
         />
       </instancedMesh>
 
-      {/* === 1. ACTIVE ROOF FIRE: LOW-POLY FLICKERING FLAMES + SMOKE/STEAM + 1 POINTLIGHT === */}
+      {/* === 1. ACTIVE ROOF FIRE: MELTED-SNOW SCORCHED PATCH (WINTER) + FLAMES + SMOKE + POINTLIGHT === */}
       {showFire && (
         <>
+          {/* Dark wet/scorched melted-snow roof patch beneath active flames in Winter Mode (zero Z-fighting) */}
+          {isWinter && fireWatch.currentTarget && (
+            <mesh
+              position={[
+                fireWatch.currentTarget.position[0],
+                fireWatch.currentTarget.position[1] + 0.16,
+                fireWatch.currentTarget.position[2],
+              ]}
+              rotation={[-Math.PI / 2, 0, fireWatch.currentTarget.rotY]}
+              renderOrder={84}
+            >
+              <circleGeometry args={[4.4, 12]} />
+              <meshStandardMaterial
+                color="#1c1614"
+                emissive="#ff4208"
+                emissiveIntensity={0.68}
+                roughness={0.95}
+                polygonOffset
+                polygonOffsetFactor={-4}
+                polygonOffsetUnits={-4}
+              />
+            </mesh>
+          )}
+
           <instancedMesh
             ref={flameMeshRef}
             args={[undefined, undefined, FLAME_COUNT]}
+            renderOrder={90}
             frustumCulled={false}
           >
             <octahedronGeometry args={[0.75, 0]} />
-            <meshBasicMaterial toneMapped={false} />
+            <meshBasicMaterial toneMapped={false} depthWrite={false} />
           </instancedMesh>
 
           <instancedMesh
             ref={smokeMeshRef}
             args={[undefined, undefined, SMOKE_COUNT]}
+            renderOrder={88}
             frustumCulled={false}
           >
             <icosahedronGeometry args={[0.92, 0]} />
             <meshStandardMaterial
               roughness={0.95}
               transparent
-              opacity={0.72}
+              opacity={0.76}
               depthWrite={false}
             />
           </instancedMesh>
@@ -751,8 +779,8 @@ export function FireWatchWorld({
           <pointLight
             ref={fireLightRef}
             color="#ff7a24"
-            intensity={120}
-            distance={75}
+            intensity={isWinter ? 155 : 120}
+            distance={isWinter ? 88 : 75}
             decay={1.8}
             castShadow={false}
           />

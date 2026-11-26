@@ -207,11 +207,13 @@ export function BaroqueTownHall({
   rotationY,
   width,
   length,
+  isWinter = false,
 }: {
   position: [number, number, number];
   rotationY: number;
   width: number;
   length: number;
+  isWinter?: boolean;
 }) {
   const wallH = 12.4;
   const halfW = width / 2;
@@ -486,16 +488,16 @@ export function BaroqueTownHall({
         receiveShadow
       >
         <meshStandardMaterial
-          color={TH_COLORS.slateRoof}
-          roughness={0.72}
-          metalness={0.15}
+          color={isWinter ? '#dce6f0' : TH_COLORS.slateRoof}
+          roughness={isWinter ? 0.88 : 0.72}
+          metalness={isWinter ? 0.04 : 0.15}
         />
       </mesh>
 
       {/* Subtle mansard break molding at y = 15.95 */}
       <mesh position={[0, 15.95, 0]}>
         <boxGeometry args={[width - 3.4, 0.18, length - 3.4]} />
-        <meshStandardMaterial color={TH_COLORS.slateDark} roughness={0.74} />
+        <meshStandardMaterial color={isWinter ? '#cfdbe8' : TH_COLORS.slateDark} roughness={0.74} />
       </mesh>
 
       {/* Upper hipped rectangular roof crown (y = 15.95 -> 18.15) */}
@@ -506,9 +508,9 @@ export function BaroqueTownHall({
         receiveShadow
       >
         <meshStandardMaterial
-          color={TH_COLORS.slateUpper}
-          roughness={0.74}
-          metalness={0.15}
+          color={isWinter ? '#e5eef6' : TH_COLORS.slateUpper}
+          roughness={isWinter ? 0.88 : 0.74}
+          metalness={isWinter ? 0.04 : 0.15}
         />
       </mesh>
 
@@ -590,49 +592,81 @@ export function BaroqueTownHall({
           </group>
         ))}
 
-        {/* Dark copper/slate Baroque onion dome (cibulová báň) */}
+        {/* Dark copper/slate Baroque onion dome (cibulová báň — frosted snow-dusted in Winter Mode) */}
         <mesh position={[0, 7.6, 0]} castShadow>
           <cylinderGeometry args={[2.45, 2.75, 1.1, 8]} />
-          <meshStandardMaterial color={TH_COLORS.domeCopper} roughness={0.52} metalness={0.32} />
+          <meshStandardMaterial
+            color={isWinter ? '#b6c9d9' : TH_COLORS.domeCopper}
+            roughness={isWinter ? 0.82 : 0.52}
+            metalness={isWinter ? 0.08 : 0.32}
+          />
         </mesh>
         <mesh position={[0, 9.25, 0]} scale={[1, 0.82, 1]} castShadow>
           <sphereGeometry args={[2.65, 12, 10]} />
-          <meshStandardMaterial color={TH_COLORS.domeCopper} roughness={0.5} metalness={0.34} />
+          <meshStandardMaterial
+            color={isWinter ? '#d5e2ee' : TH_COLORS.domeCopper}
+            roughness={isWinter ? 0.84 : 0.5}
+            metalness={isWinter ? 0.06 : 0.34}
+          />
         </mesh>
         <mesh position={[0, 11.0, 0]} castShadow>
           <cylinderGeometry args={[1.25, 2.1, 1.6, 8]} />
-          <meshStandardMaterial color={TH_COLORS.slateDark} roughness={0.55} metalness={0.3} />
+          <meshStandardMaterial
+            color={isWinter ? '#c8d8e6' : TH_COLORS.slateDark}
+            roughness={isWinter ? 0.84 : 0.55}
+            metalness={isWinter ? 0.06 : 0.3}
+          />
         </mesh>
 
         {/* Open Octagonal Lantern (8 slender columns) */}
         <group position={[0, 12.8, 0]}>
           <mesh position={[0, -0.95, 0]}>
             <cylinderGeometry args={[1.45, 1.45, 0.25, 8]} />
-            <meshStandardMaterial color={TH_COLORS.domeCopper} roughness={0.55} metalness={0.3} />
+            <meshStandardMaterial
+              color={isWinter ? '#c4d5e4' : TH_COLORS.domeCopper}
+              roughness={isWinter ? 0.82 : 0.55}
+              metalness={isWinter ? 0.08 : 0.3}
+            />
           </mesh>
           {Array.from({ length: 8 }, (_, idx) => {
             const a = (idx / 8) * Math.PI * 2;
             return (
               <mesh key={`lan-col-${idx}`} position={[Math.sin(a) * 1.15, 0, Math.cos(a) * 1.15]}>
                 <cylinderGeometry args={[0.1, 0.12, 1.85, 6]} />
-                <meshStandardMaterial color={TH_COLORS.domeCopper} roughness={0.52} metalness={0.32} />
+                <meshStandardMaterial
+                  color={isWinter ? '#8ca0b2' : TH_COLORS.domeCopper}
+                  roughness={isWinter ? 0.72 : 0.52}
+                  metalness={isWinter ? 0.14 : 0.32}
+                />
               </mesh>
             );
           })}
           <mesh position={[0, 0.95, 0]}>
             <cylinderGeometry args={[1.48, 1.4, 0.28, 8]} />
-            <meshStandardMaterial color={TH_COLORS.domeCopper} roughness={0.55} metalness={0.3} />
+            <meshStandardMaterial
+              color={isWinter ? '#dce7f2' : TH_COLORS.domeCopper}
+              roughness={isWinter ? 0.84 : 0.55}
+              metalness={isWinter ? 0.06 : 0.3}
+            />
           </mesh>
         </group>
 
         {/* Smaller Upper Cupola & Gilded Spire Finial */}
         <mesh position={[0, 14.45, 0]} scale={[1, 0.85, 1]} castShadow>
           <sphereGeometry args={[1.22, 10, 8]} />
-          <meshStandardMaterial color={TH_COLORS.domeCopper} roughness={0.5} metalness={0.34} />
+          <meshStandardMaterial
+            color={isWinter ? '#dce7f2' : TH_COLORS.domeCopper}
+            roughness={isWinter ? 0.84 : 0.5}
+            metalness={isWinter ? 0.06 : 0.34}
+          />
         </mesh>
         <mesh position={[0, 16.2, 0]} castShadow>
           <coneGeometry args={[0.85, 2.4, 8]} />
-          <meshStandardMaterial color={TH_COLORS.slateDark} roughness={0.52} metalness={0.32} />
+          <meshStandardMaterial
+            color={isWinter ? '#e2ecf5' : TH_COLORS.slateDark}
+            roughness={isWinter ? 0.84 : 0.52}
+            metalness={isWinter ? 0.06 : 0.32}
+          />
         </mesh>
         <mesh position={[0, 18.0, 0]}>
           <cylinderGeometry args={[0.04, 0.06, 1.8, 6]} />

@@ -8,6 +8,7 @@ interface NorthwestCountrysideProps {
   renderedRoads?: readonly RenderedRoadPolyline[];
   /** Existing OSM railway track used to guarantee zero track clipping */
   railwayTrack?: readonly [number, number][];
+  isWinter?: boolean;
 }
 
 interface ConiferSpec {
@@ -97,6 +98,39 @@ const BUSH_PALETTE = [
   '#75683d',
 ].map((c) => new THREE.Color(c));
 
+const WINTER_CONIFER_LOWER = [
+  '#e4edf5', // heavily snow-laden
+  '#a1b8c2', // frosted sage pine
+  '#7f9ba6', // partially dusted pine
+  '#344f3e', // deep winter spruce
+  '#2b4335', // dark evergreen contrast
+  '#d8e5f0', // icy snow-covered
+].map((c) => new THREE.Color(c));
+
+const WINTER_CONIFER_UPPER = [
+  '#edf4fa', // heavy snow cap
+  '#dbe7f2', // bright frosted top
+  '#c8dae7', // dusted crown
+  '#8ea9b4', // frost-tipped dark pine
+  '#3d5947', // dark spruce tip
+  '#e6eff7', // crisp white snow cap
+].map((c) => new THREE.Color(c));
+
+const WINTER_BROADLEAF_PALETTE = [
+  '#e6eff7',
+  '#d6e3ee',
+  '#9eb4bf',
+  '#7e959f',
+  '#566a65',
+].map((c) => new THREE.Color(c));
+
+const WINTER_BUSH_PALETTE = [
+  '#dce7f1',
+  '#b4c7d2',
+  '#7c949c',
+  '#4b6255',
+].map((c) => new THREE.Color(c));
+
 // Shared module-level materials (zero per-render allocations, strict 60 FPS)
 const MATS = {
   trunk: new THREE.MeshStandardMaterial({ color: '#4d3624', roughness: 0.96 }),
@@ -183,7 +217,21 @@ const WAYSIDE_CROSS_POS = { x: -238, z: -494, rotY: 0.32 } as const;
 export function NorthwestCountryside({
   renderedRoads,
   railwayTrack,
+  isWinter = false,
 }: NorthwestCountrysideProps) {
+  useEffect(() => {
+    MATS.conifer.color.set('#ffffff');
+    MATS.conifer.emissive.set('#000000');
+    MATS.conifer.emissiveIntensity = 0;
+    MATS.broadleaf.color.set('#ffffff');
+    MATS.broadleaf.emissive.set('#000000');
+    MATS.broadleaf.emissiveIntensity = 0;
+    MATS.bush.color.set('#ffffff');
+    MATS.balkGrass.color.set(isWinter ? '#cfdce8' : '#556d43');
+    MATS.farmTrack.color.set(isWinter ? '#8a8680' : '#a39072');
+    MATS.riseGrass.color.set(isWinter ? '#dce6f0' : '#61794b');
+    MATS.lindenCanopy.color.set(isWinter ? '#dce7f1' : '#4d7341');
+  }, [isWinter]);
   const spruceTrunkRef = useRef<THREE.InstancedMesh>(null);
   const spruceLowerRef = useRef<THREE.InstancedMesh>(null);
   const spruceUpperRef = useRef<THREE.InstancedMesh>(null);
@@ -387,13 +435,14 @@ export function NorthwestCountryside({
         d.scale.set(tr.scale * 1.12, tr.scale * 1.08, tr.scale * 1.12);
         d.updateMatrix();
         sLow.setMatrixAt(i, d.matrix);
-        sLow.setColorAt(i, tr.color);
+        const wIdx = (i * 5 + 1) % WINTER_CONIFER_LOWER.length;
+        sLow.setColorAt(i, isWinter ? WINTER_CONIFER_LOWER[wIdx] : tr.color);
 
         d.position.set(tr.x, TOWN_Y + 5.05 * tr.scale, tr.z);
         d.scale.set(tr.scale * 0.78, tr.scale * 0.92, tr.scale * 0.78);
         d.updateMatrix();
         sUp.setMatrixAt(i, d.matrix);
-        sUp.setColorAt(i, tr.color);
+        sUp.setColorAt(i, isWinter ? WINTER_CONIFER_UPPER[wIdx] : tr.color);
       }
       sTrunk.instanceMatrix.needsUpdate = true;
       sLow.instanceMatrix.needsUpdate = true;
@@ -417,7 +466,12 @@ export function NorthwestCountryside({
         d.scale.set(tr.scale * 1.55, tr.scale * 1.35, tr.scale * 1.55);
         d.updateMatrix();
         bCan.setMatrixAt(i, d.matrix);
-        bCan.setColorAt(i, tr.color);
+        bCan.setColorAt(
+          i,
+          isWinter
+            ? WINTER_BROADLEAF_PALETTE[(i * 3 + 2) % WINTER_BROADLEAF_PALETTE.length]
+            : tr.color,
+        );
       }
       bTrunk.instanceMatrix.needsUpdate = true;
       bCan.instanceMatrix.needsUpdate = true;
@@ -433,12 +487,17 @@ export function NorthwestCountryside({
         d.scale.set(b.scaleX, b.scaleY, b.scaleX * 0.92);
         d.updateMatrix();
         bushMesh.setMatrixAt(i, d.matrix);
-        bushMesh.setColorAt(i, b.color);
+        bushMesh.setColorAt(
+          i,
+          isWinter
+            ? WINTER_BUSH_PALETTE[(i * 3 + 1) % WINTER_BUSH_PALETTE.length]
+            : b.color,
+        );
       }
       bushMesh.instanceMatrix.needsUpdate = true;
       if (bushMesh.instanceColor) bushMesh.instanceColor.needsUpdate = true;
     }
-  }, [conifers, broadleaves, bushes]);
+  }, [conifers, broadleaves, bushes, isWinter]);
 
   return (
     <group name="northwest-north-countryside-1900">
@@ -464,7 +523,15 @@ export function NorthwestCountryside({
           >
             <planeGeometry args={[f.width, f.length]} />
             <meshStandardMaterial
-              color={f.color}
+              color={
+                isWinter
+                  ? idx % 3 === 0
+                    ? '#e2eaf2'
+                    : idx % 3 === 1
+                      ? '#d5e1ec'
+                      : '#cad6e2'
+                  : f.color
+              }
               roughness={0.98}
               depthWrite={false}
               polygonOffset

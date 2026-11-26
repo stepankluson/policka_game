@@ -8,14 +8,19 @@ import {
   type CompassDirection,
   type FireWatchState,
 } from '../game/fireWatch';
+import { GALLERY_RIFLE_LOCAL_POS } from '../game/jackdawHunt';
 
 interface FireWatchGalleryPropsProps {
   fireWatch: FireWatchState;
+  hideGalleryRifle?: boolean;
 }
 
 const DIRECTIONS: readonly CompassDirection[] = ['south', 'east', 'north', 'west'];
 
-export function FireWatchGalleryProps({ fireWatch }: FireWatchGalleryPropsProps) {
+export function FireWatchGalleryProps({
+  fireWatch,
+  hideGalleryRifle = false,
+}: FireWatchGalleryPropsProps) {
   const ropeGroupRef = useRef<THREE.Group>(null);
   const bellRingRef = useRef<THREE.Mesh>(null);
   const hookBeaconRef = useRef<THREE.Mesh>(null);
@@ -80,6 +85,62 @@ export function FireWatchGalleryProps({ fireWatch }: FireWatchGalleryPropsProps)
 
   return (
     <group name="fire-watch-gallery-props">
+      {/* === 1B. LEANING ~1900 HUNTING RIFLE PROP (opposite side of Birth Room door from bell rope) === */}
+      {!hideGalleryRifle && (
+        <group
+          name="gallery-leaning-rifle"
+          position={[GALLERY_RIFLE_LOCAL_POS[0], 0, GALLERY_RIFLE_LOCAL_POS[2]]}
+          rotation={[-0.17, 0.14, 0.08]}
+        >
+          {/* Brass buttplate resting on gallery planks */}
+          <mesh position={[0, 0.03, 0]} castShadow>
+            <boxGeometry args={[0.055, 0.04, 0.14]} />
+            <meshStandardMaterial color="#c8a048" roughness={0.35} metalness={0.78} />
+          </mesh>
+          {/* Tapered walnut buttstock */}
+          <mesh position={[0, 0.24, 0.01]} rotation={[0.08, 0, 0]} castShadow>
+            <boxGeometry args={[0.052, 0.42, 0.125]} />
+            <meshStandardMaterial color="#59351e" roughness={0.82} flatShading />
+          </mesh>
+          {/* Wrist & receiver wooden body */}
+          <mesh position={[0, 0.58, 0.025]} castShadow>
+            <boxGeometry args={[0.054, 0.34, 0.075]} />
+            <meshStandardMaterial color="#59351e" roughness={0.82} flatShading />
+          </mesh>
+          {/* Forestock */}
+          <mesh position={[0, 0.96, 0.028]} castShadow>
+            <boxGeometry args={[0.046, 0.44, 0.055]} />
+            <meshStandardMaterial color="#633c22" roughness={0.82} flatShading />
+          </mesh>
+          {/* Blued-steel receiver & long barrel */}
+          <mesh position={[0, 1.06, -0.008]} castShadow>
+            <cylinderGeometry args={[0.018, 0.022, 0.96, 7]} />
+            <meshStandardMaterial color="#2a2e34" roughness={0.42} metalness={0.72} />
+          </mesh>
+          {/* Bolt handle & trigger guard */}
+          <mesh position={[0.045, 0.62, -0.005]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.008, 0.008, 0.07, 6]} />
+            <meshStandardMaterial color="#3c4048" roughness={0.38} metalness={0.78} />
+          </mesh>
+          <mesh position={[0, 0.52, 0.072]}>
+            <boxGeometry args={[0.018, 0.09, 0.045]} />
+            <meshStandardMaterial color="#2a2e34" roughness={0.45} metalness={0.7} />
+          </mesh>
+          {/* Twin brass barrel bands */}
+          {[0.82, 1.14].map((by, idx) => (
+            <mesh key={`rband-${idx}`} position={[0, by, 0.01]}>
+              <boxGeometry args={[0.052, 0.032, 0.068]} />
+              <meshStandardMaterial color="#c8a048" roughness={0.32} metalness={0.8} />
+            </mesh>
+          ))}
+          {/* Front iron sight */}
+          <mesh position={[0, 1.5, -0.028]}>
+            <boxGeometry args={[0.01, 0.024, 0.024]} />
+            <meshStandardMaterial color="#24272c" roughness={0.4} metalness={0.75} />
+          </mesh>
+        </group>
+      )}
+
       {/* === 1. ALARM BELL ROPE (Poplašný zvon) beside the Birth Room door === */}
       <group position={[BELL_ROPE_LOCAL_POS[0], 0, BELL_ROPE_LOCAL_POS[2]]}>
         {/* Fixed iron wall guide bracket */}

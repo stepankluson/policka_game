@@ -46,6 +46,8 @@ export const timeOfDayState = {
   nightFactor: 0,
   /** 0 before 0.55, ramping smoothly to 1 by 0.92 for moon & stars */
   starFactor: 0,
+  /** Persistent toggleable Winter / Snowy Mode ("Zimní mód") */
+  isWinter: false,
 };
 
 /**

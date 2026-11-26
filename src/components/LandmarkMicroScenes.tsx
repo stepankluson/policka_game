@@ -16,6 +16,7 @@ interface LandmarkMicroScenesProps {
   activeScene: ActiveMicroScene | null;
   onSceneComplete: () => void;
   railwayTrack?: readonly [number, number][];
+  isWinter?: boolean;
 }
 
 // Shared module-level flat-shaded materials (strict 60 FPS, zero per-render allocations)
@@ -875,6 +876,89 @@ function SynskyPondVignette({ durationSec }: { durationSec: number }) {
 }
 
 /**
+ * 6B. WINTER FROZEN SYNSKÝ RYBNÍK VIGNETTE:
+ * 4 bundled-up ~1900 ice skaters gliding smoothly along graceful open-ice loops
+ * with 12 pooled sparkling frost crystals rising around them (replaces summer rowboat & fish in Winter Mode).
+ */
+function FrozenPondWinterVignette({ durationSec }: { durationSec: number }) {
+  const rootRef = useRef<THREE.Group>(null);
+  const skaterRefs = useRef<(THREE.Group | null)[]>([]);
+  const frostRef = useRef<THREE.InstancedMesh>(null);
+  const elapsedRef = useRef(0);
+  const FROST_COUNT = 12;
+
+  const skaters: readonly { cx: number; cz: number; rx: number; rz: number; speed: number; phase: number }[] = [
+    { cx: -3, cz: -2, rx: 10.5, rz: 6.5, speed: 0.72, phase: 0.0 },
+    { cx: 5, cz: 3, rx: 9.0, rz: 5.8, speed: -0.68, phase: 1.7 },
+    { cx: -6, cz: 4, rx: 7.5, rz: 5.2, speed: 0.8, phase: 3.1 },
+    { cx: 2, cz: -5, rx: 8.5, rz: 6.0, speed: -0.75, phase: 4.5 },
+  ];
+
+  useFrame((_, rawDelta) => {
+    const dt = Math.min(rawDelta, 0.05);
+    elapsedRef.current += dt;
+    const t = elapsedRef.current;
+    const env = computeEnvelope(t, durationSec);
+
+    if (rootRef.current) rootRef.current.scale.setScalar(Math.max(0.001, env));
+
+    for (let i = 0; i < skaters.length; i++) {
+      const s = skaters[i];
+      const grp = skaterRefs.current[i];
+      if (!grp) continue;
+      const a = t * s.speed + s.phase;
+      const x = s.cx + Math.cos(a) * s.rx;
+      const z = s.cz + Math.sin(a) * s.rz;
+      const vx = -Math.sin(a) * s.rx * s.speed;
+      const vz = Math.cos(a) * s.rz * s.speed;
+      grp.position.set(x, 0.14, z);
+      grp.rotation.set(0, Math.atan2(vx, vz), Math.sin(t * 2.8 + i) * 0.09);
+    }
+
+    const frost = frostRef.current;
+    if (frost) {
+      for (let i = 0; i < FROST_COUNT; i++) {
+        const phase = (t * 0.5 + i / FROST_COUNT) % 1;
+        const ang = i * 1.15 + t * 0.4;
+        const r = 4.5 + (i % 4) * 3.2;
+        const sc = 0.24 * Math.sin(phase * Math.PI) * env;
+        _dummy.position.set(Math.cos(ang) * r, 0.6 + phase * 6.5, Math.sin(ang) * r);
+        _dummy.rotation.set(t + i, t * 0.7, 0);
+        _dummy.scale.setScalar(Math.max(0.001, sc));
+        _dummy.updateMatrix();
+        frost.setMatrixAt(i, _dummy.matrix);
+      }
+      frost.instanceMatrix.needsUpdate = true;
+    }
+  });
+
+  return (
+    <group
+      ref={rootRef}
+      position={[REAL_LANDMARKS.pondCenter[0], TOWN_Y + 0.14, REAL_LANDMARKS.pondCenter[1]]}
+    >
+      {skaters.map((s, idx) => (
+        <group
+          key={`skater-${idx}`}
+          ref={(el) => {
+            skaterRefs.current[idx] = el;
+          }}
+          position={[s.cx, 0.14, s.cz]}
+        >
+          <LowPolyPerson
+            coatMat={PEOPLE_CLOTH_MATS[idx % PEOPLE_CLOTH_MATS.length]}
+            hasHat={true}
+            isWalking={true}
+            walkPhase={idx * 1.4}
+          />
+        </group>
+      ))}
+      <instancedMesh ref={frostRef} args={[G_SPHERE, V_MATS.steamWhite, FROST_COUNT]} />
+    </group>
+  );
+}
+
+/**
  * 7. BAROKNÍ RADNICE (TOWN HALL):
  * Mounted in BaroqueTownHall's exact transform so 7 ~1900 townsfolk walk in and gather cleanly on
  * the open cobblestone pavement in front of the East arched entrance (local x in [12.8, 17.0],
@@ -1103,6 +1187,7 @@ export function LandmarkMicroScenes({
   activeScene,
   onSceneComplete,
   railwayTrack,
+  isWinter = false,
 }: LandmarkMicroScenesProps) {
   const timerRef = useRef(0);
   const completedPlayIdRef = useRef(-1);
@@ -1147,7 +1232,11 @@ export function LandmarkMicroScenes({
     case 'brewery':
       return <BreweryVignette key={key} durationSec={spec.durationSec} />;
     case 'synsky-pond':
-      return <SynskyPondVignette key={key} durationSec={spec.durationSec} />;
+      return isWinter ? (
+        <FrozenPondWinterVignette key={key} durationSec={spec.durationSec} />
+      ) : (
+        <SynskyPondVignette key={key} durationSec={spec.durationSec} />
+      );
     case 'st-michael-cemetery':
       return <StMichaelVignette key={key} durationSec={spec.durationSec} />;
   }

@@ -20,7 +20,7 @@ import {
   pickSpreadDurationSec,
   type FireWatchState,
 } from '../game/fireWatch';
-import type { JackdawHuntState } from '../game/jackdawHunt';
+import { GALLERY_RIFLE_LOCAL_POS, type JackdawHuntState } from '../game/jackdawHunt';
 import type { ActiveMicroScene } from '../game/microScenes';
 import {
   smoothstep,
@@ -202,6 +202,7 @@ interface GameSceneProps {
   onFireMaxSpread: () => void;
   onAimingAtFireChange: (aiming: boolean) => void;
   onNearBellRopeChange: (near: boolean) => void;
+  onNearGalleryRifleChange: (near: boolean) => void;
   onNearSignalHookChange: (near: boolean) => void;
   onFireEngineArrived: () => void;
   onExtinguishComplete: () => void;
@@ -211,6 +212,7 @@ interface GameSceneProps {
   onDuskNightTransition: (isDuskOrNight: boolean) => void;
   activeMicroScene: ActiveMicroScene | null;
   onMicroSceneComplete: () => void;
+  isWinter: boolean;
 }
 
 const TELESCOPE_LOOK_DOT_THRESHOLD = 0.35;
@@ -218,6 +220,8 @@ const TELESCOPE_THIRD_PERSON_RADIUS = 1.4;
 const BELL_ROPE_FREE_ROAM_RADIUS = 1.45;
 const BELL_ROPE_FREE_ROAM_LOOK_DOT = 0.42;
 const BELL_ROPE_FIRE_WATCH_RADIUS = 1.9;
+const GALLERY_RIFLE_RADIUS = 1.45;
+const GALLERY_RIFLE_LOOK_DOT = 0.42;
 
 /**
  * Unified exterior gallery interaction sensor using a combined distance + horizontal look-direction score.
@@ -233,6 +237,7 @@ function GalleryInteractionSensor({
   fireWatchStep,
   onNearDoorChange,
   onNearBellRopeChange,
+  onNearGalleryRifleChange,
   onNearbyTelescopeChange,
 }: {
   playerLocalPosRef: RefObject<THREE.Vector3>;
@@ -243,11 +248,13 @@ function GalleryInteractionSensor({
   fireWatchStep: FireWatchState['step'];
   onNearDoorChange: (near: boolean) => void;
   onNearBellRopeChange: (near: boolean) => void;
+  onNearGalleryRifleChange: (near: boolean) => void;
   onNearbyTelescopeChange: (id: TelescopeId | null) => void;
 }) {
   const { camera } = useThree();
   const lastNearDoorRef = useRef(false);
   const lastNearBellRef = useRef(false);
+  const lastNearRifleRef = useRef(false);
   const lastTelescopeRef = useRef<TelescopeId | null>(null);
 
   const camDirRef = useRef(new THREE.Vector3());
@@ -262,6 +269,10 @@ function GalleryInteractionSensor({
       if (lastNearBellRef.current) {
         lastNearBellRef.current = false;
         onNearBellRopeChange(false);
+      }
+      if (lastNearRifleRef.current) {
+        lastNearRifleRef.current = false;
+        onNearGalleryRifleChange(false);
       }
       if (lastTelescopeRef.current !== null) {
         lastTelescopeRef.current = null;
@@ -285,7 +296,7 @@ function GalleryInteractionSensor({
         ? eyePosRef.current.copy(camera.position)
         : eyePosRef.current.set(pWorld.x, pWorld.y + 1.55, pWorld.z);
 
-    let bestKind: 'door' | 'bell' | 'telescope' | null = null;
+    let bestKind: 'door' | 'bell' | 'rifle' | 'telescope' | null = null;
     let bestTelescopeId: TelescopeId | null = null;
     let bestScore = -Infinity;
     let bestDistXZ = Infinity;
@@ -366,6 +377,40 @@ function GalleryInteractionSensor({
       }
     }
 
+    // 2B. Evaluate Gallery Leaning Rifle ("Lov kavek" diegetic launch, free-roam only)
+    if (!fireWatchActive) {
+      const distRifle = Math.hypot(
+        pLocal.x - GALLERY_RIFLE_LOCAL_POS[0],
+        pLocal.z - GALLERY_RIFLE_LOCAL_POS[2],
+      );
+      if (distRifle <= GALLERY_RIFLE_RADIUS) {
+        const [rifleWx, , rifleWz] = churchLocalToWorld(
+          GALLERY_RIFLE_LOCAL_POS[0],
+          0.9,
+          GALLERY_RIFLE_LOCAL_POS[2],
+        );
+        const rx = rifleWx - eyePos.x;
+        const rz = rifleWz - eyePos.z;
+        const rLen = Math.hypot(rx, rz) || 1;
+        const dotRifle = (rx * camDirX + rz * camDirZ) / rLen;
+
+        if (isThirdPerson || dotRifle > GALLERY_RIFLE_LOOK_DOT) {
+          if (isThirdPerson) {
+            if (distRifle < bestDistXZ) {
+              bestDistXZ = distRifle;
+              bestKind = 'rifle';
+            }
+          } else {
+            const score = dotRifle * 2.2 - distRifle * 0.65;
+            if (score > bestScore) {
+              bestScore = score;
+              bestKind = 'rifle';
+            }
+          }
+        }
+      }
+    }
+
     // 3. Evaluate Telescopes:
     //    - Third-person: pure 2D XZ proximity within 1.4m (ignoring camera orbit angle);
     //      closest-object-wins cleanly against door & bell rope
@@ -413,6 +458,7 @@ function GalleryInteractionSensor({
 
     const nextNearDoor = bestKind === 'door';
     const nextNearBell = bestKind === 'bell';
+    const nextNearRifle = bestKind === 'rifle';
     const nextTelescope = bestKind === 'telescope' ? bestTelescopeId : null;
 
     if (nextNearDoor !== lastNearDoorRef.current) {
@@ -422,6 +468,10 @@ function GalleryInteractionSensor({
     if (nextNearBell !== lastNearBellRef.current) {
       lastNearBellRef.current = nextNearBell;
       onNearBellRopeChange(nextNearBell);
+    }
+    if (nextNearRifle !== lastNearRifleRef.current) {
+      lastNearRifleRef.current = nextNearRifle;
+      onNearGalleryRifleChange(nextNearRifle);
     }
     if (nextTelescope !== lastTelescopeRef.current) {
       lastTelescopeRef.current = nextTelescope;
@@ -684,6 +734,7 @@ export function GameScene({
   onFireMaxSpread,
   onAimingAtFireChange,
   onNearBellRopeChange,
+  onNearGalleryRifleChange,
   onNearSignalHookChange,
   onFireEngineArrived,
   onExtinguishComplete,
@@ -693,6 +744,7 @@ export function GameScene({
   onDuskNightTransition,
   activeMicroScene,
   onMicroSceneComplete,
+  isWinter,
 }: GameSceneProps) {
   const playerLocalPosRef = useRef<THREE.Vector3>(
     new THREE.Vector3(
@@ -769,12 +821,15 @@ export function GameScene({
           position={[CHURCH_TRANSFORM.x, 0, CHURCH_TRANSFORM.z]}
           rotation={[0, CHURCH_TRANSFORM.rotationY, 0]}
         >
-          <Tower cameraCollidersRef={cameraCollidersRef} />
+          <Tower cameraCollidersRef={cameraCollidersRef} isWinter={isWinter} />
           <Telescopes
             nearbyTelescope={nearbyTelescope}
             activeTelescope={activeTelescope}
           />
-          <FireWatchGalleryProps fireWatch={fireWatch} />
+          <FireWatchGalleryProps
+            fireWatch={fireWatch}
+            hideGalleryRifle={jackdawHunt.active}
+          />
           <GalleryInteractionSensor
             playerLocalPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
@@ -784,6 +839,7 @@ export function GameScene({
             fireWatchStep={fireWatch.step}
             onNearDoorChange={onNearDoorChange}
             onNearBellRopeChange={onNearBellRopeChange}
+            onNearGalleryRifleChange={onNearGalleryRifleChange}
             onNearbyTelescopeChange={onNearbyTelescopeChange}
           />
           <Player
@@ -808,6 +864,8 @@ export function GameScene({
           hideAmbientJackdaws={jackdawHunt.active}
           activeMicroScene={activeMicroScene}
           onMicroSceneComplete={onMicroSceneComplete}
+          isWinter={isWinter}
+          isInterior={isInterior}
         />
       </group>
 

@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { REAL_LANDMARKS, TOWN_Y } from '../game/pois';
+import { CHURCH_TRANSFORM, REAL_LANDMARKS, TOWN_Y } from '../game/pois';
 import { timeOfDayState } from '../game/timeOfDay';
+
+interface AtmosphericEffectsProps {
+  isWinter?: boolean;
+  isInterior?: boolean;
+}
 
 function mulberry32(seed: number) {
   let a = seed;
@@ -352,12 +357,144 @@ function PondMist() {
   );
 }
 
-/** Subtle, performance-friendly ~1900 Polička atmospheric layers (drifting low-poly clouds + pond mist) */
-export function AtmosphericEffects() {
+const SNOW_COUNT = 850;
+const SNOW_BOX_HALF_XZ = 92;
+const SNOW_MIN_Y = TOWN_Y + 0.5;
+const SNOW_MAX_Y = 34;
+
+/** Creates one soft circular white snowflake dot CanvasTexture (zero hard square edges) */
+function createSnowflakeTexture(): THREE.CanvasTexture {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const half = size * 0.5;
+  const grad = ctx.createRadialGradient(half, half, 0, half, half, half);
+  grad.addColorStop(0.0, 'rgba(255, 255, 255, 0.96)');
+  grad.addColorStop(0.42, 'rgba(242, 248, 255, 0.72)');
+  grad.addColorStop(0.78, 'rgba(230, 242, 255, 0.16)');
+  grad.addColorStop(1.0, 'rgba(225, 240, 255, 0.0)');
+  ctx.clearRect(0, 0, size, size);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * 3. GENTLE FALLING SNOW ("Sněžení", single pooled THREE.Points — 850 soft flakes):
+ * Drifts gently downward with subtle sinusoidal wind sway across the tower gallery & town.
+ * Automatically hidden & paused whenever !active (e.g. summer OR inside Birth Room interior).
+ */
+function SnowfallSystem({ active }: { active: boolean }) {
+  const pointsRef = useRef<THREE.Points>(null);
+
+  const { geometry, speeds, phases } = useMemo(() => {
+    const rand = mulberry32(19001224);
+    const positions = new Float32Array(SNOW_COUNT * 3);
+    const spd = new Float32Array(SNOW_COUNT);
+    const ph = new Float32Array(SNOW_COUNT);
+    const spanY = SNOW_MAX_Y - SNOW_MIN_Y;
+
+    for (let i = 0; i < SNOW_COUNT; i++) {
+      positions[i * 3] = CHURCH_TRANSFORM.x + (rand() - 0.5) * SNOW_BOX_HALF_XZ * 2;
+      positions[i * 3 + 1] = SNOW_MIN_Y + rand() * spanY;
+      positions[i * 3 + 2] = CHURCH_TRANSFORM.z + (rand() - 0.5) * SNOW_BOX_HALF_XZ * 2;
+      spd[i] = 2.4 + rand() * 2.1;
+      ph[i] = rand() * Math.PI * 2;
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return { geometry: geom, speeds: spd, phases: ph };
+  }, []);
+
+  const flakeTexture = useMemo(() => createSnowflakeTexture(), []);
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+      flakeTexture.dispose();
+    };
+  }, [geometry, flakeTexture]);
+
+  useFrame((state, rawDelta) => {
+    const pts = pointsRef.current;
+    if (!pts) return;
+    if (!active) {
+      pts.visible = false;
+      return;
+    }
+    pts.visible = true;
+
+    const dt = Math.min(rawDelta, 0.05);
+    const t = state.clock.getElapsedTime();
+    const posAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
+    const arr = posAttr.array as Float32Array;
+    const cx = CHURCH_TRANSFORM.x;
+    const cz = CHURCH_TRANSFORM.z;
+    const minX = cx - SNOW_BOX_HALF_XZ;
+    const maxX = cx + SNOW_BOX_HALF_XZ;
+    const minZ = cz - SNOW_BOX_HALF_XZ;
+    const maxZ = cz + SNOW_BOX_HALF_XZ;
+    const spanXZ = SNOW_BOX_HALF_XZ * 2;
+    const spanY = SNOW_MAX_Y - SNOW_MIN_Y;
+
+    for (let i = 0; i < SNOW_COUNT; i++) {
+      const i3 = i * 3;
+      const ph = phases[i];
+      let x = arr[i3] + (0.65 + Math.sin(t * 0.75 + ph) * 0.48) * dt;
+      let y = arr[i3 + 1] - speeds[i] * dt;
+      let z = arr[i3 + 2] + (0.25 + Math.cos(t * 0.65 + ph * 1.3) * 0.42) * dt;
+
+      if (y < SNOW_MIN_Y) y += spanY;
+      if (x > maxX) x -= spanXZ;
+      else if (x < minX) x += spanXZ;
+      if (z > maxZ) z -= spanXZ;
+      else if (z < minZ) z += spanXZ;
+
+      arr[i3] = x;
+      arr[i3 + 1] = y;
+      arr[i3 + 2] = z;
+    }
+    posAttr.needsUpdate = true;
+  });
+
+  return (
+    <points
+      ref={pointsRef}
+      name="policka-winter-snowfall"
+      geometry={geometry}
+      visible={active}
+      renderOrder={80}
+      frustumCulled={false}
+    >
+      <pointsMaterial
+        map={flakeTexture}
+        color="#f4f9ff"
+        size={0.55}
+        sizeAttenuation
+        transparent
+        opacity={0.82}
+        depthWrite={false}
+      />
+    </points>
+  );
+}
+
+/** Subtle, performance-friendly ~1900 Polička atmospheric layers (drifting low-poly clouds, summer pond mist & winter snowfall) */
+export function AtmosphericEffects({
+  isWinter = false,
+  isInterior = false,
+}: AtmosphericEffectsProps) {
   return (
     <group name="policka-atmospheric-effects">
       <LowPolyClouds />
-      <PondMist />
+      {!isWinter && <PondMist />}
+      <SnowfallSystem active={isWinter && !isInterior} />
     </group>
   );
 }

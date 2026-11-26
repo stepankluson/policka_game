@@ -7,6 +7,7 @@ interface PolickaBreweryProps {
   position: [number, number, number];
   rotationY?: number;
   burnedIds?: ReadonlySet<string>;
+  isWinter?: boolean;
 }
 
 const COLORS = {
@@ -133,7 +134,14 @@ function BeerBarrel({
  *   ground with square plinth base and decorative corbelled crown ring.
  * - Cobblestone courtyard with wooden beer barrels, crates, and low stone/brick perimeter wall.
  */
-export function PolickaBrewery({ position, rotationY = 0, burnedIds }: PolickaBreweryProps) {
+export function PolickaBrewery({
+  position,
+  rotationY = 0,
+  burnedIds,
+  isWinter = false,
+}: PolickaBreweryProps) {
+  const roofSlateCol = isWinter ? '#d8e3ee' : COLORS.roofSlate;
+  const roofTerraCol = isWinter ? '#e2ebf3' : COLORS.roofTerracotta;
   const mainRoofGeom = usePitchedGableGeometry(15.2, 26.2, 5.4);
   const frontWingRoofGeom = usePitchedGableGeometry(12.2, 15.6, 4.2);
 
@@ -200,7 +208,7 @@ export function PolickaBrewery({ position, rotationY = 0, burnedIds }: PolickaBr
           castShadow
           receiveShadow
         >
-          <meshStandardMaterial color={COLORS.roofSlate} roughness={0.82} flatShading />
+          <meshStandardMaterial color={roofSlateCol} roughness={0.82} flatShading />
         </mesh>
         {/* Ridge beam */}
         <mesh position={[0, 17.85, 0]}>
@@ -285,7 +293,7 @@ export function PolickaBrewery({ position, rotationY = 0, burnedIds }: PolickaBr
           castShadow
           receiveShadow
         >
-          <meshStandardMaterial color={COLORS.roofTerracotta} roughness={0.85} flatShading />
+          <meshStandardMaterial color={roofTerraCol} roughness={0.85} flatShading />
         </mesh>
         <mesh position={[0, 12.6, 0]}>
           <boxGeometry args={[0.38, 0.3, 15.8]} />
@@ -321,7 +329,7 @@ export function PolickaBrewery({ position, rotationY = 0, burnedIds }: PolickaBr
           {/* Sloped loading dock awning */}
           <mesh position={[0, 3.6, 1.35]} rotation={[0.32, 0, 0]} castShadow>
             <boxGeometry args={[9.5, 0.22, 2.9]} />
-            <meshStandardMaterial color={COLORS.roofSlate} roughness={0.85} />
+            <meshStandardMaterial color={roofSlateCol} roughness={0.85} />
           </mesh>
           {/* Timber porch posts */}
           {[-4.2, 0, 4.2].map((px, i) => (
@@ -354,7 +362,7 @@ export function PolickaBrewery({ position, rotationY = 0, burnedIds }: PolickaBr
         {/* Steep pyramidal/hipped malt-kiln roof (hvozd) */}
         <mesh position={[0, 19.2, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
           <coneGeometry args={[8.1, 7.6, 4]} />
-          <meshStandardMaterial color={COLORS.roofTerracotta} roughness={0.84} flatShading />
+          <meshStandardMaterial color={roofTerraCol} roughness={0.84} flatShading />
         </mesh>
 
         {/* Louvered vent turret (odvětrávací komínek hvozdu) on top of the kiln roof */}
@@ -365,7 +373,7 @@ export function PolickaBrewery({ position, rotationY = 0, burnedIds }: PolickaBr
           </mesh>
           <mesh position={[0, 2.15, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
             <coneGeometry args={[1.9, 1.5, 4]} />
-            <meshStandardMaterial color={COLORS.roofSlate} roughness={0.82} flatShading />
+            <meshStandardMaterial color={roofSlateCol} roughness={0.82} flatShading />
           </mesh>
         </group>
 

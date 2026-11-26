@@ -68,6 +68,8 @@ interface TownDioramaProps {
   hideAmbientJackdaws?: boolean;
   activeMicroScene?: ActiveMicroScene | null;
   onMicroSceneComplete?: () => void;
+  isWinter?: boolean;
+  isInterior?: boolean;
 }
 
 interface TreeInstance {
@@ -83,6 +85,15 @@ const TREE_FOLIAGE_COLORS = [
   '#648550',
   '#8f7740',
   '#a16e3b',
+].map((c) => new THREE.Color(c));
+
+const WINTER_TREE_COLORS = [
+  '#e8f0f7', // heavily snow-laden off-white
+  '#dce7f2', // icy blue-white snow
+  '#a0b8c2', // partially frosted snowy sage
+  '#86a2ac', // frosty pine green
+  '#355240', // dark winter spruce peeking through
+  '#2c4637', // deep evergreen contrast
 ].map((c) => new THREE.Color(c));
 
 const EXTRA_CHIMNEY_TOPS = [
@@ -230,6 +241,8 @@ export function TownDiorama({
   hideAmbientJackdaws = false,
   activeMicroScene = null,
   onMicroSceneComplete,
+  isWinter = false,
+  isInterior = false,
 }: TownDioramaProps) {
   const [osmData, setOsmData] = useState<PolickaOsmData | null>(null);
 
@@ -749,12 +762,17 @@ export function TownDiorama({
       d.position.set(tr.x, TOWN_Y + 3.4 * tr.scale, tr.z);
       d.updateMatrix();
       foliageMesh.setMatrixAt(i, d.matrix);
-      foliageMesh.setColorAt(i, tr.color);
+      foliageMesh.setColorAt(
+        i,
+        isWinter
+          ? WINTER_TREE_COLORS[(i * 7 + 3) % WINTER_TREE_COLORS.length]
+          : tr.color,
+      );
     }
     trunkMesh.instanceMatrix.needsUpdate = true;
     foliageMesh.instanceMatrix.needsUpdate = true;
     if (foliageMesh.instanceColor) foliageMesh.instanceColor.needsUpdate = true;
-  }, [treeInstances]);
+  }, [treeInstances, isWinter]);
 
   // Distant Vysočina horizon hills pushed far outside the real OSM town
   const vysocinaHills = useMemo(() => {
@@ -831,7 +849,14 @@ export function TownDiorama({
             <meshStandardMaterial vertexColors roughness={0.9} flatShading />
           </mesh>
           <mesh geometry={merged.roofGeometry} castShadow receiveShadow>
-            <meshStandardMaterial vertexColors roughness={0.84} flatShading />
+            <meshStandardMaterial
+              vertexColors
+              color={isWinter ? '#eef5fc' : '#ffffff'}
+              emissive={isWinter ? '#b6cce0' : '#000000'}
+              emissiveIntensity={isWinter ? 0.44 : 0}
+              roughness={isWinter ? 0.92 : 0.84}
+              flatShading
+            />
           </mesh>
           <mesh geometry={merged.chimneyGeometry} castShadow receiveShadow>
             <meshStandardMaterial vertexColors roughness={0.9} flatShading />
@@ -840,7 +865,7 @@ export function TownDiorama({
           {/* Real OSM Streets + Brewery & Train Station Connecting Roads + Forecourt (y = +0.45) */}
           <mesh geometry={merged.streetsGeometry} renderOrder={70} receiveShadow>
             <meshStandardMaterial
-              color="#b9ad99"
+              color={isWinter ? '#8e8c88' : '#b9ad99'}
               roughness={0.95}
               polygonOffset
               polygonOffsetFactor={-4}
@@ -851,7 +876,7 @@ export function TownDiorama({
           {/* Rustic Packed-Earth Footpath (Pěšina) to St. Michael's Cemetery Entrance Gate (y = +0.45) */}
           <mesh geometry={merged.footpathGeometry} renderOrder={71} receiveShadow>
             <meshStandardMaterial
-              color="#a3937c"
+              color={isWinter ? '#817d77' : '#a3937c'}
               roughness={0.97}
               polygonOffset
               polygonOffsetFactor={-4.5}
@@ -862,7 +887,7 @@ export function TownDiorama({
           {/* Real OSM Parks & Grass (y = +0.15) */}
           <mesh geometry={merged.parksGeometry} renderOrder={40} receiveShadow>
             <meshStandardMaterial
-              color="#5b7a4f"
+              color={isWinter ? '#dce6f0' : '#5b7a4f'}
               roughness={0.96}
               depthWrite={false}
               polygonOffset
@@ -871,12 +896,12 @@ export function TownDiorama({
             />
           </mesh>
 
-          {/* Real OSM Water (Synský rybník, y = +0.25) with rich reflective golden-hour teal-blue */}
+          {/* Real OSM Water (Synský rybník, y = +0.25) — reflective frozen ice in Winter Mode */}
           <mesh geometry={merged.waterGeometry} renderOrder={50}>
             <meshStandardMaterial
-              color="#2d6678"
-              roughness={0.25}
-              metalness={0.15}
+              color={isWinter ? '#b8d5e8' : '#2d6678'}
+              roughness={isWinter ? 0.14 : 0.25}
+              metalness={isWinter ? 0.32 : 0.15}
               polygonOffset
               polygonOffsetFactor={-2}
               polygonOffsetUnits={-2}
@@ -896,7 +921,15 @@ export function TownDiorama({
         >
           <planeGeometry args={[field.w, field.d]} />
           <meshStandardMaterial
-            color={field.color}
+            color={
+              isWinter
+                ? idx % 3 === 0
+                  ? '#e2eaf2'
+                  : idx % 3 === 1
+                    ? '#d6e1ec'
+                    : '#ccd8e4'
+                : field.color
+            }
             roughness={0.98}
             depthWrite={false}
             polygonOffset
@@ -915,7 +948,7 @@ export function TownDiorama({
       >
         <planeGeometry args={[136, 114]} />
         <meshStandardMaterial
-          color="#c2b5a0"
+          color={isWinter ? '#9a9995' : '#c2b5a0'}
           roughness={0.94}
           polygonOffset
           polygonOffsetFactor={-3}
@@ -928,6 +961,7 @@ export function TownDiorama({
         rotationY={thRotY}
         width={thWidth}
         length={thLength}
+        isWinter={isWinter}
       />
       <PlagueColumn position={[pcX, TOWN_Y, pcZ]} />
 
@@ -945,12 +979,14 @@ export function TownDiorama({
         position={[BREWERY_TRANSFORM.x, TOWN_Y, BREWERY_TRANSFORM.z]}
         rotationY={BREWERY_TRANSFORM.rotationY}
         burnedIds={burnedSourceIds}
+        isWinter={isWinter}
       />
 
       {/* Hřbitovní kostel sv. Michaela (1576) & Historic 1900 Cemetery on Horní předměstí */}
       <StMichaelCemetery
         position={[ST_MICHAEL_TRANSFORM.x, TOWN_Y, ST_MICHAEL_TRANSFORM.z]}
         rotationY={ST_MICHAEL_TRANSFORM.rotationY}
+        isWinter={isWinter}
       />
 
       {/* Synský rybník shoreline details (wooden pier, moored rowboat, reeds & cattails) + Wooden Footbridge */}
@@ -958,29 +994,31 @@ export function TownDiorama({
       <SynskyWoodenFootbridge />
 
       {/* 1839 Cadastral Additions: Historic Watermill, South-Bank Buildings & Horní předměstí Suburbs */}
-      <PolickaCadastral1839 burnedIds={burnedSourceIds} />
+      <PolickaCadastral1839 burnedIds={burnedSourceIds} isWinter={isWinter} />
 
       {/* 1903 Third Military Survey Additions: Eastern Factory, 2 Eastern Mills, Shrines, Strip Fields, Orchards & Suburbs */}
-      <PolickaSurvey1903 burnedIds={burnedSourceIds} />
+      <PolickaSurvey1903 burnedIds={burnedSourceIds} isWinter={isWinter} />
 
       {/* Quiet ~1900 NW/N Countryside ("Z – SZ – S"): Forested Hill Slopes, Woodland Groves, Agricultural Fields & Wayside Cross */}
       <NorthwestCountryside
         renderedRoads={streetsResult?.renderedRoadPolylines}
         railwayTrack={osmData?.railway?.track}
+        isWinter={isWinter}
       />
 
-      {/* Lively ~1900 Rural Details: Fenced Sheep Pasture (N–NE), Scattered Haystacks & Pond Swans/Ducks */}
+      {/* Lively ~1900 Rural Details: Fenced Sheep Pasture (N–NE), Scattered Haystacks, Pond Swans/Ducks & South Orchard */}
       <RuralLifeDetails
         renderedRoads={streetsResult?.renderedRoadPolylines}
         railwayTrack={osmData?.railway?.track}
+        isWinter={isWinter}
       />
 
-      {/* Subtle Atmospheric Layers: Slow-Drifting Low-Poly Sky Clouds & Low-Lying Pond Mist */}
-      <AtmosphericEffects />
+      {/* Subtle Atmospheric Layers: Slow-Drifting Low-Poly Sky Clouds, Summer Pond Mist & Winter Snowfall */}
+      <AtmosphericEffects isWinter={isWinter} isInterior={isInterior} />
 
       {/* Real 1896–1897 Polička Railway Line, Historic Station & Randomized Steam Train */}
       {osmData?.railway && osmData.railway.track.length >= 2 && (
-        <PolickaRailway railway={osmData.railway} />
+        <PolickaRailway railway={osmData.railway} isWinter={isWinter} />
       )}
 
       {/* Dynamic Randomized ~1900 Road Traffic (Veteran Motorcars, Carriages, Farm & Brewery Wagons) */}
@@ -998,6 +1036,7 @@ export function TownDiorama({
             roadGraph={merged.roadGraph}
             onFireEngineArrived={onFireEngineArrived}
             onExtinguishComplete={onExtinguishComplete}
+            isWinter={isWinter}
           />
         )}
 
@@ -1037,10 +1076,10 @@ export function TownDiorama({
             <boxGeometry args={[seg.length, 7.2, 2.2]} />
             <meshStandardMaterial color="#9c8263" roughness={0.88} />
           </mesh>
-          {/* Slightly protruding darker stone coping/ledge along the very top */}
+          {/* Slightly protruding stone coping/ledge along the very top (snow-capped in Winter Mode) */}
           <mesh position={[0, 7.45, 0]} castShadow receiveShadow>
             <boxGeometry args={[seg.length + 0.06, 0.55, 2.65]} />
-            <meshStandardMaterial color="#856d51" roughness={0.9} />
+            <meshStandardMaterial color={isWinter ? '#dce6f0' : '#856d51'} roughness={0.9} />
           </mesh>
         </group>
       ))}
@@ -1059,10 +1098,10 @@ export function TownDiorama({
               <cylinderGeometry args={[3.95, 3.8, 0.4, 12]} />
               <meshStandardMaterial color="#856d51" roughness={0.9} />
             </mesh>
-            {/* Tall, steep overhanging dark-brown conical roof */}
+            {/* Tall, steep overhanging conical roof (snow-capped in Winter Mode) */}
             <mesh position={[0, 12.5, 0]} castShadow>
               <coneGeometry args={[4.75, 5.4, 12]} />
-              <meshStandardMaterial color="#3d2e22" roughness={0.85} />
+              <meshStandardMaterial color={isWinter ? '#dce6f0' : '#3d2e22'} roughness={0.85} />
             </mesh>
             {/* Dark spire finial tip */}
             <mesh position={[0, 15.5, 0]}>
@@ -1093,10 +1132,10 @@ export function TownDiorama({
               <cylinderGeometry args={[3.65, 3.2, 0.95, 12]} />
               <meshStandardMaterial color="#856d51" roughness={0.9} />
             </mesh>
-            {/* Slightly lower-pitched overhanging dark-brown conical roof */}
+            {/* Slightly lower-pitched overhanging conical roof (snow-capped in Winter Mode) */}
             <mesh position={[0, 12.45, 0]} castShadow>
               <coneGeometry args={[4.2, 3.9, 12]} />
-              <meshStandardMaterial color="#3d2e22" roughness={0.85} />
+              <meshStandardMaterial color={isWinter ? '#d5e0ec' : '#3d2e22'} roughness={0.85} />
             </mesh>
           </group>
         ),
@@ -1121,7 +1160,11 @@ export function TownDiorama({
             frustumCulled={false}
           >
             <coneGeometry args={[1.6, 3.4, 6]} />
-            <meshStandardMaterial roughness={0.92} flatShading />
+            <meshStandardMaterial
+              color="#ffffff"
+              roughness={0.92}
+              flatShading
+            />
           </instancedMesh>
         </>
       )}
@@ -1136,7 +1179,7 @@ export function TownDiorama({
       )}
 
       {/* === 6. DISTANT VYSOČINA HORIZON HILLS === */}
-      {vysocinaHills.map((hill) => (
+      {vysocinaHills.map((hill, idx) => (
         <mesh
           key={hill.key}
           position={[hill.x, TOWN_Y - 4, hill.z]}
@@ -1144,7 +1187,21 @@ export function TownDiorama({
           scale={[hill.rx, hill.ry, hill.rz]}
         >
           <dodecahedronGeometry args={[1, 1]} />
-          <meshStandardMaterial color={hill.color} roughness={0.98} flatShading />
+          <meshStandardMaterial
+            color={
+              isWinter
+                ? idx % 4 === 0
+                  ? '#d6e2ee'
+                  : idx % 4 === 1
+                    ? '#c6d6e6'
+                    : idx % 4 === 2
+                      ? '#e0e9f2'
+                      : '#bacadd'
+                : hill.color
+            }
+            roughness={0.98}
+            flatShading
+          />
         </mesh>
       ))}
 
@@ -1189,6 +1246,7 @@ export function TownDiorama({
           activeScene={activeMicroScene}
           onSceneComplete={onMicroSceneComplete}
           railwayTrack={osmData?.railway?.track}
+          isWinter={isWinter}
         />
       )}
     </group>

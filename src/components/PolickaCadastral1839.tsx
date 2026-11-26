@@ -51,8 +51,8 @@ const SHARED_MATS = {
     metalness: 0.15,
     side: THREE.DoubleSide,
     polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
   }),
   foam: new THREE.MeshStandardMaterial({
     color: '#eef6fa',
@@ -292,8 +292,8 @@ function HistoricWatermill1839() {
  */
 function MillStreamAndBridge1839() {
   const streamGeometry = useMemo(() => {
-    // 0.01m below Synský rybník (TOWN_Y + 0.25) so the upstream overlap inside the pond has zero z-fighting
-    const y = TOWN_Y + 0.24;
+    // 0.05m below Synský rybník (TOWN_Y + 0.25) with lower renderOrder (48 < 50) for zero z-fighting at all distances
+    const y = TOWN_Y + 0.2;
     const pts3 = MILL_STREAM_POINTS_1839.map(([x, z]) => new THREE.Vector3(x, y, z));
     const curve = new THREE.CatmullRomCurve3(pts3, false, 'centripetal', 0.5);
     const samples = 96;
@@ -354,8 +354,8 @@ function MillStreamAndBridge1839() {
 
   return (
     <group name="mill-stream-and-dam-bridge">
-      {/* Continuous meandering mill stream at exact Synský rybník water height (y = TOWN_Y + 0.25) */}
-      <mesh geometry={streamGeometry} material={SHARED_MATS.millStream} renderOrder={50} />
+      {/* Continuous meandering mill stream (0.05m below pond & renderOrder 48 < 50 for zero Z-fighting) */}
+      <mesh geometry={streamGeometry} material={SHARED_MATS.millStream} renderOrder={48} />
 
       {/* Two low weathered-stone bridge parapet walls (kamenné zábradlí / propustek) on left & right of dam road */}
       <group
@@ -390,6 +390,7 @@ function MillStreamAndBridge1839() {
 
 interface PolickaCadastral1839Props {
   burnedIds?: ReadonlySet<string>;
+  isWinter?: boolean;
 }
 
 /**
@@ -399,7 +400,17 @@ interface PolickaCadastral1839Props {
  * - 20 suburban cottages of Horní předměstí (SW road below St. Michael + Mill Approach road)
  *   (doors, barn gates & day/night windows rendered in unified InstancedMesh batches in TownNightLights)
  */
-export function PolickaCadastral1839({ burnedIds }: PolickaCadastral1839Props) {
+export function PolickaCadastral1839({
+  burnedIds,
+  isWinter = false,
+}: PolickaCadastral1839Props) {
+  useEffect(() => {
+    SHARED_MATS.millRoof.color.set(isWinter ? '#e0e9f2' : '#9e4532');
+    SHARED_MATS.millStream.color.set(isWinter ? '#b8d5e8' : '#2d6678');
+    SHARED_MATS.millStream.roughness = isWinter ? 0.14 : 0.25;
+    SHARED_MATS.millStream.metalness = isWinter ? 0.32 : 0.15;
+    SHARED_MATS.foam.opacity = isWinter ? 0 : 0.72;
+  }, [isWinter]);
   return (
     <group name="policka-1839-cadastral-suburbs">
       {/* 1. Continuous Meandering Mill Stream & Dam Road Stone Bridge Parapets */}
@@ -442,7 +453,11 @@ export function PolickaCadastral1839({ burnedIds }: PolickaCadastral1839Props) {
             castShadow
             receiveShadow
           >
-            <meshStandardMaterial color={b.roofColor} roughness={0.88} flatShading />
+            <meshStandardMaterial
+              color={isWinter ? '#dde7f0' : b.roofColor}
+              roughness={0.88}
+              flatShading
+            />
           </mesh>
         </group>
       ))}
@@ -490,7 +505,11 @@ export function PolickaCadastral1839({ burnedIds }: PolickaCadastral1839Props) {
             castShadow
             receiveShadow
           >
-            <meshStandardMaterial color={h.roofColor} roughness={0.85} flatShading />
+            <meshStandardMaterial
+              color={isWinter ? '#e0e9f2' : h.roofColor}
+              roughness={0.85}
+              flatShading
+            />
           </mesh>
           {/* Small brick chimney */}
           {h.hasChimney && (

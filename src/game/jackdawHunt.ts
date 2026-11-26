@@ -2,6 +2,9 @@ export const JACKDAW_HUNT_DURATION_SEC = 60;
 export const JACKDAW_HUNT_COOLDOWN_SEC = 0.65;
 export const JACKDAW_HUNT_BEST_SCORE_KEY = 'policka_lov_kavek_best_score';
 
+/** Gallery-local position of the leaning ~1900 hunting rifle on the opposite side of the Birth Room door from the bell rope */
+export const GALLERY_RIFLE_LOCAL_POS: readonly [number, number, number] = [-1.65, 0, 3.42];
+
 export interface JackdawHuntState {
   active: boolean;
   phase: 'playing' | 'summary';

@@ -7,6 +7,7 @@ import { NIGHT_MATERIALS } from '../game/timeOfDay';
 interface StMichaelCemeteryProps {
   position: [number, number, number];
   rotationY?: number;
+  isWinter?: boolean;
 }
 
 const CEMETERY_COLORS = {
@@ -83,6 +84,7 @@ function ChurchArchedWindow({ position }: { position: [number, number, number] }
 export function StMichaelCemetery({
   position,
   rotationY = 0,
+  isWinter = false,
 }: StMichaelCemeteryProps) {
   const naveRoofGeom = useGableRoofGeometry(11.4, 16.8, 7.2);
 
@@ -215,7 +217,7 @@ export function StMichaelCemetery({
       >
         <planeGeometry args={[halfW * 2 - 0.8, halfD * 2 - 0.8]} />
         <meshStandardMaterial
-          color={CEMETERY_COLORS.grass}
+          color={isWinter ? '#dce6f0' : CEMETERY_COLORS.grass}
           roughness={0.97}
           depthWrite={false}
           polygonOffset
@@ -278,7 +280,7 @@ export function StMichaelCemetery({
           castShadow
           receiveShadow
         >
-          <meshStandardMaterial color={CEMETERY_COLORS.roofSlate} roughness={0.82} flatShading />
+          <meshStandardMaterial color={isWinter ? '#dce6f0' : CEMETERY_COLORS.roofSlate} roughness={0.82} flatShading />
         </mesh>
         {/* Crisp white plastered gable walls closing both ends of the nave */}
         {[-1, 1].map((xSign) => (
@@ -306,7 +308,7 @@ export function StMichaelCemetery({
           </mesh>
           <mesh position={[0, 8.6, 0]} castShadow>
             <coneGeometry args={[4.4, 5.2, 6]} />
-            <meshStandardMaterial color={CEMETERY_COLORS.roofSlate} roughness={0.82} flatShading />
+            <meshStandardMaterial color={isWinter ? '#dce6f0' : CEMETERY_COLORS.roofSlate} roughness={0.82} flatShading />
           </mesh>
           {/* Apse buttresses (visible in reference photo 2) */}
           {[-0.85, 0, 0.85].map((ang, i) => (
@@ -330,7 +332,7 @@ export function StMichaelCemetery({
           </mesh>
           <mesh position={[0, 3.35, 0.1]} rotation={[0.35, 0, 0]} castShadow>
             <boxGeometry args={[3.8, 0.22, 2.5]} />
-            <meshStandardMaterial color={CEMETERY_COLORS.roofSlate} roughness={0.84} />
+            <meshStandardMaterial color={isWinter ? '#dce6f0' : CEMETERY_COLORS.roofSlate} roughness={0.84} />
           </mesh>
           <mesh position={[0, 1.35, 1.02]}>
             <boxGeometry args={[1.35, 2.35, 0.12]} />
@@ -356,22 +358,22 @@ export function StMichaelCemetery({
           {/* Square base plinth emerging from roof ridge */}
           <mesh position={[0, 1.1, 0]} castShadow>
             <boxGeometry args={[2.0, 2.2, 2.0]} />
-            <meshStandardMaterial color={CEMETERY_COLORS.roofRidge} roughness={0.82} />
+            <meshStandardMaterial color={isWinter ? '#c4d4e2' : CEMETERY_COLORS.roofRidge} roughness={0.82} />
           </mesh>
           {/* Louvered belfry lantern */}
           <mesh position={[0, 2.9, 0]} castShadow>
             <cylinderGeometry args={[0.92, 1.02, 1.7, 8]} />
-            <meshStandardMaterial color={CEMETERY_COLORS.roofSlate} roughness={0.78} flatShading />
+            <meshStandardMaterial color={isWinter ? '#b6c9d9' : CEMETERY_COLORS.roofSlate} roughness={0.78} flatShading />
           </mesh>
-          {/* Baroque dark onion bulb base */}
+          {/* Baroque dark onion bulb base (frosted snow-dusted in Winter Mode) */}
           <mesh position={[0, 4.15, 0]} scale={[1.2, 0.95, 1.2]} castShadow>
             <sphereGeometry args={[0.92, 10, 8]} />
-            <meshStandardMaterial color={CEMETERY_COLORS.roofRidge} roughness={0.72} flatShading />
+            <meshStandardMaterial color={isWinter ? '#d8e5f0' : CEMETERY_COLORS.roofRidge} roughness={0.78} flatShading />
           </mesh>
           {/* Slender tapering spire needle matching the Polička St. Michael silhouette */}
           <mesh position={[0, 7.2, 0]} castShadow>
             <coneGeometry args={[0.72, 5.2, 8]} />
-            <meshStandardMaterial color={CEMETERY_COLORS.roofSlate} roughness={0.75} flatShading />
+            <meshStandardMaterial color={isWinter ? '#e0ebf4' : CEMETERY_COLORS.roofSlate} roughness={0.8} flatShading />
           </mesh>
           {/* Tiny gilded finial orb & cross */}
           <mesh position={[0, 9.95, 0]}>
@@ -481,7 +483,7 @@ export function StMichaelCemetery({
           </mesh>
           <mesh position={[0, 2.2, 0]}>
             <boxGeometry args={[halfW * 2 + 0.16, 0.24, 0.9]} />
-            <meshStandardMaterial color={CEMETERY_COLORS.stoneCap} roughness={0.92} />
+            <meshStandardMaterial color={isWinter ? '#dce6f0' : CEMETERY_COLORS.stoneCap} roughness={0.92} />
           </mesh>
         </group>
       ))}
@@ -493,7 +495,7 @@ export function StMichaelCemetery({
         </mesh>
         <mesh position={[0, 2.2, 0]}>
           <boxGeometry args={[0.9, 0.24, halfD * 2 + 0.16]} />
-          <meshStandardMaterial color={CEMETERY_COLORS.stoneCap} roughness={0.92} />
+          <meshStandardMaterial color={isWinter ? '#dce6f0' : CEMETERY_COLORS.stoneCap} roughness={0.92} />
         </mesh>
       </group>
       {/* East wall split by arched stone entrance gate facing the road toward Polička */}
@@ -505,7 +507,7 @@ export function StMichaelCemetery({
           </mesh>
           <mesh position={[0, 2.2, 0]}>
             <boxGeometry args={[0.9, 0.24, 19.75]} />
-            <meshStandardMaterial color={CEMETERY_COLORS.stoneCap} roughness={0.92} />
+            <meshStandardMaterial color={isWinter ? '#dce6f0' : CEMETERY_COLORS.stoneCap} roughness={0.92} />
           </mesh>
         </group>
       ))}

@@ -6,6 +6,8 @@ export interface MicroSceneSpec {
   durationSec: number;
   /** Short, emoji-free 1-sentence Czech historical caption shown while playing */
   captionCz: string;
+  /** Optional winter-mode caption override (e.g., frozen pond) */
+  winterCaptionCz?: string;
 }
 
 export interface ActiveMicroScene {
@@ -56,6 +58,8 @@ export const MICRO_SCENES: Record<PoiSpec['id'], MicroSceneSpec> = {
     durationSec: 6.2,
     captionCz:
       'Na klidné hladině Synského rybníka klouže dřevěná loďka a nad vodou vyskakují ryby.',
+    winterCaptionCz:
+      'Zima na Synském rybníku: Po zamrzlé hladině kloužou bruslaři v chladném podvečerním vzduchu.',
   },
   'st-michael-cemetery': {
     poiId: 'st-michael-cemetery',

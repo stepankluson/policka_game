@@ -97,6 +97,14 @@ const ORCHARD_COLORS = [
   new THREE.Color('#4d7341'),
 ];
 
+const WINTER_ORCHARD_COLORS = [
+  new THREE.Color('#e6eff7'),
+  new THREE.Color('#d7e4ef'),
+  new THREE.Color('#9db5bf'),
+  new THREE.Color('#7f9aa4'),
+  new THREE.Color('#476251'),
+];
+
 /** 1. Eastern Suburban Factory (`Fb.` — Fabrik on the 1903 map) */
 function EasternSuburbanFactory1903({ burnedIds }: { burnedIds?: ReadonlySet<string> }) {
   const [sx, sTopY, sz] = EASTERN_FACTORY_1903.smokestackLocal;
@@ -456,6 +464,7 @@ function EasternStreamAndBridge1903() {
 
 interface PolickaSurvey1903Props {
   burnedIds?: ReadonlySet<string>;
+  isWinter?: boolean;
 }
 
 /**
@@ -466,7 +475,16 @@ interface PolickaSurvey1903Props {
  * 4. Narrow Agricultural Strip Fields (`lánová plužina`) south of Synský rybník + Western Orchards
  * 5. Suburban plastered house ribbons (`Obere Vorstadt` NE road & Western approach) with night windows
  */
-export function PolickaSurvey1903({ burnedIds }: PolickaSurvey1903Props) {
+export function PolickaSurvey1903({ burnedIds, isWinter = false }: PolickaSurvey1903Props) {
+  useEffect(() => {
+    MATS.slateRoof.color.set(isWinter ? '#d5e0ec' : '#434a53');
+    MATS.terracottaRoof.color.set(isWinter ? '#e2ebf3' : '#9e4532');
+    MATS.lindenCanopy.color.set(isWinter ? '#a8becb' : '#4c7542');
+    MATS.shrub.color.set(isWinter ? '#c0d2df' : '#506b3f');
+    MATS.balkGrass.color.set(isWinter ? '#cfdce8' : '#556e44');
+    MATS.streamWater.color.set(isWinter ? '#b8d5e8' : '#2d6678');
+    MATS.streamWater.roughness = isWinter ? 0.14 : 0.25;
+  }, [isWinter]);
   const wheelRefs = useRef<(THREE.Group | null)[]>([]);
   const foamRefs = useRef<(THREE.Mesh | null)[]>([]);
   const orchardTrunkRef = useRef<THREE.InstancedMesh>(null);
@@ -491,12 +509,17 @@ export function PolickaSurvey1903({ burnedIds }: PolickaSurvey1903Props) {
       d.scale.set(tr.scale * 1.45, tr.scale * 1.25, tr.scale * 1.45);
       d.updateMatrix();
       canopies.setMatrixAt(i, d.matrix);
-      canopies.setColorAt(i, ORCHARD_COLORS[tr.colorIdx % ORCHARD_COLORS.length]);
+      canopies.setColorAt(
+        i,
+        isWinter
+          ? WINTER_ORCHARD_COLORS[(i * 3 + 1) % WINTER_ORCHARD_COLORS.length]
+          : ORCHARD_COLORS[tr.colorIdx % ORCHARD_COLORS.length],
+      );
     }
     trunks.instanceMatrix.needsUpdate = true;
     canopies.instanceMatrix.needsUpdate = true;
     if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
-  }, []);
+  }, [isWinter]);
 
   useFrame((state, rawDelta) => {
     const dt = Math.min(rawDelta, 0.05);
@@ -644,7 +667,15 @@ export function PolickaSurvey1903({ burnedIds }: PolickaSurvey1903Props) {
           >
             <planeGeometry args={[f.width, f.length]} />
             <meshStandardMaterial
-              color={f.color}
+              color={
+                isWinter
+                  ? idx % 3 === 0
+                    ? '#e2eaf2'
+                    : idx % 3 === 1
+                      ? '#d5e0ec'
+                      : '#cad6e2'
+                  : f.color
+              }
               roughness={0.98}
               depthWrite={false}
               polygonOffset
@@ -676,7 +707,11 @@ export function PolickaSurvey1903({ burnedIds }: PolickaSurvey1903Props) {
         frustumCulled={false}
       >
         <dodecahedronGeometry args={[1.25, 0]} />
-        <meshStandardMaterial roughness={0.9} flatShading />
+        <meshStandardMaterial
+          color="#ffffff"
+          roughness={0.9}
+          flatShading
+        />
       </instancedMesh>
 
       {/* 5. Suburban Plastered House Rows (`Obere Vorstadt` NE Road & Western Approach) */}
@@ -710,7 +745,11 @@ export function PolickaSurvey1903({ burnedIds }: PolickaSurvey1903Props) {
             castShadow
             receiveShadow
           >
-            <meshStandardMaterial color={h.roofColor} roughness={0.85} flatShading />
+            <meshStandardMaterial
+              color={isWinter ? '#e0e9f2' : h.roofColor}
+              roughness={0.85}
+              flatShading
+            />
           </mesh>
           {h.hasChimney && (
             <mesh

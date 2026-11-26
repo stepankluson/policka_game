@@ -7,6 +7,7 @@ import { REAL_LANDMARKS, TOWN_Y } from '../game/pois';
 interface RuralLifeDetailsProps {
   renderedRoads?: readonly RenderedRoadPolyline[];
   railwayTrack?: readonly [number, number][];
+  isWinter?: boolean;
 }
 
 // Shared module-level flat-shaded materials (strict 60 FPS, zero per-render allocations)
@@ -40,6 +41,14 @@ const ORCHARD_CROWN_PALETTE = [
   new THREE.Color('#5e884a'),
   new THREE.Color('#466e3d'),
   new THREE.Color('#6b8c4b'),
+];
+
+const WINTER_ORCHARD_CROWN_PALETTE = [
+  new THREE.Color('#e8f0f7'), // heavily snow-laden
+  new THREE.Color('#dae6f1'), // pale icy snow
+  new THREE.Color('#9cb4be'), // frosted sage
+  new THREE.Color('#809ba5'), // dusted winter crown
+  new THREE.Color('#445e4d'), // dark winter foliage peeking through
 ];
 
 const ORCHARD_FRUIT_PALETTE = [
@@ -593,8 +602,10 @@ const ORCHARD_POS = { x: 26, z: 362, rotY: 0.2 } as const;
 
 function SouthFruitOrchard({
   renderedRoads,
+  isWinter = false,
 }: {
   renderedRoads?: readonly RenderedRoadPolyline[];
+  isWinter?: boolean;
 }) {
   const trunkRef = useRef<THREE.InstancedMesh>(null);
   const crownMainRef = useRef<THREE.InstancedMesh>(null);
@@ -738,7 +749,9 @@ function SouthFruitOrchard({
         d.scale.set(t.scale * 1.15, t.scale * 0.95, t.scale * 1.15);
         d.updateMatrix();
         cmMesh.setMatrixAt(i, d.matrix);
-        cmMesh.setColorAt(i, t.color);
+        const wMain = WINTER_ORCHARD_CROWN_PALETTE[(i * 3 + 1) % WINTER_ORCHARD_CROWN_PALETTE.length];
+        const wLobe = WINTER_ORCHARD_CROWN_PALETTE[(i * 3) % WINTER_ORCHARD_CROWN_PALETTE.length];
+        cmMesh.setColorAt(i, isWinter ? wMain : t.color);
 
         d.position.set(
           t.lx + t.lobeOffsetX * t.scale,
@@ -748,7 +761,7 @@ function SouthFruitOrchard({
         d.scale.set(t.scale * 0.85, t.scale * 0.78, t.scale * 0.85);
         d.updateMatrix();
         clMesh.setMatrixAt(i, d.matrix);
-        clMesh.setColorAt(i, t.color);
+        clMesh.setColorAt(i, isWinter ? wLobe : t.color);
       }
       trMesh.instanceMatrix.needsUpdate = true;
       cmMesh.instanceMatrix.needsUpdate = true;
@@ -763,7 +776,7 @@ function SouthFruitOrchard({
         const f = fruits[i];
         d.position.set(f.lx, f.ly, f.lz);
         d.rotation.set(0, i * 0.8, 0);
-        d.scale.setScalar(1);
+        d.scale.setScalar(isWinter ? 0.001 : 1);
         d.updateMatrix();
         frMesh.setMatrixAt(i, d.matrix);
         frMesh.setColorAt(i, f.color);
@@ -784,7 +797,7 @@ function SouthFruitOrchard({
       }
       fpMesh.instanceMatrix.needsUpdate = true;
     }
-  }, [trees, fruits, fencePosts]);
+  }, [trees, fruits, fencePosts, isWinter]);
 
   return (
     <group
@@ -922,13 +935,29 @@ function SouthFruitOrchard({
  * 3. 2 gliding white swans & 6 swimming ducks on Synský rybník
  * 4. Picturesque South fruit orchard ("Ovocný sad") with weathered wooden shed ("Dřevěná bouda")
  */
-export function RuralLifeDetails({ renderedRoads, railwayTrack }: RuralLifeDetailsProps) {
+export function RuralLifeDetails({
+  renderedRoads,
+  railwayTrack,
+  isWinter = false,
+}: RuralLifeDetailsProps) {
+  useEffect(() => {
+    MATS.hayBase.color.set(isWinter ? '#e3e8ee' : '#ffffff');
+    MATS.hayBase.emissive.set(isWinter ? '#5d6c7a' : '#000000');
+    MATS.hayBase.emissiveIntensity = isWinter ? 0.2 : 0;
+    MATS.orchardCrown.color.set('#ffffff');
+    MATS.orchardCrown.emissive.set('#000000');
+    MATS.orchardCrown.emissiveIntensity = 0;
+    MATS.shedRoof.color.set(isWinter ? '#dde7f0' : '#392e26');
+    MATS.troughWater.color.set(isWinter ? '#b6d2e4' : '#3b6f7a');
+  }, [isWinter]);
+
   return (
     <group name="policka-rural-life-1900">
       <SheepPasture />
       <ScatteredHaystacks renderedRoads={renderedRoads} railwayTrack={railwayTrack} />
-      <PondWaterfowl />
-      <SouthFruitOrchard renderedRoads={renderedRoads} />
+      {/* Hide summer-only swans & ducks when Synský rybník is frozen in Winter Mode */}
+      {!isWinter && <PondWaterfowl />}
+      <SouthFruitOrchard renderedRoads={renderedRoads} isWinter={isWinter} />
     </group>
   );
 }
