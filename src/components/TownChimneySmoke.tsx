@@ -23,13 +23,16 @@ interface PuffSpec {
   growScale: number;
   swirlAmp: number;
   rotSpeed: number;
+  /** Deterministic ~18% residential subset active during summer; 100% active in winter */
+  summerActive: boolean;
 }
 
 // Consistent gentle town-wide breeze drifting toward the northeast (+X, -Z)
 const WIND_X = 1.45;
 const WIND_Z = -1.05;
 
-const HOUSE_SMOKE_DAY = new THREE.Color('#ece5d8');
+const HOUSE_SMOKE_SUMMER_DAY = new THREE.Color('#f0ebe1');
+const HOUSE_SMOKE_WINTER_DAY = new THREE.Color('#dde5ee');
 const HOUSE_SMOKE_NIGHT = new THREE.Color('#3b465e');
 const BREWERY_SMOKE_DAY = new THREE.Color('#706b65');
 const BREWERY_SMOKE_NIGHT = new THREE.Color('#273042');
@@ -51,18 +54,13 @@ export function TownChimneySmoke({
   const breweryMatRef = useRef<THREE.MeshStandardMaterial>(null);
   const dummyRef = useRef(new THREE.Object3D());
 
-  // Deterministic ~30% subset of house chimneys + always-included extra chimneys (watermill & suburbs)
+  // Pre-allocate 100% of residential chimneys (inner town + suburbs) into one InstancedMesh pool;
+  // ~18% emit light wispy smoke in summer, while 100% emit fuller cozy smoke in winter.
   const housePuffs = useMemo<PuffSpec[]>(() => {
-    const selected: Array<readonly [number, number, number]> = [...extraChimneyTops];
-    let osmSelected = 0;
-    for (let i = 0; i < chimneyTops.length; i++) {
-      // Deterministic ~30% selection spread evenly across town (capped at 46 OSM chimneys)
-      if ((i * 7 + 3) % 10 < 3) {
-        selected.push(chimneyTops[i]);
-        osmSelected++;
-        if (osmSelected >= 46) break;
-      }
-    }
+    const selected: Array<readonly [number, number, number]> = [
+      ...extraChimneyTops,
+      ...chimneyTops,
+    ];
 
     const list: PuffSpec[] = [];
     const puffsPerChimney = 4;
@@ -71,6 +69,8 @@ export function TownChimneySmoke({
       const seed = (c * 131 + 17) % 97;
       const cycleSec = 6.2 + (seed % 7) * 0.45;
       const riseHeight = 9.0 + (seed % 6) * 0.95; // 9–14m rise
+      // Deterministic ~18% residential subset active in summer
+      const summerActive = (c * 11 + 3) % 100 < 18;
 
       for (let p = 0; p < puffsPerChimney; p++) {
         list.push({
@@ -85,13 +85,14 @@ export function TownChimneySmoke({
           growScale: 1.35 + ((c * 3 + p) % 4) * 0.22,
           swirlAmp: 0.35 + (p % 3) * 0.15,
           rotSpeed: 0.22 + (p % 3) * 0.1,
+          summerActive,
         });
       }
     }
     return list;
   }, [chimneyTops, extraChimneyTops]);
 
-  // Hero industrial plume from the tall brick Municipal Brewery smokestack (26 staggered puffs)
+  // Hero industrial plume from the tall brick Municipal Brewery smokestack (26 staggered puffs — year-round)
   const breweryPuffs = useMemo<PuffSpec[]>(() => {
     const [bx, by, bz] = BREWERY_SMOKESTACK_TOP;
     const count = 26;
@@ -109,6 +110,7 @@ export function TownChimneySmoke({
         growScale: 3.6 + (i % 4) * 0.45,
         swirlAmp: 0.9 + (i % 3) * 0.35,
         rotSpeed: 0.18 + (i % 4) * 0.07,
+        summerActive: true,
       });
     }
     return list;
@@ -117,27 +119,44 @@ export function TownChimneySmoke({
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
     const nf = timeOfDayState.nightFactor;
+    const isWinter = timeOfDayState.isWinter;
     const dummy = dummyRef.current;
 
-    // Smoothly adapt smoke tint from sunlit warm cream/charcoal to muted moonlit slate-grey
+    // Smoothly adapt house smoke opacity & tint by season (lighter/thinner in summer, fuller/cozier in winter)
     if (houseMatRef.current) {
-      houseMatRef.current.color.copy(HOUSE_SMOKE_DAY).lerp(HOUSE_SMOKE_NIGHT, nf);
-      houseMatRef.current.opacity = 0.44 - nf * 0.12;
+      houseMatRef.current.color
+        .copy(isWinter ? HOUSE_SMOKE_WINTER_DAY : HOUSE_SMOKE_SUMMER_DAY)
+        .lerp(HOUSE_SMOKE_NIGHT, nf);
+      houseMatRef.current.opacity = isWinter ? 0.56 - nf * 0.12 : 0.28 - nf * 0.08;
     }
+    // Brewery smokestack stays active and unchanged year-round
     if (breweryMatRef.current) {
       breweryMatRef.current.color.copy(BREWERY_SMOKE_DAY).lerp(BREWERY_SMOKE_NIGHT, nf);
       breweryMatRef.current.opacity = 0.58 - nf * 0.14;
     }
 
-    const updatePool = (mesh: THREE.InstancedMesh | null, puffs: readonly PuffSpec[]) => {
+    const updatePool = (
+      mesh: THREE.InstancedMesh | null,
+      puffs: readonly PuffSpec[],
+      isResidential: boolean,
+    ) => {
       if (!mesh) return;
+      const seasonScale = isResidential ? (isWinter ? 1.22 : 0.78) : 1.0;
       for (let i = 0; i < puffs.length; i++) {
         const p = puffs[i];
+        if (isResidential && !isWinter && !p.summerActive) {
+          dummy.position.set(p.ox, p.oy, p.oz);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(i, dummy.matrix);
+          continue;
+        }
+
         const u = ((t / p.cycleSec) + p.phase) % 1;
         // Smooth ease-in at chimney mouth & gentle fade-shrink at the top of lifecycle
         const fadeIn = Math.min(1, u / 0.12);
         const fadeOut = u > 0.68 ? Math.max(0, 1 - (u - 0.68) / 0.32) : 1;
-        const scale = (p.baseScale + u * p.growScale) * fadeIn * fadeOut;
+        const scale = (p.baseScale + u * p.growScale) * fadeIn * fadeOut * seasonScale;
 
         const rise = Math.pow(u, 0.88) * p.riseHeight;
         const drift = u * u * p.cycleSec * 0.45 * p.windScale;
@@ -156,8 +175,8 @@ export function TownChimneySmoke({
       mesh.instanceMatrix.needsUpdate = true;
     };
 
-    updatePool(houseMeshRef.current, housePuffs);
-    updatePool(breweryMeshRef.current, breweryPuffs);
+    updatePool(houseMeshRef.current, housePuffs, true);
+    updatePool(breweryMeshRef.current, breweryPuffs, false);
   });
 
   return (

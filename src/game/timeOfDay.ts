@@ -60,8 +60,11 @@ export const NIGHT_MATERIALS = {
     color: '#23262b',
     emissive: '#ffcf70',
     emissiveIntensity: 0,
-    roughness: 0.42,
-    metalness: 0.15,
+    roughness: 0.72,
+    metalness: 0.06,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
   }),
   townHallClock: new THREE.MeshStandardMaterial({
     color: '#253942',

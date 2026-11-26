@@ -128,34 +128,34 @@ function BaroqueWindow({
 }) {
   return (
     <group position={position}>
-      {/* White stone surround */}
-      <mesh>
-        <boxGeometry args={[width + 0.3, height + 0.28, 0.14]} />
+      {/* White stone surround (spans z: -0.06 .. +0.06) */}
+      <mesh position={[0, 0, 0]}>
+        <boxGeometry args={[width + 0.3, height + 0.28, 0.12]} />
         <meshStandardMaterial color={TH_COLORS.whiteTrim} roughness={0.85} />
       </mesh>
-      {/* Recessed window glazing (illuminates warmly at dusk/night) */}
-      <mesh position={[0, 0, 0.05]} material={NIGHT_MATERIALS.townHallWindow}>
-        <boxGeometry args={[width, height, 0.08]} />
+      {/* Cleanly separated window glazing (spans z: +0.08 .. +0.14, zero coplanarity with surround) */}
+      <mesh position={[0, 0, 0.11]} material={NIGHT_MATERIALS.townHallWindow}>
+        <boxGeometry args={[width, height, 0.06]} />
       </mesh>
-      {/* Fine pale window muntin cross */}
-      <mesh position={[0, 0, 0.095]}>
-        <boxGeometry args={[0.07, height * 0.94, 0.03]} />
-        <meshStandardMaterial color={TH_COLORS.windowFrame} roughness={0.75} />
+      {/* Fine pale window muntin cross (distinct z layers so bars never fight glass or each other) */}
+      <mesh position={[0, 0, 0.175]}>
+        <boxGeometry args={[0.075, height * 0.94, 0.04]} />
+        <meshStandardMaterial color={TH_COLORS.windowFrame} roughness={0.78} />
       </mesh>
-      <mesh position={[0, 0.12, 0.095]}>
-        <boxGeometry args={[width * 0.94, 0.07, 0.03]} />
-        <meshStandardMaterial color={TH_COLORS.windowFrame} roughness={0.75} />
+      <mesh position={[0, 0.12, 0.185]}>
+        <boxGeometry args={[width * 0.94, 0.075, 0.04]} />
+        <meshStandardMaterial color={TH_COLORS.windowFrame} roughness={0.78} />
       </mesh>
       {/* Projecting windowsill */}
-      <mesh position={[0, -height / 2 - 0.14, 0.12]}>
-        <boxGeometry args={[width + 0.44, 0.16, 0.26]} />
+      <mesh position={[0, -height / 2 - 0.14, 0.16]}>
+        <boxGeometry args={[width + 0.44, 0.16, 0.3]} />
         <meshStandardMaterial color={TH_COLORS.whiteTrim} roughness={0.85} />
       </mesh>
       {/* Decorative white Baroque arched/molded hood above piano nobile windows */}
       {withHood && (
-        <group position={[0, height / 2 + 0.34, 0.14]}>
+        <group position={[0, height / 2 + 0.34, 0.18]}>
           <mesh>
-            <boxGeometry args={[width + 0.52, 0.2, 0.28]} />
+            <boxGeometry args={[width + 0.52, 0.2, 0.32]} />
             <meshStandardMaterial color={TH_COLORS.whiteTrim} roughness={0.84} />
           </mesh>
           <mesh position={[0, 0.22, -0.02]}>
@@ -182,9 +182,9 @@ function RoofDormer({
         <boxGeometry args={[1.6, 1.45, 1.5]} />
         <meshStandardMaterial color={TH_COLORS.whiteTrim} roughness={0.85} />
       </mesh>
-      <mesh position={[0, -0.05, 0.74]}>
-        <boxGeometry args={[0.92, 0.92, 0.08]} />
-        <meshStandardMaterial color={TH_COLORS.windowDark} roughness={0.45} />
+      <mesh position={[0, -0.05, 0.79]}>
+        <boxGeometry args={[0.92, 0.92, 0.06]} />
+        <meshStandardMaterial color={TH_COLORS.windowDark} roughness={0.72} metalness={0.05} />
       </mesh>
       {/* Small pitched slate dormer cap */}
       <mesh position={[0, 1.05, 0.05]} rotation={[0, Math.PI / 4, 0]} castShadow>
