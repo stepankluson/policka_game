@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { RoadGraph } from '../game/osmGeometry';
@@ -413,6 +413,20 @@ export function TownTraffic({ roadGraph }: TownTrafficProps) {
   );
   const exhaustCursorRef = useRef(0);
 
+  // Pre-hide exhaust puff instances before first paint so zero default-matrix meshes flash at [0, 0, 0]
+  useLayoutEffect(() => {
+    const exMesh = exhaustRef.current;
+    if (!exMesh) return;
+    const dummy = dummyRef.current;
+    dummy.position.set(0, -999, 0);
+    dummy.scale.set(0.001, 0.001, 0.001);
+    dummy.updateMatrix();
+    for (let i = 0; i < EXHAUST_PUFF_COUNT; i++) {
+      exMesh.setMatrixAt(i, dummy.matrix);
+    }
+    exMesh.instanceMatrix.needsUpdate = true;
+  }, []);
+
   useFrame((_, rawDelta) => {
     if (validStartNodes.length === 0) return;
     const dt = Math.min(rawDelta, 0.05);
@@ -457,7 +471,14 @@ export function TownTraffic({ roadGraph }: TownTrafficProps) {
               : 3.5 + Math.random() * 1.1;
           a.segmentsDone = 0;
           a.maxSegments = 14 + Math.floor(Math.random() * 18);
-          a.yaw = Math.atan2(nextNode.x - startNode.x, nextNode.z - startNode.z);
+          const sdx = nextNode.x - startNode.x;
+          const sdz = nextNode.z - startNode.z;
+          const sLen = Math.hypot(sdx, sdz) || 1;
+          const sRightX = -(sdz / sLen);
+          const sRightZ = sdx / sLen;
+          a.x = startNode.x + sRightX * RIGHT_LANE_OFFSET;
+          a.z = startNode.z + sRightZ * RIGHT_LANE_OFFSET;
+          a.yaw = Math.atan2(sdx, sdz);
           a.phase = 'driving';
           a.timer = 0;
 
@@ -468,6 +489,10 @@ export function TownTraffic({ roadGraph }: TownTrafficProps) {
           if (v.farm) v.farm.visible = a.kind === 'farm-wagon';
           if (v.brewery) v.brewery.visible = a.kind === 'brewery-wagon';
 
+          // Ground vehicle strictly to street level (ROAD_SURFACE_Y) BEFORE making it visible
+          // so it never flashes at [0, 0, 0] beside St. Jacob's Church tower gallery
+          grp.position.set(a.x, ROAD_SURFACE_Y, a.z);
+          grp.rotation.set(0, a.yaw, 0);
           grp.scale.set(1, 1, 1);
           grp.visible = true;
         }
@@ -629,6 +654,7 @@ export function TownTraffic({ roadGraph }: TownTrafficProps) {
           ref={(el) => {
             slotRefs.current[idx] = el;
           }}
+          position={[0, ROAD_SURFACE_Y, 0]}
           visible={false}
         >
           <group

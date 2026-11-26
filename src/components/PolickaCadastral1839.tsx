@@ -459,6 +459,40 @@ export function PolickaCadastral1839({
               flatShading
             />
           </mesh>
+          {/* Optional L-shaped farmstead wing / shed */}
+          {b.wing && (
+            <group position={[b.wing.ox, 0, b.wing.oz]} rotation={[0, Math.PI / 2, 0]}>
+              <mesh
+                geometry={UNIT_BOX}
+                material={SHARED_MATS.plinth}
+                position={[0, 0.22, 0]}
+                scale={[b.wing.width + 0.14, 0.45, b.wing.depth + 0.14]}
+                receiveShadow
+              />
+              <mesh
+                geometry={UNIT_BOX}
+                position={[0, b.wing.wallHeight / 2 + 0.16, 0]}
+                scale={[b.wing.width, b.wing.wallHeight, b.wing.depth]}
+                castShadow
+                receiveShadow
+              >
+                <meshStandardMaterial color={b.woodColor} roughness={0.94} flatShading />
+              </mesh>
+              <mesh
+                geometry={UNIT_GABLE_ROOF}
+                position={[0, b.wing.wallHeight + 0.14, 0]}
+                scale={[b.wing.width + 0.45, b.wing.roofHeight, b.wing.depth + 0.5]}
+                castShadow
+                receiveShadow
+              >
+                <meshStandardMaterial
+                  color={isWinter ? '#dde7f0' : b.roofColor}
+                  roughness={0.88}
+                  flatShading
+                />
+              </mesh>
+            </group>
+          )}
         </group>
       ))}
 
@@ -520,6 +554,40 @@ export function PolickaCadastral1839({
               scale={[0.68, 1.65, 0.68]}
               castShadow
             />
+          )}
+          {/* Optional L-shaped farmstead wing */}
+          {h.wing && (
+            <group position={[h.wing.ox, 0, h.wing.oz]} rotation={[0, Math.PI / 2, 0]}>
+              <mesh
+                geometry={UNIT_BOX}
+                material={SHARED_MATS.plinth}
+                position={[0, 0.22, 0]}
+                scale={[h.wing.width + 0.14, 0.45, h.wing.depth + 0.14]}
+                receiveShadow
+              />
+              <mesh
+                geometry={UNIT_BOX}
+                position={[0, h.wing.wallHeight / 2 + 0.16, 0]}
+                scale={[h.wing.width, h.wing.wallHeight, h.wing.depth]}
+                castShadow
+                receiveShadow
+              >
+                <meshStandardMaterial color={h.wallColor} roughness={0.92} flatShading />
+              </mesh>
+              <mesh
+                geometry={UNIT_GABLE_ROOF}
+                position={[0, h.wing.wallHeight + 0.14, 0]}
+                scale={[h.wing.width + 0.45, h.wing.roofHeight, h.wing.depth + 0.5]}
+                castShadow
+                receiveShadow
+              >
+                <meshStandardMaterial
+                  color={isWinter ? '#e0e9f2' : h.roofColor}
+                  roughness={0.86}
+                  flatShading
+                />
+              </mesh>
+            </group>
           )}
         </group>
       ))}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
@@ -8,6 +8,11 @@ import {
   MILL_STREAM_POINTS_1839,
   SOUTH_BANK_BARNS_1839,
 } from '../game/cadastral1839';
+import {
+  DEMOLISHED_PARK_IDS_1894,
+  RESTORED_1894_BUILDINGS,
+  SYNSKY_POND_1894_WATER_POLY,
+} from '../game/cadastral1894';
 import {
   EASTERN_STREAM_POINTS_1903,
   SUBURBAN_HOUSES_1903,
@@ -61,6 +66,7 @@ import { TownTraffic } from './TownTraffic';
 
 interface TownDioramaProps {
   unlockedPois: ReadonlySet<string>;
+  onTownReady?: () => void;
   onChimneyTopsReady?: (tops: ChimneyTop[], sources?: ChimneySmokeSource[]) => void;
   fireWatch?: FireWatchState;
   onFireEngineArrived?: () => void;
@@ -101,7 +107,8 @@ const EXTRA_CHIMNEY_TOPS = [
   ...SURVEY_1903_CHIMNEY_TOPS,
 ] as const;
 
-const POND_CENTER = REAL_LANDMARKS.pondCenter;
+const WATER_POLYS_1894 = [SYNSKY_POND_1894_WATER_POLY] as const;
+
 /** Long facade of BaroqueTownHall is along local Z, so add +PI/2 to townHallTransform.rotationY */
 const TOWN_HALL_ROT_Y = TOWN_HALL_TRANSFORM.rotationY + Math.PI / 2;
 
@@ -234,6 +241,7 @@ function StoneFountain({ position }: { position: [number, number, number] }) {
 
 export function TownDiorama({
   unlockedPois,
+  onTownReady,
   onChimneyTopsReady,
   fireWatch,
   onFireEngineArrived,
@@ -359,7 +367,7 @@ export function TownDiorama({
     return buildRealOsmWalls(
       osmData.walls,
       osmData.streets,
-      osmData.water,
+      WATER_POLYS_1894,
       osmData.buildings,
       REAL_LANDMARKS.wallOval,
       streetsResult.renderedRoadPolylines,
@@ -421,6 +429,7 @@ export function TownDiorama({
       }
     }
 
+    const allBuildings = [...osmData.buildings, ...RESTORED_1894_BUILDINGS];
     const {
       wallGeometry,
       roofGeometry,
@@ -429,7 +438,7 @@ export function TownDiorama({
       houseWindows,
       houseDoors,
     } = buildMergedBuildingsGeometry(
-      osmData.buildings,
+      allBuildings,
       TOWN_Y,
       excludeIds,
       REAL_LANDMARKS.wallOval,
@@ -437,9 +446,13 @@ export function TownDiorama({
       wallRing,
       bastions,
       streetsResult.renderedRoadPolylines,
+      WATER_POLYS_1894,
     );
-    const parksGeometry = buildMergedFlatPolygons(osmData.parks, TOWN_Y + 0.15);
-    const waterGeometry = buildMergedFlatPolygons(osmData.water, TOWN_Y + 0.25);
+    const parksGeometry = buildMergedFlatPolygons(
+      osmData.parks.filter((p) => !DEMOLISHED_PARK_IDS_1894.has(p.id)),
+      TOWN_Y + 0.15,
+    );
+    const waterGeometry = buildMergedFlatPolygons(WATER_POLYS_1894, TOWN_Y + 0.25);
 
     const suburbanFacades = buildSuburbanFacadeDetails(
       [
@@ -494,6 +507,15 @@ export function TownDiorama({
       waterGeometry,
     };
   }, [osmData, streetsResult, wallRing, bastions, burnedOsmKey]);
+
+  // Signal once OSM town geometry has finished building and mounted
+  const townReadySentRef = useRef(false);
+  useEffect(() => {
+    if (merged && !townReadySentRef.current) {
+      townReadySentRef.current = true;
+      onTownReady?.();
+    }
+  }, [merged, onTownReady]);
 
   // Export world-space chimney top coordinates (houses + tall industrial brewery smokestack)
   // for future rising smoke particles
@@ -569,10 +591,10 @@ export function TownDiorama({
     const [mkCx, mkCz] = REAL_LANDMARKS.marketCenter;
 
     const isValidTreePosition = createTreeValidator({
-      buildings: osmData.buildings,
+      buildings: [...osmData.buildings, ...RESTORED_1894_BUILDINGS],
       churchPolygon: osmData.meta.churchPolygon,
       streets: osmData.streets,
-      water: osmData.water,
+      water: WATER_POLYS_1894,
       wallSegments,
       bastions,
       squarePolygon: makeRectPoly(sqCx - 1, sqCz + 1, 136, 114, thRot),
@@ -662,90 +684,8 @@ export function TownDiorama({
     return list;
   }, [osmData, wallSegments, bastions, merged]);
 
-  // 19th-century Vysočina rolling meadows & patchwork fields (strictly non-overlapping AABBs)
-  const pastoralFields = useMemo(() => {
-    const rand = mulberry32(1890);
-    const fieldColors = [
-      '#6c8457',
-      '#7b8f5c',
-      '#8d925c',
-      '#a1925c',
-      '#5f7a4f',
-      '#748758',
-    ] as const;
-    const { centerX, centerZ, radiusX, radiusZ } = REAL_LANDMARKS.wallOval;
-    const list: Array<{
-      key: string;
-      x: number;
-      z: number;
-      w: number;
-      d: number;
-      rotY: number;
-      color: string;
-      minX: number;
-      maxX: number;
-      minZ: number;
-      maxZ: number;
-    }> = [];
-
-    for (let attempt = 0; attempt < 90 && list.length < 34; attempt++) {
-      const a = rand() * Math.PI * 2;
-      const ring = 1.6 + rand() * 0.9;
-      const x = centerX + Math.sin(a) * radiusX * ring;
-      const z = centerZ + Math.cos(a) * radiusZ * ring;
-      if (Math.hypot(x - POND_CENTER[0], z - POND_CENTER[1]) < 95) continue;
-      if (Math.hypot(x - BREWERY_TRANSFORM.x, z - BREWERY_TRANSFORM.z) < 62) continue;
-      if (Math.hypot(x - ST_MICHAEL_TRANSFORM.x, z - ST_MICHAEL_TRANSFORM.z) < 52) continue;
-      // Keep random pastoral squares clear of the 1903 narrow strip-field zone south of Synský rybník
-      if (x > 0 && x < 380 && z > 115 && z < 470) continue;
-
-      const w = 58 + rand() * 68;
-      const d = 42 + rand() * 52;
-      const rotY = a + (rand() - 0.5) * 0.35;
-
-      // Conservative rotated 2D AABB with 4m separation padding
-      const c = Math.abs(Math.cos(rotY));
-      const s = Math.abs(Math.sin(rotY));
-      const halfX = (c * w + s * d) / 2 + 4;
-      const halfZ = (s * w + c * d) / 2 + 4;
-      const minX = x - halfX;
-      const maxX = x + halfX;
-      const minZ = z - halfZ;
-      const maxZ = z + halfZ;
-
-      let overlaps = false;
-      for (const existing of list) {
-        if (
-          minX < existing.maxX &&
-          maxX > existing.minX &&
-          minZ < existing.maxZ &&
-          maxZ > existing.minZ
-        ) {
-          overlaps = true;
-          break;
-        }
-      }
-      if (overlaps) continue;
-
-      list.push({
-        key: `field-${list.length}`,
-        x,
-        z,
-        w,
-        d,
-        rotY,
-        color: fieldColors[Math.floor(rand() * fieldColors.length)],
-        minX,
-        maxX,
-        minZ,
-        maxZ,
-      });
-    }
-    return list;
-  }, []);
-
-  // Populate static tree InstancedMeshes once
-  useEffect(() => {
+  // Populate static tree InstancedMeshes before first paint (prevents [0, 0, 0] origin flash)
+  useLayoutEffect(() => {
     const trunkMesh = treeTrunkRef.current;
     const foliageMesh = treeFoliageRef.current;
     if (!trunkMesh || !foliageMesh) return;
@@ -909,35 +849,6 @@ export function TownDiorama({
           </mesh>
         </>
       )}
-
-      {/* === 1B. 19TH-CENTURY VYSOČINA PASTORAL MEADOWS & PATCHWORK FIELDS (y = +0.15, non-overlapping) === */}
-      {pastoralFields.map((field, idx) => (
-        <mesh
-          key={field.key}
-          position={[field.x, TOWN_Y + 0.15, field.z]}
-          rotation={[-Math.PI / 2, 0, field.rotY]}
-          renderOrder={1 + idx}
-          receiveShadow
-        >
-          <planeGeometry args={[field.w, field.d]} />
-          <meshStandardMaterial
-            color={
-              isWinter
-                ? idx % 3 === 0
-                  ? '#e2eaf2'
-                  : idx % 3 === 1
-                    ? '#d6e1ec'
-                    : '#ccd8e4'
-                : field.color
-            }
-            roughness={0.98}
-            depthWrite={false}
-            polygonOffset
-            polygonOffsetFactor={-1}
-            polygonOffsetUnits={-1}
-          />
-        </mesh>
-      ))}
 
       {/* === 2. PALACKÉHO NÁMĚSTÍ PAVING (y = +0.35, expanded +10m all around under surrounding townhouses) === */}
       <mesh

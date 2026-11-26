@@ -87,12 +87,12 @@ export const BREWERY_SMOKESTACK_TOP: readonly [number, number, number] = (() => 
 
 /**
  * Exact transform for Hřbitovní kostel sv. Michaela & historic cemetery on Horní předměstí
- * snapped to its real OSM church footprint (way 66757562 in public/policka-data.json).
+ * aligned to the 1894 cadastral map (just west of the SW city walls, north of the western road).
  */
 export const ST_MICHAEL_TRANSFORM = {
-  x: -164.0,
-  z: 41.3,
-  rotationY: 0.032,
+  x: -162.0,
+  z: 48.0,
+  rotationY: 0.06,
 } as const;
 
 /** Real OSM Polička railway station coordinates (Trať Svitavy – Polička – Žďárec, 1896) */
@@ -131,12 +131,12 @@ export const REAL_LANDMARKS = {
   stMichael: [ST_MICHAEL_TRANSFORM.x, ST_MICHAEL_TRANSFORM.z] as const,
   /** Real Synský rybník main open-water basin center (southeast/east of the walls) */
   pondCenter: [115, 108] as const,
-  /** Approximate historic walled core oval (used only for inner/outer filtering) */
+  /** Historic walled core oval calibrated to the 1894 cadastral map (list 05) */
   wallOval: {
-    centerX: 118,
-    centerZ: -102,
-    radiusX: 205,
-    radiusZ: 185,
+    centerX: 123.5,
+    centerZ: -118.5,
+    radiusX: 204,
+    radiusZ: 192,
   },
 } as const;
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { TOWN_Y } from '../game/pois';
@@ -137,7 +137,7 @@ export function StMichaelCemetery({
 
   const crossGraves = useMemo(() => graves.filter((g) => g.hasCross), [graves]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const hs = headstoneRef.current;
     const sl = slabRef.current;
     const cv = crossVRef.current;
@@ -558,20 +558,20 @@ export function SynskyRybnikDetails() {
     boatRef.current.rotation.z = Math.sin(t * 1.15) * 0.035;
   });
 
-  // Natural reed/cattail clusters placed directly along the real OSM pond shoreline vertices
+  // Natural reed/cattail clusters placed directly along the 1894 Synský rybník shoreline
   const reedClusters: readonly [number, number, number][] = [
-    [68, 0, 92],
-    [76, 0, 89],
-    [106, 0, 79],
-    [122, 0, 73],
-    [156, 0, 56],
-    [178, 0, 46],
-    [28, 0, 102],
-    [6, 0, 103],
-    [216, 0, 82],
-    [214, 0, 99],
-    [64, 0, 156],
-    [24, 0, 181],
+    [66, 0, 90],
+    [82, 0, 84],
+    [114, 0, 74],
+    [138, 0, 64],
+    [162, 0, 52],
+    [196, 0, 36],
+    [26, 0, 98],
+    [-2, 0, 102],
+    [230, 0, 82],
+    [218, 0, 98],
+    [70, 0, 158],
+    [22, 0, 180],
   ];
 
   return (

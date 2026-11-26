@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { RenderedRoadPolyline } from '../game/osmGeometry';
@@ -386,7 +386,7 @@ function ScatteredHaystacks({
     return list;
   }, [renderedRoads, railwayTrack]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const bMesh = baseRef.current;
     const cMesh = capRef.current;
     if (!bMesh || !cMesh) return;
@@ -731,7 +731,7 @@ function SouthFruitOrchard({
     return { trees: treeList, fruits: fruitList, fencePosts: postList, fenceRails: railList };
   }, [renderedRoads]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const d = new THREE.Object3D();
     const trMesh = trunkRef.current;
     const cmMesh = crownMainRef.current;

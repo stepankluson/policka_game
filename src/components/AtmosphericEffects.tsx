@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CHURCH_TRANSFORM, REAL_LANDMARKS, TOWN_Y } from '../game/pois';
@@ -168,6 +168,29 @@ function LowPolyClouds() {
   const cloudXRef = useRef<Float32Array>(Float32Array.from(clusters.map((c) => c.x)));
   const perfAccumRef = useRef(0);
   const initializedRef = useRef(false);
+
+  // Populate initial cloud puff matrices before first paint (prevents [0, 0, 0] origin flash)
+  useLayoutEffect(() => {
+    const mesh = instRef.current;
+    if (!mesh) return;
+    const xs = cloudXRef.current;
+    let idx = 0;
+    for (let i = 0; i < clusters.length; i++) {
+      const c = clusters[i];
+      const cx = xs[i];
+      const edgeDist = Math.min(cx - CLOUD_MIN_X, CLOUD_MAX_X - cx);
+      const edgeScale = Math.min(1, Math.max(0.001, edgeDist / 120));
+      for (let j = 0; j < c.puffs.length; j++) {
+        const pf = c.puffs[j];
+        _dummy.position.set(cx + pf.ox * edgeScale, c.y + pf.oy * edgeScale, c.z + pf.oz * edgeScale);
+        _dummy.rotation.set(0, pf.rotY, 0);
+        _dummy.scale.set(pf.sx * edgeScale, pf.sy * edgeScale, pf.sz * edgeScale);
+        _dummy.updateMatrix();
+        mesh.setMatrixAt(idx++, _dummy.matrix);
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [clusters]);
 
   useFrame((_, rawDelta) => {
     const dtClamped = Math.min(rawDelta, 0.05);

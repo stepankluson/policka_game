@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { soundEngine } from '../audio/soundEngine';
@@ -573,25 +573,38 @@ export function PolickaRailway({ railway, isWinter = false }: PolickaRailwayProp
     };
   }, [ballastGeom, leftRailGeom, rightRailGeom]);
 
-  // Populate instanced wooden sleepers evenly along the real OSM curve
-  useEffect(() => {
+  // Populate instanced wooden sleepers & pre-hide steam puffs before first paint (zero [0, 0, 0] flash)
+  useLayoutEffect(() => {
     const mesh = sleeperRef.current;
-    if (!mesh) return;
-    const dummy = new THREE.Object3D();
-    const pos = new THREE.Vector3();
-    const tan = new THREE.Vector3();
+    if (mesh) {
+      const dummy = new THREE.Object3D();
+      const pos = new THREE.Vector3();
+      const tan = new THREE.Vector3();
 
-    for (let i = 0; i < sleeperCount; i++) {
-      const t = (i + 0.5) / sleeperCount;
-      curve.getPointAt(t, pos);
-      curve.getTangentAt(t, tan);
-      dummy.position.set(pos.x, RAIL_Y + 0.06, pos.z);
-      dummy.rotation.set(0, Math.atan2(tan.x, tan.z), 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
+      for (let i = 0; i < sleeperCount; i++) {
+        const t = (i + 0.5) / sleeperCount;
+        curve.getPointAt(t, pos);
+        curve.getTangentAt(t, tan);
+        dummy.position.set(pos.x, RAIL_Y + 0.06, pos.z);
+        dummy.rotation.set(0, Math.atan2(tan.x, tan.z), 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
     }
-    mesh.instanceMatrix.needsUpdate = true;
+
+    const steamMesh = steamRef.current;
+    if (steamMesh) {
+      const dummy = new THREE.Object3D();
+      dummy.position.set(0, -999, 0);
+      dummy.scale.set(0.001, 0.001, 0.001);
+      dummy.updateMatrix();
+      for (let i = 0; i < STEAM_PUFF_COUNT; i++) {
+        steamMesh.setMatrixAt(i, dummy.matrix);
+      }
+      steamMesh.instanceMatrix.needsUpdate = true;
+    }
   }, [curve, sleeperCount]);
 
   // Randomized train schedule state machine (waiting -> running -> stopped-at-station -> running -> waiting)
@@ -862,7 +875,7 @@ export function PolickaRailway({ railway, isWinter = false }: PolickaRailwayProp
       />
 
       {/* Animated 1900 Steam Train: Locomotive + Coal Tender + 2–4 Vintage Carriages */}
-      <group ref={trainGroupRef}>
+      <group ref={trainGroupRef} visible={false}>
         <group ref={locoRef}>
           <SteamLocomotive />
           <pointLight

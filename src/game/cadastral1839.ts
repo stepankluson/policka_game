@@ -1,3 +1,4 @@
+import { LIMBERSKY_STREAM_1894_POINTS } from './cadastral1894';
 import { TOWN_Y } from './pois';
 
 export interface BarnSpec {
@@ -11,6 +12,15 @@ export interface BarnSpec {
   roofHeight: number;
   woodColor: string;
   roofColor: string;
+  /** Optional L-shaped farmstead wing / attached barn shed */
+  wing?: {
+    ox: number;
+    oz: number;
+    width: number;
+    depth: number;
+    wallHeight: number;
+    roofHeight: number;
+  };
 }
 
 export interface SuburbanCottageSpec {
@@ -28,6 +38,14 @@ export interface SuburbanCottageSpec {
   hasChimney: boolean;
   /** Deterministic dusk turn-on threshold in [0.50, 0.85] (or > 1.0 to remain dark) */
   nightThreshold: number;
+  wing?: {
+    ox: number;
+    oz: number;
+    width: number;
+    depth: number;
+    wallHeight: number;
+    roofHeight: number;
+  };
 }
 
 /** Builds a rotated 2D rectangle polygon in world XZ space (used for +3m tree exclusion) */
@@ -97,22 +115,7 @@ export const WATERMILL_CHIMNEY_TOP: readonly [number, number, number] = (() => {
  * (OSM way 95068444 at [-36.5, 176.8]), flows directly beneath the watermill's rotating
  * wooden waterwheel ([-45.4, 178.8]), and winds WSW across the meadows to the distant hills.
  */
-export const MILL_STREAM_POINTS_1839: readonly [number, number][] = [
-  [4.0, 154.0],
-  [-8.0, 163.5],
-  [-24.5, 171.8],
-  [-36.5, 176.8],
-  [-45.4, 178.8],
-  [-62.0, 184.0],
-  [-92.0, 193.5],
-  [-136.0, 200.5],
-  [-190.0, 211.0],
-  [-252.0, 223.0],
-  [-330.0, 231.0],
-  [-425.0, 244.0],
-  [-545.0, 260.0],
-  [-690.0, 282.0],
-];
+export const MILL_STREAM_POINTS_1839: readonly [number, number][] = LIMBERSKY_STREAM_1894_POINTS;
 
 /** Exact bridge culvert position where dam road (way 95068444) crosses over the mill stream */
 export const MILL_BRIDGE_1839 = {
@@ -123,13 +126,12 @@ export const MILL_BRIDGE_1839 = {
 } as const;
 
 /**
- * 2. Row of 12 Historic Wooden Barns (Stodoly — yellow rectangles on the 1839 map)
- * neatly aligned along the outer (south/field-facing) edge of OSM primary road 95068448
- * running parallel to the far southern bank of Synský rybník.
+ * 2. Organic ~1900 Southern Shore Cottages, Farmsteads & Barns along Synský rybník (1894 map):
+ * Replaces the uniform ruler-straight row with natural western and eastern groupings,
+ * varied footprints, L-shaped farmstead wings, staggered setbacks, and garden/orchard gaps.
  */
 export const SOUTH_BANK_BARNS_1839: readonly BarnSpec[] = (() => {
   const rand = mulberry32(18391);
-  // Bright warm ~1900 Polička plastered masonry walls & crisp terracotta/slate roofs
   const wallPalette = [
     '#f0e2c6',
     '#ebd6aa',
@@ -137,83 +139,58 @@ export const SOUTH_BANK_BARNS_1839: readonly BarnSpec[] = (() => {
     '#e7dac7',
     '#ecd79f',
     '#ede0c8',
-    '#e3d8cc',
+    '#dfd2ba',
   ] as const;
   const roofPalette = [
     '#a14633',
     '#b3523a',
     '#8c3f2e',
-    '#964835',
+    '#6f4432',
     '#474e57',
     '#3b424b',
   ] as const;
-  const barns: BarnSpec[] = [];
 
-  // Two clean straight segments of primary road 95068448 along the south shore of Synský rybník
-  const segments: readonly {
-    ax: number;
-    az: number;
-    bx: number;
-    bz: number;
-    tStarts: readonly number[];
-  }[] = [
-    {
-      // West-south segment: [22.4, 194.5] -> [79.2, 164.4] (64.3m)
-      ax: 22.4,
-      az: 194.5,
-      bx: 79.2,
-      bz: 164.4,
-      tStarts: [0.22, 0.48, 0.74],
-    },
-    {
-      // Long south-east bank segment: [79.2, 164.4] -> [235.4, 104.0] (167.5m)
-      ax: 79.2,
-      az: 164.4,
-      bx: 235.4,
-      bz: 104.0,
-      tStarts: [0.09, 0.19, 0.29, 0.40, 0.50, 0.61, 0.71, 0.82, 0.91],
-    },
+  // Organic groupings along the south shore road ([22.4,194.5]->[79.2,164.4]->[235.4,104.0])
+  // with natural garden gaps in the middle and richer clusters toward western & eastern ends
+  const specs: readonly [number, number, number, number, number, number, number, boolean][] = [
+    // Western south-shore grouping (x: 34..92)
+    [36.5, 198.5, 0.52, 9.8, 6.2, 3.8, 2.7, true],
+    [54.0, 190.2, 0.44, 7.6, 5.4, 3.3, 2.3, false],
+    [71.5, 179.8, 0.48, 11.4, 6.8, 4.4, 3.1, true],
+    [90.5, 172.5, 0.36, 8.2, 5.6, 3.6, 2.5, false],
+    // Central-east grouping after a natural garden/orchard gap (x: 132..172)
+    [136.0, 154.5, 0.38, 10.6, 6.6, 4.2, 2.9, true],
+    [154.5, 148.2, 0.32, 7.8, 5.2, 3.4, 2.4, false],
+    [169.0, 144.8, 0.42, 9.4, 6.0, 4.0, 2.8, false],
+    // Eastern south-shore cluster approaching the eastern dam (x: 196..242)
+    [198.0, 130.5, 0.36, 11.8, 7.0, 4.6, 3.2, true],
+    [215.5, 125.0, 0.41, 8.6, 5.8, 3.8, 2.6, false],
+    [231.0, 117.5, 0.34, 10.2, 6.4, 4.3, 3.0, true],
+    [243.5, 124.2, 0.28, 7.4, 5.2, 3.2, 2.2, false],
   ];
 
-  let idx = 0;
-  for (const seg of segments) {
-    const dx = seg.bx - seg.ax;
-    const dz = seg.bz - seg.az;
-    const len = Math.hypot(dx, dz);
-    const ux = dx / len;
-    const uz = dz / len;
-    // Outward normal pointing strictly South (+Z, field-facing side away from Synský rybník)
-    let nx = -uz;
-    let nz = ux;
-    if (nz < 0) {
-      nx = -nx;
-      nz = -nz;
-    }
-    // Local +X runs along road (ux, uz); local -Z faces the road (direction -nx, -nz)
-    const rotY = Math.atan2(nx, nz);
-
-    for (const t of seg.tStarts) {
-      const width = 7.4 + rand() * 5.2; // varied 7.4–12.6m widths
-      const depth = 5.4 + rand() * 2.2; // varied 5.4–7.6m depths
-      const offset = 9.4 + rand() * 1.8; // safely clear of the 5.5m road edge
-      const px = seg.ax + dx * t + nx * offset;
-      const pz = seg.az + dz * t + nz * offset;
-
-      barns.push({
-        id: `barn-1839-${idx++}`,
-        x: px,
-        z: pz,
-        rotY,
-        width,
-        depth,
-        wallHeight: 3.2 + rand() * 1.9, // varied 3.2–5.1m heights
-        roofHeight: 2.3 + rand() * 1.4, // varied 2.3–3.7m roofs
-        woodColor: wallPalette[Math.floor(rand() * wallPalette.length)],
-        roofColor: roofPalette[Math.floor(rand() * roofPalette.length)],
-      });
-    }
-  }
-  return barns;
+  return specs.map(([x, z, rotY, width, depth, wallHeight, roofHeight, hasWing], idx) => ({
+    id: `barn-1839-${idx}`,
+    x,
+    z,
+    rotY,
+    width,
+    depth,
+    wallHeight,
+    roofHeight,
+    woodColor: wallPalette[Math.floor(rand() * wallPalette.length)],
+    roofColor: roofPalette[Math.floor(rand() * roofPalette.length)],
+    wing: hasWing
+      ? {
+          ox: (idx % 2 === 0 ? -1 : 1) * (width * 0.32),
+          oz: depth * 0.62,
+          width: Math.max(4.8, width * 0.52),
+          depth: Math.max(4.2, depth * 0.76),
+          wallHeight: Math.max(2.9, wallHeight * 0.78),
+          roofHeight: Math.max(1.8, roofHeight * 0.76),
+        }
+      : undefined,
+  }));
 })();
 
 /**
@@ -262,7 +239,8 @@ export const HORNI_PREDMESTI_HOUSES_1839: readonly SuburbanCottageSpec[] = (() =
       nzN = -nzN;
     }
 
-    const northTs = [0.13, 0.23, 0.34, 0.45, 0.56, 0.67, 0.78, 0.88];
+    // Start north row past St. Michael's southern cemetery wall so zero placeholder cottages clip into it
+    const northTs = [0.25, 0.35, 0.46, 0.57, 0.68, 0.79, 0.89];
     const southTs = [0.10, 0.21, 0.31, 0.42, 0.53, 0.64, 0.75, 0.86];
 
     const pushRow = (ts: readonly number[], sideSign: 1 | -1, prefix: string) => {
@@ -302,51 +280,47 @@ export const HORNI_PREDMESTI_HOUSES_1839: readonly SuburbanCottageSpec[] = (() =
     pushRow(southTs, -1, 'hp-sw-s');
   }
 
-  // B. Mill Approach Road: [-69.5, 104.3] -> [-43.4, 164.9] (66.0m) — 4 plastered farmhouses on west side
-  {
-    const ax = -69.5;
-    const az = 104.3;
-    const bx = -43.4;
-    const bz = 164.9;
-    const dx = bx - ax;
-    const dz = bz - az;
-    const len = Math.hypot(dx, dz);
-    const ux = dx / len;
-    const uz = dz / len;
-    // Outward normal pointing strictly West (-X, outer side away from Synský rybník)
-    let nx = -uz;
-    let nz = ux;
-    if (nx > 0) {
-      nx = -nx;
-      nz = -nz;
-    }
-    const rotY = Math.atan2(nx, nz);
+  // B. Organic Mill Approach Cluster (replaces rigid 4-house line) + SW "Skladiště" Crossroads Farmstead
+  const swOrganicSpecs: readonly [string, number, number, number, number, number, number, number, boolean][] = [
+    // Varied cottages & sheds along the Mill Approach road (west of [-69.5,104.3]->[-43.4,164.9])
+    ['mill-approach-0', -78.5, 114.0, -1.12, 9.6, 6.2, 4.4, 2.7, true],
+    ['mill-approach-1', -71.5, 130.5, -1.24, 7.6, 5.4, 3.6, 2.3, false],
+    ['mill-approach-2', -69.0, 149.0, -1.06, 10.4, 6.6, 4.6, 2.9, true],
+    ['mill-approach-3', -60.5, 161.5, -1.18, 7.2, 5.0, 3.4, 2.2, false],
+    // Organic "Skladiště" / SW crossroads farmstead cluster south of Limberský potok
+    ['sw-skladiste-0', -84.0, 236.0, 0.34, 11.2, 6.8, 4.6, 2.9, true],
+    ['sw-skladiste-1', -102.0, 244.0, 0.24, 8.8, 5.8, 3.9, 2.5, false],
+    ['sw-skladiste-2', -94.0, 258.5, 0.42, 9.4, 6.0, 4.1, 2.6, false],
+    ['sw-skladiste-3', -114.5, 254.0, 0.30, 8.0, 5.4, 3.5, 2.2, true],
+  ];
 
-    const millApproachTs = [0.14, 0.36, 0.58, 0.79];
-    for (let i = 0; i < millApproachTs.length; i++) {
-      const t = millApproachTs[i];
-      const width = 8.0 + rand() * 2.6;
-      const depth = 6.0 + rand() * 1.4;
-      const offset = 10.2 + rand() * 1.2;
-      const px = ax + dx * t + nx * offset;
-      const pz = az + dz * t + nz * offset;
-
-      houses.push({
-        id: `mill-approach-${i}`,
-        x: px,
-        z: pz,
-        rotY,
-        width,
-        depth,
-        wallHeight: 4.1 + rand() * 1.1,
-        roofHeight: 2.5 + rand() * 0.9,
-        kind: 'masonry',
-        wallColor: masonryWalls[Math.floor(rand() * masonryWalls.length)],
-        roofColor: masonryRoofs[Math.floor(rand() * masonryRoofs.length)],
-        hasChimney: true,
-        nightThreshold: 0.52 + i * 0.08,
-      });
-    }
+  for (let i = 0; i < swOrganicSpecs.length; i++) {
+    const [id, px, pz, rotY, width, depth, wallHeight, roofHeight, hasWing] = swOrganicSpecs[i];
+    houses.push({
+      id,
+      x: px,
+      z: pz,
+      rotY,
+      width,
+      depth,
+      wallHeight,
+      roofHeight,
+      kind: 'masonry',
+      wallColor: masonryWalls[Math.floor(rand() * masonryWalls.length)],
+      roofColor: masonryRoofs[Math.floor(rand() * masonryRoofs.length)],
+      hasChimney: i % 3 !== 2,
+      nightThreshold: 0.52 + (i % 5) * 0.07,
+      wing: hasWing
+        ? {
+            ox: (i % 2 === 0 ? -1 : 1) * (width * 0.32),
+            oz: depth * 0.62,
+            width: Math.max(4.6, width * 0.52),
+            depth: Math.max(4.2, depth * 0.74),
+            wallHeight: Math.max(2.9, wallHeight * 0.78),
+            roofHeight: Math.max(1.8, roofHeight * 0.76),
+          }
+        : undefined,
+    });
   }
 
   return houses;

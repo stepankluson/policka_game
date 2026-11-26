@@ -1,4 +1,10 @@
 import * as THREE from 'three';
+import {
+  NE_JUNCTION_CENTER,
+  NE_ROUNDABOUT_WAY_ID,
+  RADIAL_ROADS_1894,
+  sampleTiltedWallOvalRadius,
+} from './cadastral1894';
 
 export interface OsmBuilding {
   id: number;
@@ -565,25 +571,28 @@ export function buildRealOsmWalls(
     return arr[Math.floor(arr.length * 0.25)];
   });
 
-  // Bridge any missing angular gaps (e.g. eastern pond side) smoothly by circular linear interpolation
+  // Bridge any missing angular gaps (e.g. eastern pond side) smoothly along the tilted 1894 oval
   for (let i = 0; i < BINS; i++) {
     if (radii[i] !== null) continue;
     let l = 1;
     while (radii[(i - l + BINS) % BINS] === null && l < BINS) l++;
     let r = 1;
     while (radii[(i + r) % BINS] === null && r < BINS) r++;
-    const rL = radii[(i - l + BINS) % BINS] ?? 190;
-    const rR = radii[(i + r) % BINS] ?? 190;
-    radii[i] = rL + (rR - rL) * (l / (l + r));
+    const a = ((i + 0.5) / BINS) * Math.PI * 2;
+    const ovalR = sampleTiltedWallOvalRadius(a);
+    const rL = radii[(i - l + BINS) % BINS] ?? ovalR;
+    const rR = radii[(i + r) % BINS] ?? ovalR;
+    const rLerp = rL + (rR - rL) * (l / (l + r));
+    radii[i] = rLerp * 0.45 + ovalR * 0.55;
   }
 
-  // Pull any bridged vertex strictly onto dry embankment clear of pond water (5m margin)
+  // Pull any bridged vertex strictly onto dry embankment clear of pond water (6m green corridor margin)
   const resolvedRadii = radii.map((r, i) => {
     let rad = r ?? 190;
     const a = ((i + 0.5) / BINS) * Math.PI * 2;
     let guard = 0;
     while (
-      isNearWater(cx + Math.cos(a) * rad, cz + Math.sin(a) * rad, waterPolys, 5.0) &&
+      isNearWater(cx + Math.cos(a) * rad, cz + Math.sin(a) * rad, waterPolys, 6.0) &&
       rad > 110 &&
       guard++ < 30
     ) {
@@ -704,9 +713,9 @@ export function buildRealOsmWalls(
         if (hit) {
           const rux = (rx1 - rx0) / rLen;
           const ruz = (rz1 - rz0) / rLen;
-          // Oblique crossing projection: keep clean ~7.2m–9.0m gate opening
-          const sinTheta = Math.max(0.58, Math.abs(wux * ruz - wuz * rux));
-          const gapHalf = Math.min(4.6, Math.max(3.6, (road.halfW + 1.45) / sinTheta));
+          // Oblique crossing projection: snug ~5.0m–6.6m gate opening so walls meet road edges & corner bastions cleanly
+          const sinTheta = Math.max(0.62, Math.abs(wux * ruz - wuz * rux));
+          const gapHalf = Math.min(3.3, Math.max(2.5, (road.halfW + 0.45) / sinTheta));
           const sCross = edgeStartS[i] + hit[2] * wLen;
           addGapAtS(sCross, gapHalf);
         }
@@ -831,8 +840,8 @@ export function buildRealOsmWalls(
   //    If a bastion overlaps or comes too close to a road opening, nudge it ±6.5m / ±8.5m
   //    along the wall away from the gap, or omit it if no clean spot exists.
   const BASTION_INTERVAL = 50.0;
-  const BASTION_GAP_CLEARANCE = 4.6; // min distance from bastion center to gate opening edge
-  const BASTION_ROAD_CLEARANCE = 5.2; // extra clearance beyond road halfW (~7.6m from centerline)
+  const BASTION_GAP_CLEARANCE = 3.4; // min distance from bastion center to gate opening edge
+  const BASTION_ROAD_CLEARANCE = 4.6; // extra clearance beyond road halfW (~7.0m from centerline)
   const MIN_BASTION_SEP = 34.0;
   const NUDGE_OFFSETS = [0, 6.5, -6.5, 8.5, -8.5] as const;
 
@@ -1088,6 +1097,7 @@ export function buildMergedBuildingsGeometry(
   wallRing: readonly [number, number][] = [],
   bastions: readonly Bastion3D[] = [],
   renderedRoads: readonly RenderedRoadPolyline[] = [],
+  waterPolys: readonly OsmPolyline[] = [],
 ): {
   wallGeometry: THREE.BufferGeometry;
   roofGeometry: THREE.BufferGeometry;
@@ -1245,6 +1255,9 @@ export function buildMergedBuildingsGeometry(
 
     // Skip any building polygon sitting directly on top of a real OSM medieval wall way
     if (osmWalls.length > 0 && isNearPolyline(cx, cz, osmWalls, 2.2)) continue;
+
+    // Temporary Step 1 collision cleanup: skip any building overlapping the reshaped 1894 pond shoreline
+    if (waterPolys.length > 0 && isNearWater(cx, cz, waterPolys, 5.5)) continue;
 
     // === STRICT ZERO-INTERSECTION PASS AGAINST CLOSED CITY WALL RING & BASTIONS ===
     let safePts: [number, number][] = b.points.map(([px, pz]) => [px, pz]);
@@ -2650,8 +2663,25 @@ export function buildMergedStreetsGeometry(
   };
 
   const infos: StreetInfo[] = [];
-  for (const st of streets) {
-    if (st.points.length < 2) continue;
+  const [jCx, jCz] = NE_JUNCTION_CENTER;
+  for (const rawSt of streets) {
+    if (rawSt.points.length < 2) continue;
+    // Remove modern NE roundabout loop (replaced by simple ~1900 4-way converging junction)
+    if (rawSt.id === NE_ROUNDABOUT_WAY_ID) continue;
+
+    // Extend any road terminating on the removed NE roundabout rim cleanly to the 4-way junction center
+    let pts: [number, number][] = rawSt.points;
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    const nearStart = Math.hypot(first[0] - jCx, first[1] - jCz) < 16;
+    const nearEnd = Math.hypot(last[0] - jCx, last[1] - jCz) < 16;
+    if (nearStart || nearEnd) {
+      pts = pts.map(([px, pz]) => [px, pz]);
+      if (nearStart) pts.unshift([jCx, jCz]);
+      if (nearEnd) pts.push([jCx, jCz]);
+    }
+    const st: OsmPolyline = pts === rawSt.points ? rawSt : { ...rawSt, points: pts };
+
     const kind = st.kind ?? '';
     const isArterial = ARTERIAL_HIGHWAYS.has(kind);
     const isDrivable = DRIVABLE_HIGHWAYS.has(kind);
@@ -3017,14 +3047,13 @@ export function buildMergedStreetsGeometry(
   // === SUBURBAN ROAD EXTENSIONS & GAP BRIDGES (NE, EAST WALL & WEST/NW OUTER PERIMETER) ===
   const connectorRoads: Array<{ points: [number, number][]; halfW: number }> = [];
   const rawSuburbanExtensions: Array<{ points: [number, number][]; halfW: number }> = [
-    // 1. Eastern wall gate stub -> Eastern stream-bridge primary road & Obere Vorstadt NE arterial
+    // 1. Eastern wall gate stub -> Eastern stream-bridge primary road & NE ~1900 4-way junction
     {
       points: [
         [324.1, -163.4],
         [335.3, -170.4],
         [360.0, -181.5],
-        [375.0, -184.1],
-        [377.8, -184.3],
+        [NE_JUNCTION_CENTER[0], NE_JUNCTION_CENTER[1]],
       ],
       halfW: 2.5,
     },
@@ -3075,6 +3104,8 @@ export function buildMergedStreetsGeometry(
       ],
       halfW: 2.25,
     },
+    // 1894 historical radial corridors (eastern pond-dam road toward Hatka & western/WNW fork)
+    ...RADIAL_ROADS_1894,
   ];
 
   for (const ext of rawSuburbanExtensions) {

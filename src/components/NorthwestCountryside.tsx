@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { RenderedRoadPolyline } from '../game/osmGeometry';
 import { TOWN_Y } from '../game/pois';
@@ -415,8 +415,8 @@ export function NorthwestCountryside({
     return { conifers: coniferList, broadleaves: broadList, bushes: bushList };
   }, [renderedRoads, railwayTrack]);
 
-  // Populate all static InstancedMeshes once on mount (zero per-frame work)
-  useEffect(() => {
+  // Populate all static InstancedMeshes before first paint (zero [0, 0, 0] origin flash, zero per-frame work)
+  useLayoutEffect(() => {
     const d = new THREE.Object3D();
 
     const sTrunk = spruceTrunkRef.current;

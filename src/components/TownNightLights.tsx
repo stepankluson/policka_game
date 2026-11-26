@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type {
@@ -362,10 +362,12 @@ export function TownNightLights({
     return list;
   }, [roadGraph, renderedRoads, stationPos, stationTrackAngle]);
 
-  // Populate static dark-iron streetlamp posts & caps once
-  useEffect(() => {
+  // Populate static dark-iron streetlamp posts, caps & initial bulb/pool transforms before first paint
+  useLayoutEffect(() => {
     const posts = lampPostRef.current;
     const caps = lampCapRef.current;
+    const bulbs = lampBulbRef.current;
+    const pools = lampPoolRef.current;
     if (!posts || !caps) return;
 
     for (let i = 0; i < streetlamps.length; i++) {
@@ -379,14 +381,38 @@ export function TownNightLights({
       _dummy.position.set(l.x, TOWN_Y + 4.72, l.z);
       _dummy.updateMatrix();
       caps.setMatrixAt(i, _dummy.matrix);
+
+      if (bulbs) {
+        _dummy.position.set(l.x, TOWN_Y + 4.35, l.z);
+        _dummy.scale.set(1, 1, 1);
+        _dummy.updateMatrix();
+        bulbs.setMatrixAt(i, _dummy.matrix);
+        bulbs.setColorAt(i, _bulbOffCol);
+      }
+      if (pools) {
+        _dummy.position.set(0, -999, 0);
+        _dummy.rotation.set(-Math.PI / 2, 0, 0);
+        _dummy.scale.setScalar(0.001);
+        _dummy.updateMatrix();
+        pools.setMatrixAt(i, _dummy.matrix);
+        pools.setColorAt(i, _poolOffCol);
+      }
     }
     posts.instanceMatrix.needsUpdate = true;
     caps.instanceMatrix.needsUpdate = true;
+    if (bulbs) {
+      bulbs.instanceMatrix.needsUpdate = true;
+      if (bulbs.instanceColor) bulbs.instanceColor.needsUpdate = true;
+    }
+    if (pools) {
+      pools.instanceMatrix.needsUpdate = true;
+      if (pools.instanceColor) pools.instanceColor.needsUpdate = true;
+    }
     lastAppliedNfRef.current = -1;
   }, [streetlamps]);
 
-  // Populate static door/gate & window-frame/pane transforms once (and immediately hide any burned building)
-  useEffect(() => {
+  // Populate static door/gate & window-frame/pane transforms before first paint (zero [0, 0, 0] flash)
+  useLayoutEffect(() => {
     const doorMesh = doorsInstRef.current;
     if (doorMesh) {
       for (let i = 0; i < houseDoors.length; i++) {

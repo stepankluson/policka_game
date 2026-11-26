@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
@@ -706,6 +706,28 @@ export function Townspeople({
   const sidewalkRuntimeRef = useRef<SidewalkWalkerRuntime[]>([]);
   const graphInitializedRef = useRef<RoadGraph | null>(null);
   const loopScratchRef = useRef({ x: 0, z: 0, yaw: 0 });
+
+  // Pre-hide all instanced body-part meshes before first paint so zero default-matrix meshes flash at [0, 0, 0]
+  useLayoutEffect(() => {
+    const count = people.length;
+    if (count === 0) return;
+    _dummy.position.set(0, -999, 0);
+    _dummy.rotation.set(0, 0, 0);
+    _dummy.scale.set(0, 0, 0);
+    _dummy.updateMatrix();
+    const singleMeshes = [torsoRef.current, headRef.current, hatRef.current, skirtRef.current];
+    for (const m of singleMeshes) {
+      if (!m) continue;
+      for (let i = 0; i < count; i++) m.setMatrixAt(i, _dummy.matrix);
+      m.instanceMatrix.needsUpdate = true;
+    }
+    const doubleMeshes = [legRef.current, armRef.current];
+    for (const m of doubleMeshes) {
+      if (!m) continue;
+      for (let i = 0; i < count * 2; i++) m.setMatrixAt(i, _dummy.matrix);
+      m.instanceMatrix.needsUpdate = true;
+    }
+  }, [people.length]);
 
   useFrame((state, rawDelta) => {
     const torsoMesh = torsoRef.current;

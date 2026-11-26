@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { DOOR_INTERACTION, type BirthRoomHotspot } from '../game/birthRoomData';
@@ -158,6 +158,15 @@ function TitleOrbitCamera({
   return null;
 }
 
+const TITLE_ORBIT_START_ANGLE = 0.42;
+const TITLE_ORBIT_RADIUS = 45;
+const TITLE_ORBIT_Y = 9.5;
+const INITIAL_CANVAS_CAMERA_POS: readonly [number, number, number] = [
+  CHURCH_TRANSFORM.x + Math.sin(TITLE_ORBIT_START_ANGLE) * TITLE_ORBIT_RADIUS,
+  TITLE_ORBIT_Y + Math.sin(TITLE_ORBIT_START_ANGLE * 1.4) * 1.2,
+  CHURCH_TRANSFORM.z + Math.cos(TITLE_ORBIT_START_ANGLE) * TITLE_ORBIT_RADIUS,
+];
+
 /** Dynamically toggles WebGL shadow maps & recompiles scene materials without remounting Canvas */
 function GraphicsQualityDriver({
   graphicsQuality,
@@ -165,6 +174,7 @@ function GraphicsQualityDriver({
   graphicsQuality: GraphicsQuality;
 }) {
   const { gl, scene } = useThree();
+  const prevQualityRef = useRef<GraphicsQuality | null>(null);
 
   useEffect(() => {
     const isHigh = graphicsQuality === 'high';
@@ -172,18 +182,62 @@ function GraphicsQualityDriver({
     gl.shadowMap.autoUpdate = isHigh;
     gl.shadowMap.needsUpdate = true;
 
-    scene.traverse((obj) => {
-      const mat = (obj as THREE.Mesh).material;
-      if (!mat) return;
-      if (Array.isArray(mat)) {
-        for (let i = 0; i < mat.length; i++) {
-          mat[i].needsUpdate = true;
+    // Skip expensive full-scene material recompilation on initial mount (prevents startup shader stalls/flashes);
+    // only force recompile when the user actually switches quality at runtime.
+    if (prevQualityRef.current !== null && prevQualityRef.current !== graphicsQuality) {
+      scene.traverse((obj) => {
+        const mat = (obj as THREE.Mesh).material;
+        if (!mat) return;
+        if (Array.isArray(mat)) {
+          for (let i = 0; i < mat.length; i++) {
+            mat[i].needsUpdate = true;
+          }
+        } else {
+          mat.needsUpdate = true;
         }
-      } else {
-        mat.needsUpdate = true;
-      }
-    });
+      });
+    }
+    prevQualityRef.current = graphicsQuality;
   }, [gl, scene, graphicsQuality]);
+
+  return null;
+}
+
+/**
+ * One-shot startup readiness driver: waits for OSM town geometry to mount, pre-compiles
+ * WebGL shader programs once via gl.compile(scene, camera), then waits 2 rendered frames
+ * before signaling onSceneReady() so the loading cover fades out cleanly with zero flicker.
+ */
+function SceneReadyDriver({
+  townReady,
+  onSceneReady,
+}: {
+  townReady: boolean;
+  onSceneReady?: () => void;
+}) {
+  const { gl, scene, camera } = useThree();
+  const compiledRef = useRef(false);
+  const framesAfterCompileRef = useRef(0);
+  const notifiedRef = useRef(false);
+
+  useFrame(() => {
+    if (notifiedRef.current || !townReady) return;
+    if (!compiledRef.current) {
+      compiledRef.current = true;
+      try {
+        gl.compile(scene, camera);
+      } catch {
+        // Ignore non-fatal driver compile warnings
+      }
+      framesAfterCompileRef.current = 0;
+      return;
+    }
+    framesAfterCompileRef.current += 1;
+    if (framesAfterCompileRef.current >= 2) {
+      notifiedRef.current = true;
+      onSceneReady?.();
+    }
+  });
 
   return null;
 }
@@ -270,6 +324,7 @@ interface GameSceneProps {
   graphicsQuality: GraphicsQuality;
   showFps: boolean;
   settingsOpen: boolean;
+  onSceneReady?: () => void;
 }
 
 const TELESCOPE_LOOK_DOT_THRESHOLD = 0.35;
@@ -805,7 +860,12 @@ export function GameScene({
   graphicsQuality,
   showFps,
   settingsOpen,
+  onSceneReady,
 }: GameSceneProps) {
+  const [townReady, setTownReady] = useState(false);
+  const handleTownReady = useCallback(() => {
+    setTownReady(true);
+  }, []);
   const playerLocalPosRef = useRef<THREE.Vector3>(
     new THREE.Vector3(
       INITIAL_PLAYER_POSITION[0],
@@ -835,7 +895,12 @@ export function GameScene({
     <Canvas
       shadows="percentage"
       dpr={graphicsQuality === 'high' ? [1, 2] : 0.75}
-      camera={{ fov: TELESCOPE_CONFIG.normalFov, near: 0.5, far: 3000 }}
+      camera={{
+        position: INITIAL_CANVAS_CAMERA_POS as [number, number, number],
+        fov: TELESCOPE_CONFIG.normalFov,
+        near: 0.25,
+        far: 3000,
+      }}
       gl={{
         powerPreference: 'high-performance',
         antialias: true,
@@ -845,6 +910,7 @@ export function GameScene({
       className="h-full w-full"
     >
       <GraphicsQualityDriver graphicsQuality={graphicsQuality} />
+      <SceneReadyDriver townReady={townReady} onSceneReady={onSceneReady} />
       <FpsMonitorDriver active={showFps} />
 
       {/* Global Time-of-Day Interpolation & Soundscape Driver (runs seamlessly across exterior & Birth Room) */}
@@ -923,6 +989,7 @@ export function GameScene({
 
         <TownDiorama
           unlockedPois={unlockedPois}
+          onTownReady={handleTownReady}
           fireWatch={fireWatch}
           onFireEngineArrived={onFireEngineArrived}
           onExtinguishComplete={onExtinguishComplete}

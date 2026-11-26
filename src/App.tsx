@@ -129,6 +129,31 @@ export function App() {
   const [isFading, setIsFading] = useState(false);
   const fadeTimerRef = useRef<number | null>(null);
 
+  // One-shot startup loading cover: hides initial OSM load & shader pre-compile,
+  // fades out smoothly once the first ready frame renders, then unmounts permanently.
+  const [isSceneReady, setIsSceneReady] = useState(false);
+  const [showStartupCover, setShowStartupCover] = useState(true);
+
+  const handleSceneReady = useCallback(() => {
+    setIsSceneReady(true);
+  }, []);
+
+  useEffect(() => {
+    // Safety fallback so the cover can never remain stuck even if fetch fails
+    const fallbackId = window.setTimeout(() => {
+      setIsSceneReady(true);
+    }, 4000);
+    return () => window.clearTimeout(fallbackId);
+  }, []);
+
+  useEffect(() => {
+    if (!isSceneReady) return;
+    const unmountId = window.setTimeout(() => {
+      setShowStartupCover(false);
+    }, 480);
+    return () => window.clearTimeout(unmountId);
+  }, [isSceneReady]);
+
   const [nearbyTelescope, setNearbyTelescope] = useState<TelescopeId | null>(null);
   const [isNearDoor, setIsNearDoor] = useState(false);
   const [isNearInteriorExitDoor, setIsNearInteriorExitDoor] = useState(false);
@@ -956,7 +981,22 @@ export function App() {
         graphicsQuality={settings.graphicsQuality}
         showFps={settings.showFps}
         settingsOpen={settingsOpen}
+        onSceneReady={handleSceneReady}
       />
+
+      {/* One-Shot Startup Loading Cover (fades out smoothly once shaders & town are ready, then unmounts permanently) */}
+      {showStartupCover && (
+        <div
+          className={`fixed inset-0 z-[60] flex flex-col items-center justify-center bg-slate-950 transition-opacity duration-500 ${
+            isSceneReady ? 'pointer-events-none opacity-0' : 'opacity-100'
+          }`}
+        >
+          <span className="text-[11px] font-semibold tracking-[0.34em] text-amber-300/80 uppercase">
+            Polička · 1900
+          </span>
+          <div className="mt-3 h-px w-24 bg-gradient-to-r from-transparent via-amber-300/50 to-transparent" />
+        </div>
+      )}
 
       {/* Cinematic Minimalist Title Screen Overlay (fades out smoothly during 1.65s fly-in) */}
       {gamePhase !== 'playing' && (

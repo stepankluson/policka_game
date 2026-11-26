@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
@@ -373,7 +373,8 @@ function EasternWatermillMesh({
 /** 2B. Continuous Eastern Stream Connecting Synský rybník Neck Past Both Eastern Watermills */
 function EasternStreamAndBridge1903() {
   const streamGeometry = useMemo(() => {
-    const y = TOWN_Y + 0.24;
+    // 0.05m below Synský rybník (TOWN_Y + 0.25) with renderOrder 48 < 50 for zero Z-fighting
+    const y = TOWN_Y + 0.2;
     const pts3 = EASTERN_STREAM_POINTS_1903.map(([x, z]) => new THREE.Vector3(x, y, z));
     const curve = new THREE.CatmullRomCurve3(pts3, false, 'centripetal', 0.5);
     const samples = 84;
@@ -433,7 +434,7 @@ function EasternStreamAndBridge1903() {
 
   return (
     <group name="eastern-stream-and-bridge-1903">
-      <mesh geometry={streamGeometry} material={MATS.streamWater} renderOrder={50} />
+      <mesh geometry={streamGeometry} material={MATS.streamWater} renderOrder={48} />
 
       {/* Low stone bridge parapets where eastern primary road crosses over the stream */}
       <group
@@ -490,8 +491,8 @@ export function PolickaSurvey1903({ burnedIds, isWinter = false }: PolickaSurvey
   const orchardTrunkRef = useRef<THREE.InstancedMesh>(null);
   const orchardCanopyRef = useRef<THREE.InstancedMesh>(null);
 
-  // Populate western orchard rounded fruit trees once
-  useEffect(() => {
+  // Populate western orchard rounded fruit trees before first paint (zero [0, 0, 0] origin flash)
+  useLayoutEffect(() => {
     const trunks = orchardTrunkRef.current;
     const canopies = orchardCanopyRef.current;
     if (!trunks || !canopies) return;
@@ -759,6 +760,39 @@ export function PolickaSurvey1903({ burnedIds, isWinter = false }: PolickaSurvey
               scale={[0.68, 1.65, 0.68]}
               castShadow
             />
+          )}
+          {h.wing && (
+            <group position={[h.wing.ox, 0, h.wing.oz]} rotation={[0, Math.PI / 2, 0]}>
+              <mesh
+                geometry={UNIT_BOX}
+                material={MATS.plinth}
+                position={[0, 0.25, 0]}
+                scale={[h.wing.width + 0.14, 0.5, h.wing.depth + 0.14]}
+                receiveShadow
+              />
+              <mesh
+                geometry={UNIT_BOX}
+                position={[0, h.wing.wallHeight / 2 + 0.18, 0]}
+                scale={[h.wing.width, h.wing.wallHeight, h.wing.depth]}
+                castShadow
+                receiveShadow
+              >
+                <meshStandardMaterial color={h.wallColor} roughness={0.91} flatShading />
+              </mesh>
+              <mesh
+                geometry={UNIT_GABLE_ROOF}
+                position={[0, h.wing.wallHeight + 0.16, 0]}
+                scale={[h.wing.width + 0.45, h.wing.roofHeight, h.wing.depth + 0.5]}
+                castShadow
+                receiveShadow
+              >
+                <meshStandardMaterial
+                  color={isWinter ? '#e0e9f2' : h.roofColor}
+                  roughness={0.86}
+                  flatShading
+                />
+              </mesh>
+            </group>
           )}
         </group>
       ))}

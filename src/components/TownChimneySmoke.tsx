@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { ChimneyTop } from '../game/osmGeometry';
@@ -118,6 +118,28 @@ export function TownChimneySmoke({
     }
     return list;
   }, []);
+
+  // Pre-hide smoke puff instances before first paint so zero default-matrix puffs flash at [0, 0, 0]
+  useLayoutEffect(() => {
+    const dummy = dummyRef.current;
+    dummy.position.set(0, -999, 0);
+    dummy.scale.set(0, 0, 0);
+    dummy.updateMatrix();
+    const hMesh = houseMeshRef.current;
+    if (hMesh) {
+      for (let i = 0; i < housePuffs.length; i++) {
+        hMesh.setMatrixAt(i, dummy.matrix);
+      }
+      hMesh.instanceMatrix.needsUpdate = true;
+    }
+    const bMesh = breweryMeshRef.current;
+    if (bMesh) {
+      for (let i = 0; i < breweryPuffs.length; i++) {
+        bMesh.setMatrixAt(i, dummy.matrix);
+      }
+      bMesh.instanceMatrix.needsUpdate = true;
+    }
+  }, [housePuffs.length, breweryPuffs.length]);
 
   useFrame((state, rawDelta) => {
     const isPerf = settingsRuntime.graphicsQuality === 'performance';
