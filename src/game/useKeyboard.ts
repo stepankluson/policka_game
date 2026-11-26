@@ -5,7 +5,16 @@ export interface MovementInput {
   backward: boolean;
   left: boolean;
   right: boolean;
+  sprint: boolean;
 }
+
+/**
+ * Shared zero-allocation runtime motion state written by Player.tsx and read
+ * by exterior cameras (FirstPersonGalleryCamera / FollowCamera) for subtle FOV feedback.
+ */
+export const playerMotionRuntime = {
+  sprintBlend: 0,
+};
 
 const KEY_TO_ACTION: Record<string, keyof MovementInput> = {
   KeyW: 'forward',
@@ -16,10 +25,12 @@ const KEY_TO_ACTION: Record<string, keyof MovementInput> = {
   ArrowLeft: 'left',
   KeyD: 'right',
   ArrowRight: 'right',
+  ShiftLeft: 'sprint',
+  ShiftRight: 'sprint',
 };
 
 /**
- * Tracks WASD and Arrow key states in a mutable ref so useFrame can read
+ * Tracks WASD, Arrow, and Shift key states in a mutable ref so useFrame can read
  * real-time input without triggering React re-renders.
  */
 export function useKeyboard() {
@@ -28,6 +39,7 @@ export function useKeyboard() {
     backward: false,
     left: false,
     right: false,
+    sprint: false,
   });
 
   useEffect(() => {
@@ -46,21 +58,28 @@ export function useKeyboard() {
       inputRef.current[action] = false;
     };
 
-    const handleBlur = () => {
+    const clearAll = () => {
       inputRef.current.forward = false;
       inputRef.current.backward = false;
       inputRef.current.left = false;
       inputRef.current.right = false;
+      inputRef.current.sprint = false;
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) clearAll();
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
-    window.addEventListener('blur', handleBlur);
+    window.addEventListener('blur', clearAll);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('blur', clearAll);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 

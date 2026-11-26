@@ -5,7 +5,8 @@ import { INITIAL_PLAYER_POSITION, PLAYER_CONFIG, RING_BOUNDS } from '../game/con
 import { CHURCH_TRANSFORM, churchLocalToWorld } from '../game/pois';
 import { constrainToSquareRing, dampAngle } from '../game/ringCollision';
 import { timeOfDayState } from '../game/timeOfDay';
-import { useKeyboard } from '../game/useKeyboard';
+import { playerMotionRuntime, useKeyboard } from '../game/useKeyboard';
+import { soundEngine } from '../audio/soundEngine';
 
 interface PlayerProps {
   /** Player position in gallery-local coordinates (for ring collision & telescope proximity) */
@@ -143,13 +144,17 @@ export function Player({
   const desiredDirRef = useRef(new THREE.Vector3());
   const facingYawRef = useRef(Math.PI / 2);
   const walkPhaseRef = useRef(0);
+  const lastStepCountRef = useRef(0);
   const idleTimeRef = useRef(0);
   const hiddenByCameraRef = useRef(false);
   const lanternArmBlendRef = useRef(isLanternOut ? 1 : 0);
+  const sprintBlendRef = useRef(0);
 
   useFrame((_, rawDelta) => {
     if (disabled) {
       velocityRef.current.set(0, 0, 0);
+      sprintBlendRef.current = 0;
+      playerMotionRuntime.sprintBlend = 0;
       return;
     }
 
@@ -159,6 +164,14 @@ export function Player({
 
     const forwardAxis = (input.forward ? 1 : 0) - (input.backward ? 1 : 0);
     const rightAxis = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const hasMoveInput = forwardAxis !== 0 || rightAxis !== 0;
+
+    // Smoothly ramp sprint blend (0 -> 1) when holding Shift while moving
+    const sprintTarget = input.sprint && hasMoveInput ? 1 : 0;
+    sprintBlendRef.current += (sprintTarget - sprintBlendRef.current) * (1 - Math.exp(-8 * dt));
+    if (sprintBlendRef.current < 0.001 && sprintTarget === 0) sprintBlendRef.current = 0;
+    const sprintBlend = sprintBlendRef.current;
+    playerMotionRuntime.sprintBlend = sprintBlend;
 
     // Derive camera-relative XZ basis in world space, then rotate into church-local gallery space
     const camForward = camForwardRef.current;
@@ -174,7 +187,7 @@ export function Player({
     const camRight = camRightRef.current.crossVectors(camForward, WORLD_UP).normalize();
 
     const desiredDir = desiredDirRef.current.set(0, 0, 0);
-    if (forwardAxis !== 0 || rightAxis !== 0) {
+    if (hasMoveInput) {
       desiredDir
         .addScaledVector(camForward, forwardAxis)
         .addScaledVector(camRight, rightAxis);
@@ -183,29 +196,40 @@ export function Player({
       }
     }
 
-    // Smooth horizontal velocity damping
+    // Smooth horizontal velocity damping with sprinting multiplier
+    const targetSpeed =
+      PLAYER_CONFIG.moveSpeed * (1 + (PLAYER_CONFIG.sprintMultiplier - 1) * sprintBlend);
     const vel = velocityRef.current;
     const accelT = 1 - Math.exp(-PLAYER_CONFIG.acceleration * dt);
-    vel.x += (desiredDir.x * PLAYER_CONFIG.moveSpeed - vel.x) * accelT;
-    vel.z += (desiredDir.z * PLAYER_CONFIG.moveSpeed - vel.z) * accelT;
+    vel.x += (desiredDir.x * targetSpeed - vel.x) * accelT;
+    vel.z += (desiredDir.z * targetSpeed - vel.z) * accelT;
 
-    // Integrate position and strictly constrain inside the square ring walkway
-    const nextX = playerPosRef.current.x + vel.x * dt;
-    const nextZ = playerPosRef.current.z + vel.z * dt;
-    const constrained = constrainToSquareRing(
-      nextX,
-      nextZ,
-      innerLimit,
-      RING_BOUNDS.outerLimit,
-    );
+    // Substepped integration strictly constrained inside the square ring walkway (prevents corner clipping at sprint speed)
+    const startX = playerPosRef.current.x;
+    const startZ = playerPosRef.current.z;
+    const stepDisp = Math.hypot(vel.x * dt, vel.z * dt);
+    const substeps = stepDisp > 0.14 ? 2 : 1;
+    const subDt = dt / substeps;
+    let curX = startX;
+    let curZ = startZ;
+    for (let s = 0; s < substeps; s++) {
+      const constrained = constrainToSquareRing(
+        curX + vel.x * subDt,
+        curZ + vel.z * subDt,
+        innerLimit,
+        RING_BOUNDS.outerLimit,
+      );
+      curX = constrained.x;
+      curZ = constrained.z;
+    }
 
     // Zero velocity component if blocked against a boundary to keep animation accurate
-    const actualDx = constrained.x - playerPosRef.current.x;
-    const actualDz = constrained.z - playerPosRef.current.z;
+    const actualDx = curX - startX;
+    const actualDz = curZ - startZ;
     const actualSpeed = dt > 1e-5 ? Math.hypot(actualDx, actualDz) / dt : 0;
 
-    playerPosRef.current.set(constrained.x, 0, constrained.z);
-    const [wx, wy, wz] = churchLocalToWorld(constrained.x, 0, constrained.z);
+    playerPosRef.current.set(curX, 0, curZ);
+    const [wx, wy, wz] = churchLocalToWorld(curX, 0, curZ);
     playerWorldPosRef.current.set(wx, wy, wz);
 
     // Smoothly rotate character toward movement direction
@@ -241,25 +265,32 @@ export function Player({
       }
     }
 
-    // Natural upright idle breathing & gallery patrol walk animation
-    const speedRatio = Math.min(actualSpeed / PLAYER_CONFIG.moveSpeed, 1);
+    // Natural upright idle breathing & gallery patrol walk/sprint animation
+    const speedRatio = Math.min(actualSpeed / PLAYER_CONFIG.moveSpeed, 1.5);
+    const clampedRatio = Math.min(speedRatio, 1);
     if (speedRatio > 0.04) {
-      walkPhaseRef.current += dt * (7.2 + speedRatio * 4.2);
+      walkPhaseRef.current += dt * (7.2 + speedRatio * 4.4);
+      const stepIdx = Math.floor(walkPhaseRef.current / Math.PI);
+      if (stepIdx !== lastStepCountRef.current) {
+        lastStepCountRef.current = stepIdx;
+        soundEngine.playFootstep('stone', sprintBlend > 0.35, false);
+      }
     } else {
       walkPhaseRef.current += dt * 1.45;
+      lastStepCountRef.current = Math.floor(walkPhaseRef.current / Math.PI);
     }
 
-    const swing = Math.sin(walkPhaseRef.current) * 0.56 * speedRatio;
-    const bob = Math.abs(Math.sin(walkPhaseRef.current)) * 0.055 * speedRatio;
-    const idleBreath = Math.sin(idleTimeRef.current * 1.8) * 0.011 * (1 - speedRatio);
+    const swing = Math.sin(walkPhaseRef.current) * 0.56 * Math.min(speedRatio, 1.25);
+    const bob = Math.abs(Math.sin(walkPhaseRef.current)) * 0.055 * Math.min(speedRatio, 1.25);
+    const idleBreath = Math.sin(idleTimeRef.current * 1.8) * 0.011 * (1 - clampedRatio);
 
     if (bodyRef.current) {
       bodyRef.current.position.y = bob + idleBreath;
-      bodyRef.current.rotation.z = Math.sin(walkPhaseRef.current) * 0.024 * speedRatio;
+      bodyRef.current.rotation.z = Math.sin(walkPhaseRef.current) * 0.024 * clampedRatio;
     }
     if (headRef.current) {
       // Subtle vigilant watchman scan while idling
-      headRef.current.rotation.y = Math.sin(idleTimeRef.current * 0.65) * 0.14 * (1 - speedRatio);
+      headRef.current.rotation.y = Math.sin(idleTimeRef.current * 0.65) * 0.14 * (1 - clampedRatio);
     }
     if (leftLegRef.current && rightLegRef.current) {
       leftLegRef.current.rotation.x = swing;

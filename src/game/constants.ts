@@ -20,6 +20,10 @@ export const PLAYER_CONFIG = {
   radius: 0.42,
   /** Movement speed in meters per second */
   moveSpeed: 4.2,
+  /** Sprint speed multiplier when holding Shift */
+  sprintMultiplier: 1.75,
+  /** Subtle dynamic FOV boost (degrees) at full sprint */
+  sprintFovBoost: 3.5,
   /** Horizontal acceleration damping factor */
   acceleration: 14,
   /** Rotation smoothing factor */

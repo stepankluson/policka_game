@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { DOOR_INTERACTION, type BirthRoomHotspot } from '../game/birthRoomData';
+import type { AtticSpawnPoint } from '../game/churchAttic';
+import type { InteriorCollectibleId } from '../game/interiorCollectibles';
 import { CAMERA_CONFIG, INITIAL_PLAYER_POSITION, RING_BOUNDS } from '../game/constants';
 import { fpsHudRef, type GraphicsQuality } from '../game/settings';
 import {
@@ -31,6 +33,8 @@ import {
 import { Atmosphere } from './Atmosphere';
 import { BellChamberInterior } from './BellChamberInterior';
 import { BirthRoomInterior } from './BirthRoomInterior';
+import { ChurchAtticInterior } from './ChurchAtticInterior';
+import { ChurchNaveInterior } from './ChurchNaveInterior';
 import { FireWatchGalleryProps } from './FireWatchGalleryProps';
 import { FirstPersonGalleryCamera } from './FirstPersonGalleryCamera';
 import { FollowCamera } from './FollowCamera';
@@ -42,7 +46,7 @@ import { Tower } from './Tower';
 import { TownDiorama } from './TownDiorama';
 
 export type GamePhase = 'title' | 'transitioning' | 'playing';
-export type ViewMode = 'exterior' | 'interior' | 'bellChamber';
+export type ViewMode = 'exterior' | 'interior' | 'bellChamber' | 'churchAttic' | 'churchNave';
 export type GalleryCameraMode = 'third' | 'first';
 
 /** Pixels per degree on the top-center compass tape (576px per full 360° cycle) */
@@ -310,8 +314,33 @@ interface GameSceneProps {
   onEnterBellChamber?: () => void;
   onNearBellChamberExitChange?: (near: boolean) => void;
   onNearBellChamberRopeChange?: (near: boolean) => void;
+  onNearAtticDoorChange?: (near: boolean) => void;
   onRingChamberBell?: () => void;
   onClimbToBirthRoom?: () => void;
+  onEnterChurchAttic?: () => void;
+  onNearAtticReturnDoorChange?: (near: boolean) => void;
+  onNearAtticNaveDoorChange?: (near: boolean) => void;
+  onNearAtticDormerChange?: (near: boolean) => void;
+  isLookingThroughDormer?: boolean;
+  onExitDormer?: () => void;
+  atticSpawnFrom?: AtticSpawnPoint;
+  onReturnToBellChamber?: () => void;
+  onDescendIntoChurch?: () => void;
+  onNearNaveAtticDoorChange?: (near: boolean) => void;
+  onNearNaveOrganChange?: (near: boolean) => void;
+  onNearVotiveStandChange?: (near: boolean) => void;
+  litVotiveCount?: number;
+  onLightVotiveCandle?: () => void;
+  onNearNavePewChange?: (near: boolean) => void;
+  onSeatedOnPewChange?: (seated: boolean) => void;
+  sitToggleToken?: number;
+  onClimbToChurchAttic?: () => void;
+  onPlayChurchOrgan?: () => void;
+  activeCollectibleId?: InteriorCollectibleId | null;
+  aimedCollectibleId?: InteriorCollectibleId | null;
+  visitedCollectibles?: ReadonlySet<string>;
+  onAimedCollectibleChange?: (id: InteriorCollectibleId | null) => void;
+  onSelectCollectible?: (id: InteriorCollectibleId) => void;
   fireWatch: FireWatchState;
   onFireSpotted: () => void;
   onFireMaxSpread: () => void;
@@ -852,8 +881,33 @@ export function GameScene({
   onEnterBellChamber,
   onNearBellChamberExitChange,
   onNearBellChamberRopeChange,
+  onNearAtticDoorChange,
   onRingChamberBell,
   onClimbToBirthRoom,
+  onEnterChurchAttic,
+  onNearAtticReturnDoorChange,
+  onNearAtticNaveDoorChange,
+  onNearAtticDormerChange,
+  isLookingThroughDormer = false,
+  onExitDormer,
+  atticSpawnFrom = 'fromBellChamber',
+  onReturnToBellChamber,
+  onDescendIntoChurch,
+  onNearNaveAtticDoorChange,
+  onNearNaveOrganChange,
+  onNearVotiveStandChange,
+  litVotiveCount = 0,
+  onLightVotiveCandle,
+  onNearNavePewChange,
+  onSeatedOnPewChange,
+  sitToggleToken,
+  onClimbToChurchAttic,
+  onPlayChurchOrgan,
+  activeCollectibleId,
+  aimedCollectibleId,
+  visitedCollectibles,
+  onAimedCollectibleChange,
+  onSelectCollectible,
   fireWatch,
   onFireSpotted,
   onFireMaxSpread,
@@ -899,7 +953,11 @@ export function GameScene({
   const isPlaying = gamePhase === 'playing';
   const isInterior = isPlaying && viewMode === 'interior';
   const isBellChamber = isPlaying && viewMode === 'bellChamber';
-  const isAnyInterior = isInterior || isBellChamber;
+  const isChurchAttic = isPlaying && viewMode === 'churchAttic';
+  const isChurchNave = isPlaying && viewMode === 'churchNave';
+  const isAtticDormerView = isChurchAttic && isLookingThroughDormer;
+  const isSelfContainedInterior = (isChurchAttic && !isAtticDormerView) || isChurchNave;
+  const isAnyInterior = isInterior || isBellChamber || isChurchAttic || isChurchNave;
   const isInTelescope = isPlaying && !isAnyInterior && activeTelescope !== null;
   const isExteriorFirstPerson =
     isPlaying && !isAnyInterior && !isInTelescope && galleryCameraMode === 'first';
@@ -955,11 +1013,11 @@ export function GameScene({
         onNearSignalHookChange={onNearSignalHookChange}
       />
 
-      {/* Exterior sky, fog & golden-hour sunlight (unmounted while inside birth room) */}
-      {!isInterior && <Atmosphere graphicsQuality={graphicsQuality} />}
+      {/* Exterior sky, fog & golden-hour sunlight (unmounted while inside Birth Room or Church Attic for locked 60 FPS) */}
+      {!isSelfContainedInterior && <Atmosphere graphicsQuality={graphicsQuality} />}
 
-      {/* Exterior St. James Church & Polička Town (in Bell Chamber, keep ChurchNave, Vysočina ground & TownDiorama visible through louvers while hiding only exterior tower shaft/gallery props) */}
-      <group visible={!isInterior}>
+      {/* Exterior St. James Church & Polička Town (culled in Birth Room & Church Attic; in Bell Chamber, keep ChurchNave, Vysočina ground & TownDiorama visible through louvers) */}
+      <group visible={!isSelfContainedInterior}>
         <group
           name="st-james-church-root"
           position={[CHURCH_TRANSFORM.x, 0, CHURCH_TRANSFORM.z]}
@@ -969,16 +1027,20 @@ export function GameScene({
             cameraCollidersRef={cameraCollidersRef}
             isWinter={isWinter}
             hideTowerShaft={isBellChamber}
+            hideWatchRoomCore={isInterior}
           />
           <group visible={!isBellChamber}>
             <Telescopes
               nearbyTelescope={nearbyTelescope}
               activeTelescope={activeTelescope}
             />
-            <FireWatchGalleryProps
-              fireWatch={fireWatch}
-              hideGalleryRifle={jackdawHunt.active}
-            />
+            {/* Hide exterior gallery door props (alarm bell rope & rifle) while inside the Birth Room so they never overlap the South window */}
+            <group visible={!isInterior}>
+              <FireWatchGalleryProps
+                fireWatch={fireWatch}
+                hideGalleryRifle={jackdawHunt.active}
+              />
+            </group>
           </group>
           <GalleryInteractionSensor
             playerLocalPosRef={playerLocalPosRef}
@@ -998,7 +1060,7 @@ export function GameScene({
             playerPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
             disabled={!isPlaying || isInTelescope || isAnyInterior || settingsOpen}
-            visible={!isExteriorFirstPerson && !isBellChamber}
+            visible={!isExteriorFirstPerson && !isBellChamber && !isInterior}
             isLanternOut={isLanternOut}
             innerLimit={
               isExteriorFirstPerson
@@ -1063,6 +1125,7 @@ export function GameScene({
           onNearExitDoorChange={onNearInteriorExitDoorChange}
           onNearTrapdoorChange={onNearTrapdoorChange}
           onEnterBellChamber={onEnterBellChamber}
+          isWinter={isWinter}
           graphicsQuality={graphicsQuality}
         />
       )}
@@ -1073,8 +1136,61 @@ export function GameScene({
           onPointerLockChange={onPointerLockChange}
           onNearStairExitChange={onNearBellChamberExitChange ?? (() => {})}
           onNearBellRopeChange={onNearBellChamberRopeChange ?? (() => {})}
+          onNearAtticDoorChange={onNearAtticDoorChange}
+          activeCollectibleId={activeCollectibleId}
+          aimedCollectibleId={aimedCollectibleId}
+          visitedCollectibles={visitedCollectibles}
+          onAimedCollectibleChange={onAimedCollectibleChange}
+          onSelectCollectible={onSelectCollectible}
           onRingBell={onRingChamberBell ?? (() => {})}
           onClimbToBirthRoom={onClimbToBirthRoom ?? (() => {})}
+          onEnterChurchAttic={onEnterChurchAttic}
+          isWinter={isWinter}
+          graphicsQuality={graphicsQuality}
+        />
+      )}
+
+      {/* Self-Contained Church Attic / Roof Truss ("Půda kostela") above St. Jacob's Nave */}
+      {isChurchAttic && (
+        <ChurchAtticInterior
+          spawnFrom={atticSpawnFrom}
+          onPointerLockChange={onPointerLockChange}
+          onNearBellChamberDoorChange={onNearAtticReturnDoorChange ?? (() => {})}
+          onNearNaveDoorChange={onNearAtticNaveDoorChange ?? (() => {})}
+          onNearDormerChange={onNearAtticDormerChange}
+          isLookingThroughDormer={isLookingThroughDormer}
+          onExitDormer={onExitDormer}
+          activeCollectibleId={activeCollectibleId}
+          aimedCollectibleId={aimedCollectibleId}
+          visitedCollectibles={visitedCollectibles}
+          onAimedCollectibleChange={onAimedCollectibleChange}
+          onSelectCollectible={onSelectCollectible}
+          onReturnToBellChamber={onReturnToBellChamber ?? (() => {})}
+          onDescendIntoChurch={onDescendIntoChurch ?? (() => {})}
+          isWinter={isWinter}
+          graphicsQuality={graphicsQuality}
+        />
+      )}
+
+      {/* Self-Contained Neo-Gothic Interior of St. Jacob's Church ("Interiér kostela sv. Jakuba") */}
+      {isChurchNave && (
+        <ChurchNaveInterior
+          onPointerLockChange={onPointerLockChange}
+          onNearAtticStairDoorChange={onNearNaveAtticDoorChange ?? (() => {})}
+          onNearOrganChange={onNearNaveOrganChange ?? (() => {})}
+          onNearVotiveStandChange={onNearVotiveStandChange}
+          litVotiveCount={litVotiveCount}
+          onLightVotiveCandle={onLightVotiveCandle}
+          onNearPewChange={onNearNavePewChange}
+          onSeatedChange={onSeatedOnPewChange}
+          sitToggleToken={sitToggleToken}
+          activeCollectibleId={activeCollectibleId}
+          aimedCollectibleId={aimedCollectibleId}
+          visitedCollectibles={visitedCollectibles}
+          onAimedCollectibleChange={onAimedCollectibleChange}
+          onSelectCollectible={onSelectCollectible}
+          onClimbToChurchAttic={onClimbToChurchAttic ?? (() => {})}
+          onPlayOrgan={onPlayChurchOrgan ?? (() => {})}
           isWinter={isWinter}
           graphicsQuality={graphicsQuality}
         />

@@ -9,6 +9,11 @@ import {
   stepBellPhysics,
 } from '../game/bellChamber';
 import { CHURCH_TRANSFORM } from '../game/pois';
+import { PLAYER_CONFIG } from '../game/constants';
+import {
+  INTERIOR_COLLECTIBLES,
+  type InteriorCollectibleId,
+} from '../game/interiorCollectibles';
 import { settingsRuntime, type GraphicsQuality } from '../game/settings';
 import { timeOfDayState } from '../game/timeOfDay';
 import { useKeyboard } from '../game/useKeyboard';
@@ -17,8 +22,15 @@ interface BellChamberInteriorProps {
   onPointerLockChange: (locked: boolean) => void;
   onNearStairExitChange: (near: boolean) => void;
   onNearBellRopeChange: (near: boolean) => void;
+  onNearAtticDoorChange?: (near: boolean) => void;
+  activeCollectibleId?: InteriorCollectibleId | null;
+  aimedCollectibleId?: InteriorCollectibleId | null;
+  visitedCollectibles?: ReadonlySet<string>;
+  onAimedCollectibleChange?: (id: InteriorCollectibleId | null) => void;
+  onSelectCollectible?: (id: InteriorCollectibleId) => void;
   onRingBell: () => void;
   onClimbToBirthRoom: () => void;
+  onEnterChurchAttic?: () => void;
   isWinter?: boolean;
   graphicsQuality?: GraphicsQuality;
 }
@@ -137,17 +149,27 @@ const _tmpGroundCol = new THREE.Color();
  * - Solid collision bounds against stone walls, central oak bell frame posts, and NE clockwork cabinet.
  */
 function BellChamberFPSControls({
+  modalOpen,
   onPointerLockChange,
   onNearStairExitChange,
   onNearBellRopeChange,
+  onNearAtticDoorChange,
+  onAimedCollectibleChange,
+  onSelectCollectible,
   onRingBell,
   onClimbToBirthRoom,
+  onEnterChurchAttic,
 }: {
+  modalOpen: boolean;
   onPointerLockChange: (locked: boolean) => void;
   onNearStairExitChange: (near: boolean) => void;
   onNearBellRopeChange: (near: boolean) => void;
+  onNearAtticDoorChange?: (near: boolean) => void;
+  onAimedCollectibleChange?: (id: InteriorCollectibleId | null) => void;
+  onSelectCollectible?: (id: InteriorCollectibleId) => void;
   onRingBell: () => void;
   onClimbToBirthRoom: () => void;
+  onEnterChurchAttic?: () => void;
 }) {
   const { camera, gl } = useThree();
   const inputRef = useKeyboard();
@@ -157,14 +179,27 @@ function BellChamberFPSControls({
   const localYawRef = useRef(-0.78);
   const pitchRef = useRef(0.06);
   const walkPhaseRef = useRef(0);
+  const lastStepCountRef = useRef(0);
+  const sprintBlendRef = useRef(0);
+
+  const modalOpenRef = useRef(modalOpen);
+  modalOpenRef.current = modalOpen;
 
   const nearStairRef = useRef(false);
   const nearRopeRef = useRef(false);
+  const nearAtticDoorRef = useRef(false);
+  const aimedCollectibleRef = useRef<InteriorCollectibleId | null>(null);
   const forwardRef = useRef(new THREE.Vector3());
   const rightRef = useRef(new THREE.Vector3());
 
   const cosR = Math.cos(CHURCH_TRANSFORM.rotationY);
   const sinR = Math.sin(CHURCH_TRANSFORM.rotationY);
+
+  useEffect(() => {
+    if (modalOpen && document.pointerLockElement === gl.domElement) {
+      document.exitPointerLock();
+    }
+  }, [modalOpen, gl]);
 
   useEffect(() => {
     const domElement = gl.domElement;
@@ -198,17 +233,21 @@ function BellChamberFPSControls({
         return;
       }
       if (document.pointerLockElement === domElement) {
+        if (aimedCollectibleRef.current && onSelectCollectible) {
+          const targetId = aimedCollectibleRef.current;
+          document.exitPointerLock();
+          onSelectCollectible(targetId);
+          return;
+        }
         if (nearRopeRef.current) {
           onRingBell();
           return;
         }
-        if (nearStairRef.current) {
-          onClimbToBirthRoom();
-          return;
-        }
         return;
       }
-      domElement.requestPointerLock?.();
+      if (!modalOpenRef.current) {
+        domElement.requestPointerLock?.();
+      }
     };
 
     const handleMouseMove = (event: MouseEvent) => {
@@ -235,6 +274,8 @@ function BellChamberFPSControls({
       onPointerLockChange(false);
       onNearStairExitChange(false);
       onNearBellRopeChange(false);
+      onNearAtticDoorChange?.(false);
+      onAimedCollectibleChange?.(null);
 
       if (persp.isPerspectiveCamera) {
         persp.fov = 48;
@@ -250,8 +291,12 @@ function BellChamberFPSControls({
     onPointerLockChange,
     onNearStairExitChange,
     onNearBellRopeChange,
+    onNearAtticDoorChange,
+    onAimedCollectibleChange,
+    onSelectCollectible,
     onRingBell,
     onClimbToBirthRoom,
+    onEnterChurchAttic,
   ]);
 
   useFrame((_, rawDelta) => {
@@ -259,31 +304,45 @@ function BellChamberFPSControls({
     const input = inputRef.current;
 
     let isMoving = false;
-    if (!settingsRuntime.settingsOpen) {
-      const fAxis = (input.forward ? 1 : 0) - (input.backward ? 1 : 0);
-      const rAxis = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const canMove = !modalOpenRef.current && !settingsRuntime.settingsOpen;
+    const fAxis = canMove ? (input.forward ? 1 : 0) - (input.backward ? 1 : 0) : 0;
+    const rAxis = canMove ? (input.right ? 1 : 0) - (input.left ? 1 : 0) : 0;
+    const hasMoveInput = fAxis !== 0 || rAxis !== 0;
 
-      if (fAxis !== 0 || rAxis !== 0) {
-        isMoving = true;
-        const yaw = localYawRef.current;
-        const forward = forwardRef.current.set(-Math.sin(yaw), 0, -Math.cos(yaw));
-        const right = rightRef.current.set(Math.cos(yaw), 0, -Math.sin(yaw));
+    const sprintTarget = hasMoveInput && input.sprint ? 1 : 0;
+    sprintBlendRef.current += (sprintTarget - sprintBlendRef.current) * (1 - Math.exp(-8 * dt));
+    if (sprintBlendRef.current < 0.001 && sprintTarget === 0) sprintBlendRef.current = 0;
+    const sprintBlend = sprintBlendRef.current;
 
-        const mx = forward.x * fAxis + right.x * rAxis;
-        const mz = forward.z * fAxis + right.z * rAxis;
-        const len = Math.hypot(mx, mz) || 1;
-        const speed = 2.25;
+    if (hasMoveInput) {
+      isMoving = true;
+      const yaw = localYawRef.current;
+      const forward = forwardRef.current.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+      const right = rightRef.current.set(Math.cos(yaw), 0, -Math.sin(yaw));
 
-        let nx = localPosRef.current.x + (mx / len) * speed * dt;
-        let nz = localPosRef.current.z + (mz / len) * speed * dt;
+      const mx = forward.x * fAxis + right.x * rAxis;
+      const mz = forward.z * fAxis + right.z * rAxis;
+      const len = Math.hypot(mx, mz) || 1;
+      const speed = 2.25 * (1 + (PLAYER_CONFIG.sprintMultiplier - 1) * sprintBlend);
+      const stepDist = speed * dt;
+      const substeps = stepDist > 0.12 ? 2 : 1;
+      const subStep = stepDist / substeps;
+      const dirX = mx / len;
+      const dirZ = mz / len;
+      const lim = BELL_CHAMBER_CONFIG.walkLimit;
+      const frameHalf = 1.24;
+
+      let nx = localPosRef.current.x;
+      let nz = localPosRef.current.z;
+      for (let s = 0; s < substeps; s++) {
+        nx += dirX * subStep;
+        nz += dirZ * subStep;
 
         // 1. Stone wall perimeter clamp
-        const lim = BELL_CHAMBER_CONFIG.walkLimit;
         nx = Math.max(-lim, Math.min(lim, nx));
         nz = Math.max(-lim, Math.min(lim, nz));
 
         // 2. Central oak timber bell frame collision push-out (keeps player on perimeter walkway)
-        const frameHalf = 1.24;
         if (Math.abs(nx) < frameHalf && Math.abs(nz) < frameHalf) {
           const penX = frameHalf - Math.abs(nx);
           const penZ = frameHalf - Math.abs(nz);
@@ -302,15 +361,31 @@ function BellChamberFPSControls({
           else nz = -1.12;
         }
 
-        localPosRef.current.x = Math.max(-lim, Math.min(lim, nx));
-        localPosRef.current.z = Math.max(-lim, Math.min(lim, nz));
+        nx = Math.max(-lim, Math.min(lim, nx));
+        nz = Math.max(-lim, Math.min(lim, nz));
+      }
+      localPosRef.current.x = nx;
+      localPosRef.current.z = nz;
+    }
+
+    const persp = camera as THREE.PerspectiveCamera;
+    if (persp.isPerspectiveCamera) {
+      const targetFov = 58 + PLAYER_CONFIG.sprintFovBoost * sprintBlend;
+      if (Math.abs(persp.fov - targetFov) > 0.02) {
+        persp.fov += (targetFov - persp.fov) * Math.min(1, dt * 10);
+        persp.updateProjectionMatrix();
       }
     }
 
     if (isMoving) {
-      walkPhaseRef.current += dt * 9.5;
+      walkPhaseRef.current += dt * (9.5 + sprintBlend * 3.8);
+      const stepIdx = Math.floor(walkPhaseRef.current / Math.PI);
+      if (stepIdx !== lastStepCountRef.current) {
+        lastStepCountRef.current = stepIdx;
+        soundEngine.playFootstep('wood', sprintBlend > 0.35, false);
+      }
     }
-    const bob = isMoving ? Math.sin(walkPhaseRef.current) * 0.022 : 0;
+    const bob = isMoving ? Math.sin(walkPhaseRef.current) * (0.022 + sprintBlend * 0.008) : 0;
 
     // Update world-space camera inside St. Jacob's Church tower
     const lp = localPosRef.current;
@@ -323,10 +398,17 @@ function BellChamberFPSControls({
     camera.rotation.x = pitchRef.current;
     camera.rotation.z = 0;
 
-    // Proximity to climb-up stairwell & bell rope
+    // Proximity + look-at checks for climb-up stairwell, bell rope, and East attic door
+    const lookX = -Math.sin(localYawRef.current);
+    const lookZ = -Math.cos(localYawRef.current);
+
     const [sx, , sz] = BELL_CHAMBER_CONFIG.chamberStairPos;
-    const stairDist = Math.hypot(lp.x - sx, lp.z - sz);
-    const isNearStair = stairDist < BELL_CHAMBER_CONFIG.chamberStairRadius;
+    const sdx = sx - lp.x;
+    const sdz = sz - lp.z;
+    const stairDist = Math.hypot(sdx, sdz);
+    const stairDot = stairDist > 1e-4 ? (sdx * lookX + sdz * lookZ) / stairDist : 1;
+    const isNearStair =
+      stairDist < BELL_CHAMBER_CONFIG.chamberStairRadius && (stairDot > 0.35 || stairDist < 0.85);
     if (isNearStair !== nearStairRef.current) {
       nearStairRef.current = isNearStair;
       onNearStairExitChange(isNearStair);
@@ -338,6 +420,43 @@ function BellChamberFPSControls({
     if (isNearRope !== nearRopeRef.current) {
       nearRopeRef.current = isNearRope;
       onNearBellRopeChange(isNearRope);
+    }
+
+    const [ax, , az] = BELL_CHAMBER_CONFIG.chamberAtticDoorPos;
+    const adx = ax - lp.x;
+    const adz = az - lp.z;
+    const atticDist = Math.hypot(adx, adz);
+    const atticDot = atticDist > 1e-4 ? (adx * lookX + adz * lookZ) / atticDist : 1;
+    const isNearAttic =
+      atticDist < BELL_CHAMBER_CONFIG.chamberAtticDoorRadius && atticDot > 0.42;
+    if (isNearAttic !== nearAtticDoorRef.current) {
+      nearAtticDoorRef.current = isNearAttic;
+      onNearAtticDoorChange?.(isNearAttic);
+    }
+
+    // Look-at + proximity detection for the Cracked Old Bell Clapper collectible
+    let nextAimed: InteriorCollectibleId | null = null;
+    if (!modalOpenRef.current) {
+      const clapper = INTERIOR_COLLECTIBLES[0]; // 'bell-clapper'
+      const [bx, by, bz] = clapper.position;
+      const dx = bx - lp.x;
+      const dy = by - EYE_HEIGHT;
+      const dz = bz - lp.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist < clapper.interactRadius) {
+        const cosP = Math.cos(pitchRef.current);
+        const lx = -Math.sin(localYawRef.current) * cosP;
+        const ly = Math.sin(pitchRef.current);
+        const lz = -Math.cos(localYawRef.current) * cosP;
+        const dot = dist > 1e-4 ? (dx * lx + dy * ly + dz * lz) / dist : 1;
+        if (dot > 0.56) {
+          nextAimed = clapper.id;
+        }
+      }
+    }
+    if (nextAimed !== aimedCollectibleRef.current) {
+      aimedCollectibleRef.current = nextAimed;
+      onAimedCollectibleChange?.(nextAimed);
     }
 
     // Proximity to NE mechanical clockwork cabinet -> smooth volume scaling on 1 Hz escapement tick
@@ -399,8 +518,15 @@ export function BellChamberInterior({
   onPointerLockChange,
   onNearStairExitChange,
   onNearBellRopeChange,
+  onNearAtticDoorChange,
+  activeCollectibleId = null,
+  aimedCollectibleId = null,
+  visitedCollectibles,
+  onAimedCollectibleChange,
+  onSelectCollectible,
   onRingBell,
   onClimbToBirthRoom,
+  onEnterChurchAttic,
   isWinter = false,
   graphicsQuality = 'high',
 }: BellChamberInteriorProps) {
@@ -489,22 +615,65 @@ export function BellChamberInterior({
       rotation={[0, CHURCH_TRANSFORM.rotationY, 0]}
     >
       <BellChamberFPSControls
+        modalOpen={activeCollectibleId !== null}
         onPointerLockChange={onPointerLockChange}
         onNearStairExitChange={onNearStairExitChange}
         onNearBellRopeChange={onNearBellRopeChange}
+        onNearAtticDoorChange={onNearAtticDoorChange}
+        onAimedCollectibleChange={onAimedCollectibleChange}
+        onSelectCollectible={onSelectCollectible}
         onRingBell={onRingBell}
         onClimbToBirthRoom={onClimbToBirthRoom}
+        onEnterChurchAttic={onEnterChurchAttic}
       />
 
-      {/* Hanging warm watchman lantern near the stairwell + seasonal/night-synced ambient fill */}
-      <group position={[-1.25, 2.68, 1.52]}>
-        <mesh position={[0, 0.14, 0]} material={BC_MATS.ironDark}>
-          <cylinderGeometry args={[0.015, 0.015, 0.28, 6]} />
+      {/* === COLLECTIBLE: CRACKED OLD BELL CLAPPER (1845 Fire Relic leaning against NW belfry base) === */}
+      <group
+        name="collectible-bell-clapper"
+        position={[-1.18, 0, -1.28]}
+        rotation={[0.24, 0.35, -0.18]}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelectCollectible?.('bell-clapper');
+        }}
+      >
+        {/* Heavy forged-iron clapper ball resting on floorboards */}
+        <mesh position={[0, 0.14, 0]} material={BC_MATS.ironDark} castShadow>
+          <sphereGeometry args={[0.135, 10, 8]} />
         </mesh>
-        <mesh position={[0, 0, 0]} material={BC_MATS.ironDark}>
-          <cylinderGeometry args={[0.11, 0.09, 0.05, 8]} />
+        {/* Tapered wrought-iron clapper shaft leaning against oak frame post */}
+        <mesh position={[0, 0.56, 0]} material={BC_MATS.ironDark} castShadow>
+          <cylinderGeometry args={[0.032, 0.052, 0.78, 8]} />
         </mesh>
-        <mesh position={[0, -0.11, 0]}>
+        {/* Broken suspension eye ring at top (visibly cracked/snapped) */}
+        <mesh position={[0, 0.98, 0]} rotation={[0, 0, 0.3]} material={BC_MATS.ironDark}>
+          <torusGeometry args={[0.068, 0.018, 6, 12, Math.PI * 1.45]} />
+        </mesh>
+        {/* Subtle warm golden glint when undiscovered or looked at closely */}
+        <mesh position={[0, 0.52, 0.08]}>
+          <octahedronGeometry args={[aimedCollectibleId === 'bell-clapper' ? 0.065 : 0.042, 0]} />
+          <meshBasicMaterial
+            color={aimedCollectibleId === 'bell-clapper' ? '#ffe599' : '#f2c15a'}
+            transparent
+            opacity={
+              aimedCollectibleId === 'bell-clapper'
+                ? 0.92
+                : visitedCollectibles?.has('bell-clapper')
+                  ? 0.22
+                  : 0.62
+            }
+          />
+        </mesh>
+      </group>
+
+      {/* Grounded watchman lantern resting cleanly on the floorboards beside the SW oak belfry post */}
+      <group position={[-1.12, 0, 1.26]}>
+        {/* Dark iron base resting flush on the wooden floorboards (y = 0) */}
+        <mesh position={[0, 0.02, 0]} material={BC_MATS.ironDark}>
+          <cylinderGeometry args={[0.095, 0.105, 0.04, 8]} />
+        </mesh>
+        {/* Warm glowing lantern glass */}
+        <mesh position={[0, 0.13, 0]}>
           <cylinderGeometry args={[0.075, 0.068, 0.18, 8]} />
           <meshStandardMaterial
             ref={lanternBulbMatRef}
@@ -514,13 +683,18 @@ export function BellChamberInterior({
             roughness={0.35}
           />
         </mesh>
-        <mesh position={[0, -0.21, 0]} material={BC_MATS.ironDark}>
-          <cylinderGeometry args={[0.095, 0.1, 0.04, 8]} />
+        {/* Dark iron cap */}
+        <mesh position={[0, 0.245, 0]} material={BC_MATS.ironDark}>
+          <cylinderGeometry args={[0.088, 0.11, 0.05, 8]} />
+        </mesh>
+        {/* Small iron carrying handle ring */}
+        <mesh position={[0, 0.3, 0]} material={BC_MATS.ironDark}>
+          <torusGeometry args={[0.036, 0.008, 6, 12]} />
         </mesh>
       </group>
       <pointLight
         ref={chamberFillLightRef}
-        position={[-1.25, 2.52, 1.52]}
+        position={[-1.12, 0.36, 1.26]}
         color="#ffbe68"
         intensity={1.1}
         distance={13}
@@ -941,6 +1115,35 @@ export function BellChamberInterior({
             </mesh>
           );
         })}
+      </group>
+
+      {/* === 7. MEDIEVAL WOODEN DOOR ON EAST STONE WALL -> CHURCH ATTIC ("PŮDA KOSTELA") === */}
+      <group
+        name="bell-chamber-attic-door"
+        position={[
+          BELL_CHAMBER_CONFIG.chamberAtticDoorPos[0],
+          0,
+          BELL_CHAMBER_CONFIG.chamberAtticDoorPos[2],
+        ]}
+      >
+        {/* Pointed Gothic stone surround flush against the eastern tower wall */}
+        <mesh position={[0.04, 1.18, 0]} material={BC_MATS.stoneDark}>
+          <boxGeometry args={[0.16, 2.38, 1.24]} />
+        </mesh>
+        {/* Heavy dark-oak planked medieval door */}
+        <mesh position={[-0.02, 1.12, 0]} material={BC_MATS.oakHeavy}>
+          <boxGeometry args={[0.1, 2.22, 0.98]} />
+        </mesh>
+        {/* Two wrought-iron strap hinges & ring handle */}
+        <mesh position={[-0.08, 1.65, -0.26]} material={BC_MATS.ironDark}>
+          <boxGeometry args={[0.03, 0.07, 0.42]} />
+        </mesh>
+        <mesh position={[-0.08, 0.58, -0.26]} material={BC_MATS.ironDark}>
+          <boxGeometry args={[0.03, 0.07, 0.42]} />
+        </mesh>
+        <mesh position={[-0.09, 1.05, 0.3]} rotation={[0, Math.PI / 2, 0]} material={BC_MATS.ironDark}>
+          <torusGeometry args={[0.065, 0.015, 6, 12]} />
+        </mesh>
       </group>
     </group>
   );

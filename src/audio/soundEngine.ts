@@ -1,4 +1,4 @@
-export type SoundViewMode = 'exterior' | 'interior' | 'bellChamber';
+export type SoundViewMode = 'exterior' | 'interior' | 'bellChamber' | 'churchAttic' | 'churchNave';
 
 const DEFAULT_MASTER_VOLUME = 0.45;
 const WHISTLE_COOLDOWN_MS = 18_000;
@@ -53,6 +53,11 @@ class PolickaSoundEngine {
   private clockworkProximity = 0.35;
   private lastEnvUpdateMs = 0;
   private lastWhistleMs = 0;
+  private creakTimeoutId: number | null = null;
+  private activeOrganBus: GainNode | null = null;
+  private activeOrganOscs: OscillatorNode[] = [];
+  private activeOrganEndTimer: number | null = null;
+  private lastFootstepMs = 0;
 
   private computeMasterGain(): number {
     if (this.isMuted) return 0;
@@ -335,8 +340,24 @@ class PolickaSoundEngine {
       } else if (this.viewMode === 'bellChamber') {
         this.playTowerClockworkTick(this.clockIsTick, this.clockworkProximity);
         this.clockIsTick = !this.clockIsTick;
+      } else if (this.viewMode === 'churchAttic') {
+        // Very faint, heavily muffled tower-clock ticking drifting through the west stone wall
+        this.playDistantAtticClockTick(this.clockIsTick);
+        this.clockIsTick = !this.clockIsTick;
       }
     }, 1000);
+
+    // Occasional quiet old-timber creaks inside the Church Attic
+    const scheduleTimberCreak = () => {
+      const delayMs = 5500 + Math.random() * 7500;
+      this.creakTimeoutId = window.setTimeout(() => {
+        if (this.viewMode === 'churchAttic' && !this.isMuted) {
+          this.playTimberCreak();
+        }
+        scheduleTimberCreak();
+      }, delayMs);
+    };
+    scheduleTimberCreak();
 
     // Subtle nighttime crickets (plays outdoors when nightFactor > 0.65)
     const scheduleCricket = () => {
@@ -481,6 +502,26 @@ class PolickaSoundEngine {
         this.violinBus.gain.setValueAtTime(Math.max(0.0001, this.violinBus.gain.value), now);
         this.violinBus.gain.linearRampToValueAtTime(0.0001, now + 0.45);
       }
+    } else if (this.viewMode === 'churchAttic') {
+      // Church Attic: soft muffled wind brushing the steep tiled roof; faint clock & timber creaks handled by schedulers
+      this.windMuffle.frequency.setTargetAtTime(320 - this.nightFactor * 55, now, tau);
+      this.windGain.gain.setTargetAtTime(0.095 - this.nightFactor * 0.015, now, tau);
+      this.murmurGain.gain.setTargetAtTime(0.0001, now, tau);
+      if (this.violinBus) {
+        this.violinBus.gain.cancelScheduledValues(now);
+        this.violinBus.gain.setValueAtTime(Math.max(0.0001, this.violinBus.gain.value), now);
+        this.violinBus.gain.linearRampToValueAtTime(0.0001, now + 0.45);
+      }
+    } else if (this.viewMode === 'churchNave') {
+      // Church Nave: deep acoustic hush of thick stone walls
+      this.windMuffle.frequency.setTargetAtTime(160, now, tau);
+      this.windGain.gain.setTargetAtTime(0.022, now, tau);
+      this.murmurGain.gain.setTargetAtTime(0.0001, now, tau);
+      if (this.violinBus) {
+        this.violinBus.gain.cancelScheduledValues(now);
+        this.violinBus.gain.setValueAtTime(Math.max(0.0001, this.violinBus.gain.value), now);
+        this.violinBus.gain.linearRampToValueAtTime(0.0001, now + 0.45);
+      }
     } else {
       // Exterior gallery: crisp wind + daytime town murmur that fades to 0 at night
       const dayFactor = Math.max(0, 1 - this.nightFactor * 1.15);
@@ -574,6 +615,74 @@ class PolickaSoundEngine {
     og.connect(this.sfxBus);
     osc.start(now);
     osc.stop(now + 0.065);
+  }
+
+  /** Very faint, heavily muffled tower-clock ticking drifting into the Church Attic from the west tower wall */
+  private playDistantAtticClockTick(isTick: boolean): void {
+    if (!this.ctx || !this.sfxBus || !this.whiteNoiseBuffer || this.ctx.state !== 'running') {
+      return;
+    }
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    const src = ctx.createBufferSource();
+    src.buffer = this.whiteNoiseBuffer;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(isTick ? 640 : 520, now);
+    lp.Q.setValueAtTime(2.4, now);
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(isTick ? 0.024 : 0.019, now + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+
+    src.connect(lp);
+    lp.connect(g);
+    g.connect(this.sfxBus);
+    src.start(now, Math.random() * 1.2, 0.065);
+  }
+
+  /** Occasional quiet old-oak roof truss creak inside the Church Attic */
+  private playTimberCreak(): void {
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const dur = 0.45 + Math.random() * 0.45;
+    const baseFreq = 105 + Math.random() * 55;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * (0.68 + Math.random() * 0.14), now + dur);
+
+    // Subtle woody stick-slip modulation
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.setValueAtTime(14 + Math.random() * 10, now);
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.setValueAtTime(9, now);
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(280 + Math.random() * 140, now);
+    bp.Q.setValueAtTime(4.5, now);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.022, now + dur * 0.25);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    osc.connect(bp);
+    bp.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc.start(now);
+    lfo.start(now);
+    osc.stop(now + dur + 0.02);
+    lfo.stop(now + dur + 0.02);
   }
 
   /** Delicate distant high-pitched rhythmic cricket chirp (4.2–4.6 kHz) */
@@ -870,6 +979,286 @@ class PolickaSoundEngine {
       hp.connect(sg);
       sg.connect(this.sfxBus);
       snap.start(now, 0.3, 0.035);
+    }
+  }
+
+  /** Smoothly fades out and stops any currently playing church pipe-organ melody */
+  public stopChurchOrgan(): void {
+    if (this.activeOrganEndTimer !== null) {
+      window.clearTimeout(this.activeOrganEndTimer);
+      this.activeOrganEndTimer = null;
+    }
+    if (this.ctx && this.activeOrganBus) {
+      const now = this.ctx.currentTime;
+      const bus = this.activeOrganBus;
+      const oscs = this.activeOrganOscs;
+      try {
+        bus.gain.cancelScheduledValues(now);
+        bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), now);
+        bus.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+        for (let i = 0; i < oscs.length; i++) {
+          oscs[i].stop(now + 0.28);
+        }
+      } catch {
+        // Ignore already-stopped oscillators
+      }
+    }
+    this.activeOrganBus = null;
+    this.activeOrganOscs = [];
+  }
+
+  /**
+   * Synthesizes 3 distinct period ~1900 church pipe-organ melodies inside St. Jacob's Church:
+   * - 0: Solemn Baroque Chorale / Prelude (D minor -> Bb -> C -> A7 -> D minor)
+   * - 1: Gentle Lyrical Pastoral Motif (Czech/Martinů-inspired F major flute-stop cantabile)
+   * - 2: Majestic Neo-Gothic Full-Organ Cadence (Grand C-major plenum registration)
+   */
+  public playChurchOrganMelody(melodyIndex: 0 | 1 | 2, onEnded?: () => void): void {
+    this.stopChurchOrgan();
+    if (this.isMuted) return;
+    this.ensureStarted();
+    if (!this.ctx || !this.musicBus || this.ctx.state !== 'running') return;
+
+    const ctx = this.ctx;
+    const baseNow = ctx.currentTime + 0.04;
+
+    type OrganChord = { start: number; dur: number; notes: readonly number[] };
+    let chords: readonly OrganChord[];
+    let cutoffHz = 1450;
+    let busGain = 0.24;
+    let stops: readonly (readonly [number, OscillatorType, number])[];
+
+    if (melodyIndex === 0) {
+      // Melody 1: Solemn Baroque Chorale / Prelude (D minor)
+      chords = [
+        { start: 0.0, dur: 1.7, notes: [146.83, 293.66, 349.23, 440.0] },
+        { start: 1.62, dur: 1.65, notes: [116.54, 233.08, 349.23, 466.16] },
+        { start: 3.2, dur: 1.55, notes: [130.81, 261.63, 392.0, 523.25] },
+        { start: 4.68, dur: 1.55, notes: [110.0, 277.18, 329.63, 440.0] },
+        { start: 6.15, dur: 2.45, notes: [146.83, 293.66, 349.23, 587.33] },
+      ];
+      cutoffHz = 1350;
+      busGain = 0.24;
+      stops = [
+        [0.5, 'sine', 0.14],
+        [1, 'triangle', 0.22],
+        [2, 'sine', 0.09],
+      ];
+    } else if (melodyIndex === 1) {
+      // Melody 2: Gentle Lyrical Pastoral Motif (Czech/Martinů-inspired F-major cantabile)
+      chords = [
+        { start: 0.0, dur: 1.5, notes: [174.61, 261.63, 349.23, 440.0] },
+        { start: 1.42, dur: 1.25, notes: [174.61, 261.63, 392.0, 523.25] },
+        { start: 2.6, dur: 1.4, notes: [146.83, 293.66, 349.23, 587.33] },
+        { start: 3.92, dur: 1.35, notes: [196.0, 293.66, 392.0, 493.88] },
+        { start: 5.2, dur: 1.3, notes: [130.81, 261.63, 329.63, 440.0] },
+        { start: 6.42, dur: 2.3, notes: [174.61, 261.63, 349.23, 523.25] },
+      ];
+      cutoffHz = 1150;
+      busGain = 0.22;
+      stops = [
+        [1, 'sine', 0.24],
+        [2, 'sine', 0.11],
+        [1.003, 'triangle', 0.08],
+      ];
+    } else {
+      // Melody 3: Majestic Neo-Gothic Full-Organ Cadence (Radiant C-major plenum)
+      chords = [
+        { start: 0.0, dur: 1.45, notes: [130.81, 261.63, 329.63, 392.0, 523.25] },
+        { start: 1.38, dur: 1.4, notes: [174.61, 261.63, 349.23, 440.0, 523.25] },
+        { start: 2.7, dur: 1.4, notes: [196.0, 246.94, 392.0, 493.88, 587.33] },
+        { start: 4.02, dur: 1.35, notes: [220.0, 261.63, 329.63, 440.0, 659.25] },
+        { start: 5.3, dur: 1.35, notes: [196.0, 293.66, 349.23, 493.88, 587.33] },
+        { start: 6.58, dur: 2.55, notes: [130.81, 261.63, 329.63, 392.0, 523.25] },
+      ];
+      cutoffHz = 2150;
+      busGain = 0.25;
+      stops = [
+        [0.5, 'triangle', 0.14],
+        [1, 'sawtooth', 0.11],
+        [1, 'triangle', 0.14],
+        [2, 'sine', 0.09],
+      ];
+    }
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(cutoffHz, baseNow);
+    const bus = ctx.createGain();
+    bus.gain.setValueAtTime(busGain, baseNow);
+    lp.connect(bus);
+    bus.connect(this.musicBus);
+
+    const oscs: OscillatorNode[] = [];
+    let maxEnd = 0;
+
+    for (const ch of chords) {
+      const t0 = baseNow + ch.start;
+      const tEnd = ch.start + ch.dur + 0.5;
+      if (tEnd > maxEnd) maxEnd = tEnd;
+      for (const freq of ch.notes) {
+        for (const [mult, type, amp] of stops) {
+          const osc = ctx.createOscillator();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq * mult, t0);
+
+          const g = ctx.createGain();
+          g.gain.setValueAtTime(0.0001, t0);
+          g.gain.linearRampToValueAtTime(amp, t0 + 0.13);
+          g.gain.setValueAtTime(amp * 0.88, t0 + ch.dur - 0.3);
+          g.gain.exponentialRampToValueAtTime(0.0001, t0 + ch.dur + 0.45);
+
+          osc.connect(g);
+          g.connect(lp);
+          osc.start(t0);
+          osc.stop(t0 + ch.dur + 0.52);
+          oscs.push(osc);
+        }
+      }
+    }
+
+    this.activeOrganBus = bus;
+    this.activeOrganOscs = oscs;
+    this.activeOrganEndTimer = window.setTimeout(() => {
+      if (this.activeOrganBus === bus) {
+        this.activeOrganBus = null;
+        this.activeOrganOscs = [];
+        this.activeOrganEndTimer = null;
+        onEnded?.();
+      }
+    }, Math.round((maxEnd + 0.15) * 1000));
+  }
+
+  /** Soft, resonant ~1900 church pipe-organ chorale progression (wrapper for collectible preview) */
+  public playChurchOrganChorale(): void {
+    this.playChurchOrganMelody(0);
+  }
+
+  /** Soft wooden match strike & warm candle wick ignition sound */
+  public playCandleIgnite(): void {
+    if (this.isMuted) return;
+    this.ensureStarted();
+    if (!this.ctx || !this.sfxBus || !this.whiteNoiseBuffer || this.ctx.state !== 'running') {
+      return;
+    }
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    const strike = ctx.createBufferSource();
+    strike.buffer = this.whiteNoiseBuffer;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(2400, now);
+    bp.Q.setValueAtTime(2.2, now);
+    const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0.0001, now);
+    sg.gain.linearRampToValueAtTime(0.085, now + 0.012);
+    sg.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+    strike.connect(bp);
+    bp.connect(sg);
+    sg.connect(this.sfxBus);
+    strike.start(now, Math.random() * 1.1, 0.13);
+
+    const whoosh = ctx.createBufferSource();
+    whoosh.buffer = this.whiteNoiseBuffer;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(620, now + 0.03);
+    lp.frequency.exponentialRampToValueAtTime(210, now + 0.28);
+    const wg = ctx.createGain();
+    wg.gain.setValueAtTime(0.0001, now + 0.025);
+    wg.gain.linearRampToValueAtTime(0.095, now + 0.075);
+    wg.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+    whoosh.connect(lp);
+    lp.connect(wg);
+    wg.connect(this.sfxBus);
+    whoosh.start(now + 0.025, Math.random() * 1.1, 0.3);
+  }
+
+  /**
+   * Subtle surface-aware procedural footsteps synced to walk/sprint cadence:
+   * - 'wood': warm hollow wooden plank thud (Birth Room, Bell Chamber, Attic, Spiral Stairs & Organ Loft)
+   * - 'stone': crisper stone-tile tap, with optional subtle cathedral hall echo inside St. Jacob's Nave
+   */
+  public playFootstep(surface: 'wood' | 'stone', isSprinting: boolean, reverbHall = false): void {
+    if (this.isMuted || !this.ctx || !this.sfxBus || !this.whiteNoiseBuffer || this.ctx.state !== 'running') {
+      return;
+    }
+    const nowMs = performance.now();
+    const minIntervalMs = isSprinting ? 185 : 275;
+    if (nowMs - this.lastFootstepMs < minIntervalMs) return;
+    this.lastFootstepMs = nowMs;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const jitter = 0.92 + Math.random() * 0.16;
+    const ampScale = isSprinting ? 1.28 : 1.0;
+
+    if (surface === 'wood') {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(118 * jitter, now);
+      osc.frequency.exponentialRampToValueAtTime(64 * jitter, now + 0.068);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0.0001, now);
+      og.gain.linearRampToValueAtTime(0.075 * ampScale, now + 0.005);
+      og.gain.exponentialRampToValueAtTime(0.0001, now + 0.078);
+      osc.connect(og);
+      og.connect(this.sfxBus);
+      osc.start(now);
+      osc.stop(now + 0.085);
+
+      const noise = ctx.createBufferSource();
+      noise.buffer = this.whiteNoiseBuffer;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(340 * jitter, now);
+      bp.Q.setValueAtTime(1.8, now);
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.0001, now);
+      ng.gain.linearRampToValueAtTime(0.042 * ampScale, now + 0.006);
+      ng.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+      noise.connect(bp);
+      bp.connect(ng);
+      ng.connect(this.sfxBus);
+      noise.start(now, Math.random() * 1.2, 0.07);
+    } else {
+      const triggerStoneTap = (delaySec: number, gainMult: number, cutoff: number) => {
+        const t0 = now + delaySec;
+        const noise = ctx.createBufferSource();
+        noise.buffer = this.whiteNoiseBuffer!;
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.setValueAtTime(cutoff * jitter, t0);
+        bp.Q.setValueAtTime(2.6, t0);
+        const ng = ctx.createGain();
+        ng.gain.setValueAtTime(0.0001, t0);
+        ng.gain.linearRampToValueAtTime(0.055 * ampScale * gainMult, t0 + 0.004);
+        ng.gain.exponentialRampToValueAtTime(0.0001, t0 + (delaySec > 0 ? 0.095 : 0.048));
+        noise.connect(bp);
+        bp.connect(ng);
+        ng.connect(this.sfxBus!);
+        noise.start(t0, Math.random() * 1.2, 0.11);
+      };
+
+      triggerStoneTap(0, 1.0, 1180);
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(175 * jitter, now);
+      osc.frequency.exponentialRampToValueAtTime(92 * jitter, now + 0.04);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0.0001, now);
+      og.gain.linearRampToValueAtTime(0.036 * ampScale, now + 0.003);
+      og.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+      osc.connect(og);
+      og.connect(this.sfxBus);
+      osc.start(now);
+      osc.stop(now + 0.05);
+
+      if (reverbHall) {
+        triggerStoneTap(0.085, 0.34, 820);
+        triggerStoneTap(0.185, 0.16, 560);
+      }
     }
   }
 
@@ -1412,6 +1801,7 @@ class PolickaSoundEngine {
 
   /** Cleanly stops all schedulers, oscillators, sources, and closes AudioContext */
   public dispose(): void {
+    this.stopChurchOrgan();
     if (this.clockIntervalId !== null) {
       window.clearInterval(this.clockIntervalId);
       this.clockIntervalId = null;
@@ -1419,6 +1809,10 @@ class PolickaSoundEngine {
     if (this.cricketTimeoutId !== null) {
       window.clearTimeout(this.cricketTimeoutId);
       this.cricketTimeoutId = null;
+    }
+    if (this.creakTimeoutId !== null) {
+      window.clearTimeout(this.creakTimeoutId);
+      this.creakTimeoutId = null;
     }
     if (this.violinTimeoutId !== null) {
       window.clearTimeout(this.violinTimeoutId);

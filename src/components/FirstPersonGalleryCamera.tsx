@@ -1,12 +1,13 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { RING_BOUNDS } from '../game/constants';
+import { RING_BOUNDS, PLAYER_CONFIG } from '../game/constants';
 import { churchLocalToWorld } from '../game/pois';
 import { constrainToSquareRing } from '../game/ringCollision';
 import { jackdawHuntRuntime } from '../game/jackdawHunt';
 import { settingsRuntime } from '../game/settings';
 import { NIGHT_MATERIALS, timeOfDayState } from '../game/timeOfDay';
+import { playerMotionRuntime } from '../game/useKeyboard';
 
 interface FirstPersonGalleryCameraProps {
   playerLocalPosRef: RefObject<THREE.Vector3>;
@@ -155,9 +156,12 @@ export function FirstPersonGalleryCamera({
         persp.near = FIRST_PERSON_NEAR;
         projDirty = true;
       }
+      const sprintBoost = PLAYER_CONFIG.sprintFovBoost * playerMotionRuntime.sprintBlend;
       const targetFov = jackdawHuntActive
-        ? DEFAULT_FOV + (ADS_FOV - DEFAULT_FOV) * jackdawHuntRuntime.aimBlend
-        : DEFAULT_FOV;
+        ? DEFAULT_FOV +
+          (ADS_FOV - DEFAULT_FOV) * jackdawHuntRuntime.aimBlend +
+          sprintBoost * (1 - jackdawHuntRuntime.aimBlend)
+        : DEFAULT_FOV + sprintBoost;
       if (Math.abs(persp.fov - targetFov) > 0.02) {
         persp.fov += (targetFov - persp.fov) * Math.min(1, dt * 14);
         projDirty = true;
@@ -213,13 +217,14 @@ export function FirstPersonGalleryCamera({
       p.z - prevWorldPosRef.current.z,
     );
     prevWorldPosRef.current.copy(p);
-    const speedRatio = Math.min(1, (dt > 1e-4 ? moveDist / dt : 0) / 4.2);
-    bobPhaseRef.current += dt * (speedRatio > 0.05 ? 9.5 : 1.8);
+    const speedRatio = Math.min(1.4, (dt > 1e-4 ? moveDist / dt : 0) / 4.2);
+    const clampedRatio = Math.min(1, speedRatio);
+    bobPhaseRef.current += dt * (speedRatio > 0.05 ? 9.5 + Math.max(0, speedRatio - 0.8) * 5.2 : 1.8);
 
     const bobY =
-      Math.abs(Math.sin(bobPhaseRef.current)) * 0.018 * speedRatio +
-      Math.sin(bobPhaseRef.current) * 0.004 * (1 - speedRatio);
-    const bobX = Math.cos(bobPhaseRef.current) * 0.012 * speedRatio;
+      Math.abs(Math.sin(bobPhaseRef.current)) * 0.018 * clampedRatio +
+      Math.sin(bobPhaseRef.current) * 0.004 * (1 - clampedRatio);
+    const bobX = Math.cos(bobPhaseRef.current) * 0.012 * clampedRatio;
 
     if (lanternGroupRef.current) {
       lanternGroupRef.current.visible = true;

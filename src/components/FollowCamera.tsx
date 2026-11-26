@@ -1,9 +1,10 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { CAMERA_CONFIG, TOWER_DIMENSIONS } from '../game/constants';
-import { CHURCH_TRANSFORM } from '../game/pois';
+import { CAMERA_CONFIG, PLAYER_CONFIG, TOWER_DIMENSIONS } from '../game/constants';
+import { CHURCH_TRANSFORM, TELESCOPE_CONFIG } from '../game/pois';
 import { settingsRuntime } from '../game/settings';
+import { playerMotionRuntime } from '../game/useKeyboard';
 
 interface FollowCameraProps {
   playerPosRef: RefObject<THREE.Vector3>;
@@ -245,13 +246,6 @@ export function FollowCamera({
   useFrame((_, rawDelta) => {
     if (!initializedRef.current || !active) return;
 
-    // Keep near plane at 0.1 so nearby gallery geometry and the Tower Keeper never clip prematurely
-    const persp = camera as THREE.PerspectiveCamera;
-    if (persp.isPerspectiveCamera && persp.near !== 0.1) {
-      persp.near = 0.1;
-      persp.updateProjectionMatrix();
-    }
-
     const dt = Math.min(rawDelta, 0.05);
     const p = playerPosRef.current;
 
@@ -262,6 +256,26 @@ export function FollowCamera({
 
     const desiredDist = desiredDistanceRef.current;
     const farBlend = smoothstep(10, 48, desiredDist);
+
+    // Keep near plane at 0.1 and apply subtle FOV boost while sprinting close to the gallery
+    const persp = camera as THREE.PerspectiveCamera;
+    if (persp.isPerspectiveCamera) {
+      let projDirty = false;
+      if (persp.near !== 0.1) {
+        persp.near = 0.1;
+        projDirty = true;
+      }
+      const targetFov =
+        TELESCOPE_CONFIG.normalFov +
+        PLAYER_CONFIG.sprintFovBoost * 0.85 * playerMotionRuntime.sprintBlend * (1 - farBlend);
+      if (Math.abs(persp.fov - targetFov) > 0.02) {
+        persp.fov += (targetFov - persp.fov) * Math.min(1, dt * 10);
+        projDirty = true;
+      }
+      if (projDirty) {
+        persp.updateProjectionMatrix();
+      }
+    }
 
     // Dynamically clamp pitch up close so camera never clips floor, overhanging spire roof, or player's head/hat
     const closeBlend = smoothstep(8, 36, desiredDist);

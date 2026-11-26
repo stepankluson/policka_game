@@ -27,6 +27,9 @@ export const BELL_CHAMBER_CONFIG = {
   chamberRopeRadius: 1.75,
   /** Mechanical tower clockwork cabinet corner (NE corner aligned with exterior clock faces) */
   clockworkPos: [1.85, 0, -1.85] as readonly [number, number, number],
+  /** Sturdy medieval wooden door on the East stone wall leading into the Church Attic ("Půda kostela") */
+  chamberAtticDoorPos: [2.84, 0, 1.68] as readonly [number, number, number],
+  chamberAtticDoorRadius: 1.75,
 } as const;
 
 /**

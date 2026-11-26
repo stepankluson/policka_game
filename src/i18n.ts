@@ -1,5 +1,9 @@
 import type { BirthRoomHotspot } from './game/birthRoomData';
 import type { CompassDirection } from './game/fireWatch';
+import type {
+  CollectibleLocation,
+  InteriorCollectibleId,
+} from './game/interiorCollectibles';
 import type { PoiSpec, TelescopeId } from './game/pois';
 import type { TimeOfDayMode } from './game/timeOfDay';
 
@@ -14,12 +18,20 @@ export interface Translations {
   hud: {
     eyebrowInterior: string;
     eyebrowBellChamber: string;
+    eyebrowChurchAttic: string;
+    eyebrowChurchNave: string;
     eyebrowExterior: string;
     birthRoomTitle: string;
     bellChamberTitle: string;
+    churchAtticTitle: string;
+    churchNaveTitle: string;
     backToGallery: string;
     backToBirthRoom: string;
+    backToBellChamber: string;
+    backToChurchAttic: string;
     bellChamberHint: string;
+    churchAtticHint: string;
+    churchNaveHint: string;
     timeModes: Record<TimeOfDayMode, string>;
     timeToggleTitle: string;
     seasonWinter: string;
@@ -47,6 +59,21 @@ export interface Translations {
     enterBellChamber: string;
     climbToBirthRoom: string;
     ringGreatBell: string;
+    enterChurchAttic: string;
+    returnToBellChamber: string;
+    descendIntoChurch: string;
+    climbToChurchAttic: string;
+    playOrgan: string;
+    stopOrgan: string;
+    organNextMelody: string;
+    organPlayingPrefix: string;
+    organMelodies: readonly [string, string, string];
+    lightCandle: string;
+    sitOnPew: string;
+    standUp: string;
+    inspect: string;
+    lookThroughDormer: string;
+    exitDormer: string;
     startFireWatch: string;
     takeRifleHunt: string;
     useTelescope: string;
@@ -59,6 +86,8 @@ export interface Translations {
     buttonTitle: string;
     moveKey: string;
     moveDesc: string;
+    sprintKey: string;
+    sprintDesc: string;
     lookKey: string;
     lookDesc: string;
     interactDesc: string;
@@ -83,6 +112,10 @@ export interface Translations {
   birthRoom: {
     storyBadge: string;
     hotspots: Record<BirthRoomHotspot['id'], { title: string; subtitle: string; story: string }>;
+  };
+  interiorCollectibles: {
+    storyBadges: Record<CollectibleLocation, string>;
+    items: Record<InteriorCollectibleId, { title: string; subtitle: string; story: string }>;
   };
   pois: Record<PoiSpec['id'], { title: string; subtitle: string; story: string }>;
   microScenes: Record<PoiSpec['id'], { caption: string; winterCaption?: string }>;
@@ -154,6 +187,7 @@ export interface Translations {
   toasts: {
     unlockedFireWatch: string;
     unlockedJackdawHunt: string;
+    naveComingSoon: string;
   };
   settings: {
     title: string;
@@ -195,12 +229,20 @@ const CS: Translations = {
   hud: {
     eyebrowInterior: 'Polička · cca 1900',
     eyebrowBellChamber: 'Polička · Zvonové patro',
+    eyebrowChurchAttic: 'Polička · Půda kostela',
+    eyebrowChurchNave: 'Polička · Kostel sv. Jakuba',
     eyebrowExterior: 'Polička · Ochoz',
     birthRoomTitle: 'Rodná světnička',
     bellChamberTitle: 'Zvonové patro',
+    churchAtticTitle: 'Půda kostela',
+    churchNaveTitle: 'Kostel sv. Jakuba',
     backToGallery: '[E] Zpět na ochoz',
     backToBirthRoom: '[E] Zpět do světničky',
+    backToBellChamber: '[E] Zpět do zvonového patra',
+    backToChurchAttic: '[E] Vystoupat na půdu',
     bellChamberHint: 'Zvon Jakub · Hodinový stroj · Žaluzie s výhledem na Poličku',
+    churchAtticHint: 'Krov chrámové lodi · Dřevěné lávky · Rub gotických kleneb',
+    churchNaveHint: 'Hlavní oltář · Vitráže presbytáře · Kůr s varhanami',
     timeModes: {
       auto: 'Auto',
       day: 'Den',
@@ -214,7 +256,7 @@ const CS: Translations = {
     seasonToSummerTitle: 'Přepnout na léto',
     endFireWatch: 'Ukončit hlídku',
     endJackdawHunt: 'Ukončit lov',
-    clickToLookHint: 'Klikni pro rozhlížení · WASD pohyb · Esc uvolnit myš',
+    clickToLookHint: 'Klikni pro rozhlížení · WASD pohyb · Shift běh · Esc uvolnit myš',
     discoveredLandmarks: 'Objevené památky',
     hideLandmarksTitle: 'Skrýt seznam památek',
     showLandmarksTitle: 'Zobrazit seznam památek',
@@ -252,6 +294,25 @@ const CS: Translations = {
     enterBellChamber: 'Vstoupit do zvonového patra',
     climbToBirthRoom: 'Vystoupit do rodné světničky',
     ringGreatBell: 'Zazvonit na zvon Jakub',
+    enterChurchAttic: 'Vstoupit na půdu kostela',
+    returnToBellChamber: 'Vystoupat do zvonového patra',
+    descendIntoChurch: 'Sejít do kostela',
+    climbToChurchAttic: 'Vystoupat na půdu kostela',
+    playOrgan: 'Zahrát na varhany',
+    stopOrgan: 'Zastavit varhany',
+    organNextMelody: 'Další melodie',
+    organPlayingPrefix: 'Hraje',
+    organMelodies: [
+      'Barokní chorál',
+      'Pastorální motiv',
+      'Novogotická kadence',
+    ],
+    lightCandle: 'Zapálit svíčku',
+    sitOnPew: 'Sednout si na lavici',
+    standUp: 'Vstát',
+    inspect: 'Prozkoumat',
+    lookThroughDormer: 'Vyhlédnout vikýřem',
+    exitDormer: 'Zpět na půdu',
     startFireWatch: 'Spustit Požární hlídku',
     takeRifleHunt: 'Vzít pušku — Lov kavek',
     useTelescope: 'Podívat se dalekohledem',
@@ -264,6 +325,8 @@ const CS: Translations = {
     buttonTitle: 'Zobrazit nebo skrýt ovládání [H]',
     moveKey: 'WASD / Šipky',
     moveDesc: 'Pohyb po ochozu',
+    sprintKey: 'Shift',
+    sprintDesc: 'Běh',
     lookKey: 'Myš',
     lookDesc: 'Rozhlížení',
     interactDesc: 'Dalekohled, dveře, zvon, puška',
@@ -310,6 +373,39 @@ const CS: Translations = {
         subtitle: 'Domov pětičlenné rodiny · 36 m nad zemí',
         story:
           'V této jediné skromné světničce 36 metrů nad dlažbou žilo pět členů rodiny Martinů — rodiče Ferdinand a Karolina se třemi dětmi. U kulatého stolu pod petrolejovou lampou se jedlo, šilo na šicím stroji, spravovaly se boty i psaly první dětské noty.',
+      },
+    },
+  },
+  interiorCollectibles: {
+    storyBadges: {
+      bellChamber: 'Zvonové patro · 1845',
+      churchAttic: 'Půda kostela · 1860',
+      churchNave: 'Kostel sv. Jakuba · 1890',
+    },
+    items: {
+      'bell-clapper': {
+        title: 'Ulomené staré srdce zvonu',
+        subtitle: 'Zvonová stolice · Památka na požár 1845',
+        story:
+          'Toto prasklé kované srdce přečkalo ničivý požár Poličky v roce 1845, který zničil starou kostelní věž a roztavil původní zvony. Po obnově věže jej pověžní opřeli o patu nové dubové zvonové stolice jako tichou připomínku bdělosti.',
+      },
+      'mason-arch-sketch': {
+        title: 'Kamenický nákres lomeného oblouku',
+        subtitle: 'Západní věžní zeď · Přestavba v 60. letech 19. stol.',
+        story:
+          'Křídový a rytý kamenický náčrt lomeného gotického oblouku na věžní zdi vyznačuje přesné místo, kde se starší středověké zdivo věže napojuje na novogotickou chrámovou loď přestavěnou v 60. letech 19. století.',
+      },
+      'baptismal-record': {
+        title: 'Křestní zápis Bohuslava Martinů (1890)',
+        subtitle: 'Farní matrika · Prosinec 1890',
+        story:
+          'Otevřená farní matrika na pultu u presbytáře uchovává prosincový křestní zápis malého Bohuslava Martinů z roku 1890 — chlapce narozeného vysoko nad městem v kostelní věžní světničce pověžného.',
+      },
+      'organist-notebook': {
+        title: 'Notový sešit mladého varhaníka',
+        subtitle: 'Kůr u varhan · Rané chorální náčrtky',
+        story:
+          'Na notovém pultu varhanního hracího stolu leží otevřený ručně psaný sešit s chorálními náčrtky mladého Bohuslava. Právě odtud z kůru nad chrámovou lodí naslouchal mohutnému hlasu varhan a zapisoval své první hudební představy.',
       },
     },
   },
@@ -484,6 +580,7 @@ const CS: Translations = {
   toasts: {
     unlockedFireWatch: 'Odemčena minihra: Požární hlídka',
     unlockedJackdawHunt: 'Odemčena minihra: Lov kavek',
+    naveComingSoon: 'Sestup do hlavní lodi kostela sv. Jakuba bude zpřístupněn v dalším kroku.',
   },
   settings: {
     title: 'Nastavení',
@@ -525,12 +622,20 @@ const EN: Translations = {
   hud: {
     eyebrowInterior: 'Polička · ca. 1900',
     eyebrowBellChamber: 'Polička · Bell Chamber',
+    eyebrowChurchAttic: 'Polička · Church Attic',
+    eyebrowChurchNave: 'Polička · St. Jacob’s Church',
     eyebrowExterior: 'Polička · Gallery',
     birthRoomTitle: 'Birth Room',
     bellChamberTitle: 'Bell Chamber',
+    churchAtticTitle: 'Church Attic',
+    churchNaveTitle: 'St. Jacob’s Church',
     backToGallery: '[E] Back to Gallery',
     backToBirthRoom: '[E] Climb to Birth Room',
+    backToBellChamber: '[E] Return to Bell Chamber',
+    backToChurchAttic: '[E] Climb to Attic',
     bellChamberHint: 'Great Bell Jakub · Tower Clockwork · Louvered Belfry Windows',
+    churchAtticHint: 'Nave Roof Truss · Wooden Catwalks · Gothic Vault Shells',
+    churchNaveHint: 'High Altar · Presbytery Stained Glass · Organ Loft',
     timeModes: {
       auto: 'Auto',
       day: 'Day',
@@ -544,7 +649,7 @@ const EN: Translations = {
     seasonToSummerTitle: 'Switch to Summer',
     endFireWatch: 'End Fire Watch',
     endJackdawHunt: 'End Hunt',
-    clickToLookHint: 'Click to look · WASD to move · Esc to release mouse',
+    clickToLookHint: 'Click to look · WASD to move · Shift to sprint · Esc to release mouse',
     discoveredLandmarks: 'Discovered Landmarks',
     hideLandmarksTitle: 'Hide landmark list',
     showLandmarksTitle: 'Show landmark list',
@@ -582,6 +687,25 @@ const EN: Translations = {
     enterBellChamber: 'Enter Bell Chamber',
     climbToBirthRoom: 'Climb to Birth Room',
     ringGreatBell: 'Ring the Bell',
+    enterChurchAttic: 'Enter Church Attic',
+    returnToBellChamber: 'Climb to Bell Chamber',
+    descendIntoChurch: 'Descend into Church',
+    climbToChurchAttic: 'Climb to Church Attic',
+    playOrgan: 'Play Organ',
+    stopOrgan: 'Stop Organ',
+    organNextMelody: 'Next Melody',
+    organPlayingPrefix: 'Playing',
+    organMelodies: [
+      'Baroque Chorale',
+      'Pastoral Motif',
+      'Neo-Gothic Cadence',
+    ],
+    lightCandle: 'Light a Candle',
+    sitOnPew: 'Sit on Pew',
+    standUp: 'Stand Up',
+    inspect: 'Inspect',
+    lookThroughDormer: 'Look Through Dormer',
+    exitDormer: 'Step Back from Dormer',
     startFireWatch: 'Start Fire Watch',
     takeRifleHunt: 'Take Rifle — Jackdaw Hunt',
     useTelescope: 'Look through telescope',
@@ -594,6 +718,8 @@ const EN: Translations = {
     buttonTitle: 'Show or hide controls [H]',
     moveKey: 'WASD / Arrows',
     moveDesc: 'Move along gallery',
+    sprintKey: 'Shift',
+    sprintDesc: 'Sprint',
     lookKey: 'Mouse',
     lookDesc: 'Look around',
     interactDesc: 'Telescope, door, bell, rifle',
@@ -640,6 +766,39 @@ const EN: Translations = {
         subtitle: 'Home of Five · 36 m Above Ground',
         story:
           'Five members of the Martinů family lived in this single modest chamber 36 meters above the cobblestones — parents Ferdinand and Karolina with their three children. Around the round table beneath the kerosene lamp they shared meals, sewed, mended shoes, and penned Bohuslav’s earliest childhood notes.',
+      },
+    },
+  },
+  interiorCollectibles: {
+    storyBadges: {
+      bellChamber: 'Bell Chamber · 1845',
+      churchAttic: 'Church Attic · 1860',
+      churchNave: 'St. Jacob’s Church · 1890',
+    },
+    items: {
+      'bell-clapper': {
+        title: 'Cracked Old Bell Clapper',
+        subtitle: 'Belfry Frame · Relic of the 1845 Fire',
+        story:
+          'This cracked forged-iron clapper survived the devastating 1845 Polička town fire that destroyed the old church tower and melted its original bells. When the tower was rebuilt, the keepers leaned the broken clapper against the base of the new oak belfry frame as a lasting reminder of vigilance.',
+      },
+      'mason-arch-sketch': {
+        title: 'Stonemason’s Gothic Arch Sketch',
+        subtitle: 'West Tower Wall · 1860s Reconstruction',
+        story:
+          'Faint scribed arcs and chalk layout lines of a pointed Gothic arch on the stone tower wall mark the exact architectural seam where the older medieval masonry meets the rebuilt 1860s neo-Gothic nave.',
+      },
+      'baptismal-record': {
+        title: 'Baptismal Record of Bohuslav Martinů (1890)',
+        subtitle: 'Parish Register · December 1890',
+        story:
+          'The open parish register on the lectern beside the presbytery steps preserves the December 1890 baptismal entry for young Bohuslav Martinů, born high above Polička in the church tower watchman’s room.',
+      },
+      'organist-notebook': {
+        title: 'Young Organist’s Music Notebook',
+        subtitle: 'Organ Loft Console · Early Chorale Sketches',
+        story:
+          'Resting on the music rack of the organ console up on the loft, this open notebook holds young Bohuslav’s handwritten chorale sketches — inspired by listening to the church organ echo across the nave below.',
       },
     },
   },
@@ -814,6 +973,7 @@ const EN: Translations = {
   toasts: {
     unlockedFireWatch: 'Minigame Unlocked: Fire Watch',
     unlockedJackdawHunt: 'Minigame Unlocked: Jackdaw Hunt',
+    naveComingSoon: 'Descent into St. Jacob’s Church Nave will open in Step 2.',
   },
   settings: {
     title: 'Settings',

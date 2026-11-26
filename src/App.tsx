@@ -18,6 +18,14 @@ import {
   BIRTH_ROOM_HOTSPOTS,
   type BirthRoomHotspot,
 } from './game/birthRoomData';
+import type { AtticSpawnPoint } from './game/churchAttic';
+import {
+  COLLECTIBLE_COUNTS_BY_LOCATION,
+  INTERIOR_COLLECTIBLES,
+  countVisitedInLocation,
+  type InteriorCollectibleId,
+} from './game/interiorCollectibles';
+import { CHURCH_NAVE_CONFIG } from './game/churchNave';
 import {
   INACTIVE_FIRE_WATCH_STATE,
   createFireWatchShift,
@@ -117,6 +125,7 @@ export function App() {
 
   const [gamePhase, setGamePhase] = useState<GamePhase>('title');
   const [viewMode, setViewMode] = useState<ViewMode>('exterior');
+  const [atticSpawnFrom, setAtticSpawnFrom] = useState<AtticSpawnPoint>('fromBellChamber');
   const [galleryCameraMode, setGalleryCameraMode] = useState<GalleryCameraMode>('third');
   const [timeOfDayMode, setTimeOfDayMode] = useState<TimeOfDayMode>('auto');
   const [isWinter, setIsWinter] = useState<boolean>(false);
@@ -129,6 +138,7 @@ export function App() {
   const [isPointerLocked, setIsPointerLocked] = useState(false);
   const [isFading, setIsFading] = useState(false);
   const fadeTimerRef = useRef<number | null>(null);
+  const transitionCooldownUntilRef = useRef<number>(0);
 
   // One-shot startup loading cover: hides initial OSM load & shader pre-compile,
   // fades out smoothly once the first ready frame renders, then unmounts permanently.
@@ -161,6 +171,19 @@ export function App() {
   const [isNearTrapdoor, setIsNearTrapdoor] = useState(false);
   const [isNearBellChamberExit, setIsNearBellChamberExit] = useState(false);
   const [isNearBellChamberRope, setIsNearBellChamberRope] = useState(false);
+  const [isNearAtticDoor, setIsNearAtticDoor] = useState(false);
+  const [isNearAtticReturnDoor, setIsNearAtticReturnDoor] = useState(false);
+  const [isNearAtticNaveDoor, setIsNearAtticNaveDoor] = useState(false);
+  const [isNearAtticDormer, setIsNearAtticDormer] = useState(false);
+  const [isLookingThroughDormer, setIsLookingThroughDormer] = useState(false);
+  const [isNearNaveAtticDoor, setIsNearNaveAtticDoor] = useState(false);
+  const [isNearNaveOrgan, setIsNearNaveOrgan] = useState(false);
+  const [isNearVotiveStand, setIsNearVotiveStand] = useState(false);
+  const [litVotiveCount, setLitVotiveCount] = useState(0);
+  const [activeOrganMelody, setActiveOrganMelody] = useState<0 | 1 | 2 | null>(null);
+  const [isNearNavePew, setIsNearNavePew] = useState(false);
+  const [isSeatedOnPew, setIsSeatedOnPew] = useState(false);
+  const [sitToggleToken, setSitToggleToken] = useState(0);
   const [activeTelescope, setActiveTelescope] = useState<TelescopeId | null>(null);
   const [scanState, setScanState] = useState<ScanState>({ poiId: null, progress: 0 });
   const [zoomLevel, setZoomLevel] = useState<number>(DEFAULT_ZOOM);
@@ -173,6 +196,22 @@ export function App() {
   const [activeHotspotId, setActiveHotspotId] = useState<BirthRoomHotspot['id'] | null>(null);
   const [aimedHotspotId, setAimedHotspotId] = useState<BirthRoomHotspot['id'] | null>(null);
   const [aimedRifle, setAimedRifle] = useState(false);
+
+  // Bell Chamber, Church Attic & St. Jacob's Church historical collectibles (4 total)
+  const [visitedCollectibles, setVisitedCollectibles] = useState<Set<string>>(() => {
+    try {
+      const raw = window.localStorage.getItem('policka_interior_collectibles_v1');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) return new Set(arr.filter((v): v is string => typeof v === 'string'));
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return new Set();
+  });
+  const [activeCollectibleId, setActiveCollectibleId] = useState<InteriorCollectibleId | null>(null);
+  const [aimedCollectibleId, setAimedCollectibleId] = useState<InteriorCollectibleId | null>(null);
 
   // In-world minigame discovery unlock flags (persisted in localStorage, hidden in HUD until discovered)
   const [unlockedFireWatch, setUnlockedFireWatch] = useState<boolean>(() =>
@@ -279,6 +318,34 @@ export function App() {
     [exitPointerLockIfActive],
   );
 
+  const handleSelectCollectible = useCallback(
+    (id: InteriorCollectibleId) => {
+      exitPointerLockIfActive();
+      setActiveCollectibleId(id);
+      if (id === 'organist-notebook') {
+        soundEngine.ensureStarted();
+        soundEngine.playChurchOrganChorale();
+      } else {
+        soundEngine.playTelescopeClick();
+      }
+      setVisitedCollectibles((prev) => {
+        if (prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.add(id);
+        try {
+          window.localStorage.setItem(
+            'policka_interior_collectibles_v1',
+            JSON.stringify(Array.from(next)),
+          );
+        } catch {
+          // ignore storage errors
+        }
+        return next;
+      });
+    },
+    [exitPointerLockIfActive],
+  );
+
   const handleExitTelescope = useCallback(() => {
     soundEngine.playTelescopeClick();
     setActiveTelescope(null);
@@ -303,8 +370,15 @@ export function App() {
     setUnlockedPois(new Set());
     setVisitedBirthRoom(false);
     setVisitedHotspots(new Set());
+    setVisitedCollectibles(new Set());
+    try {
+      window.localStorage.removeItem('policka_interior_collectibles_v1');
+    } catch {
+      // ignore storage errors
+    }
     setActiveStoryPoiId(null);
     setActiveHotspotId(null);
+    setActiveCollectibleId(null);
     setActiveMicroScene(null);
     setFireWatchOfferDismissed(false);
   }, []);
@@ -647,12 +721,37 @@ export function App() {
     });
   }, []);
 
-  // Smooth 300ms fade-to-black transition between gallery exterior and Bohuslav Martinů's Birth Room
+  // Smooth 300ms fade-to-black transition between playable areas with interaction reset & cooldown
   const transitionToMode = useCallback(
     (nextMode: ViewMode) => {
-      if (isFading || viewMode === nextMode) return;
+      const now = performance.now();
+      if (isFading || viewMode === nextMode || now < transitionCooldownUntilRef.current) return;
+      transitionCooldownUntilRef.current = now + 480;
       exitPointerLockIfActive();
       soundEngine.playDoorFoley();
+
+      // Immediately clear all active hover/proximity/prompt states so stale hits from the previous room can never fire
+      setActiveHotspotId(null);
+      setAimedHotspotId(null);
+      setActiveCollectibleId(null);
+      setAimedCollectibleId(null);
+      setIsNearDoor(false);
+      setIsNearInteriorExitDoor(false);
+      setIsNearTrapdoor(false);
+      setIsNearBellChamberExit(false);
+      setIsNearBellChamberRope(false);
+      setIsNearAtticDoor(false);
+      setIsNearAtticReturnDoor(false);
+      setIsNearAtticNaveDoor(false);
+      setIsNearAtticDormer(false);
+      setIsLookingThroughDormer(false);
+      setIsNearNaveAtticDoor(false);
+      setIsNearNaveOrgan(false);
+      setIsNearVotiveStand(false);
+      setIsNearNavePew(false);
+      setIsSeatedOnPew(false);
+      soundEngine.stopChurchOrgan();
+      setActiveOrganMelody(null);
       setIsFading(true);
 
       if (fadeTimerRef.current !== null) {
@@ -660,16 +759,30 @@ export function App() {
       }
 
       fadeTimerRef.current = window.setTimeout(() => {
+        if (nextMode === 'churchAttic') {
+          setAtticSpawnFrom(viewMode === 'churchNave' ? 'fromChurch' : 'fromBellChamber');
+        }
         setViewMode(nextMode);
         setActiveTelescope(null);
         setScanState({ poiId: null, progress: 0 });
         setActiveStoryPoiId(null);
         setActiveHotspotId(null);
         setAimedHotspotId(null);
+        setActiveCollectibleId(null);
+        setAimedCollectibleId(null);
+        setIsNearDoor(false);
         setIsNearInteriorExitDoor(false);
         setIsNearTrapdoor(false);
         setIsNearBellChamberExit(false);
         setIsNearBellChamberRope(false);
+        setIsNearAtticDoor(false);
+        setIsNearAtticReturnDoor(false);
+        setIsNearAtticNaveDoor(false);
+        setIsNearNaveAtticDoor(false);
+        setIsNearNaveOrgan(false);
+        setIsNearNavePew(false);
+        setIsSeatedOnPew(false);
+        transitionCooldownUntilRef.current = performance.now() + 320;
         if (nextMode === 'interior') {
           setVisitedBirthRoom((prev) => {
             if (!prev) soundEngine.playChurchBell();
@@ -690,6 +803,50 @@ export function App() {
   const handleClimbToBirthRoom = useCallback(() => {
     transitionToMode('interior');
   }, [transitionToMode]);
+
+  const handleEnterChurchAttic = useCallback(() => {
+    transitionToMode('churchAttic');
+  }, [transitionToMode]);
+
+  const handleReturnToBellChamber = useCallback(() => {
+    transitionToMode('bellChamber');
+  }, [transitionToMode]);
+
+  const handleDescendIntoChurch = useCallback(() => {
+    transitionToMode('churchNave');
+  }, [transitionToMode]);
+
+  const handleClimbToChurchAttic = useCallback(() => {
+    transitionToMode('churchAttic');
+  }, [transitionToMode]);
+
+  const handlePlayChurchOrgan = useCallback(() => {
+    soundEngine.ensureStarted();
+    setActiveOrganMelody((prev) => {
+      if (prev === null) {
+        soundEngine.playChurchOrganMelody(0, () => setActiveOrganMelody(null));
+        return 0;
+      }
+      if (prev === 0) {
+        soundEngine.playChurchOrganMelody(1, () => setActiveOrganMelody(null));
+        return 1;
+      }
+      if (prev === 1) {
+        soundEngine.playChurchOrganMelody(2, () => setActiveOrganMelody(null));
+        return 2;
+      }
+      soundEngine.stopChurchOrgan();
+      return null;
+    });
+  }, []);
+
+  const handleLightVotiveCandle = useCallback(() => {
+    setLitVotiveCount((prev) => {
+      if (prev >= CHURCH_NAVE_CONFIG.votiveCandleCount) return prev;
+      soundEngine.playCandleIgnite();
+      return prev + 1;
+    });
+  }, []);
 
   const handleRingChamberBell = useCallback(() => {
     if (triggerTowerBellRing('chamber')) {
@@ -770,16 +927,78 @@ export function App() {
         return;
       }
 
+      if (viewMode === 'churchNave') {
+        if (event.code === 'KeyE') {
+          if (activeCollectibleId !== null) {
+            setActiveCollectibleId(null);
+          } else if (isSeatedOnPew) {
+            setSitToggleToken((prev) => prev + 1);
+          } else if (aimedCollectibleId !== null) {
+            handleSelectCollectible(aimedCollectibleId);
+          } else if (isNearNaveOrgan) {
+            handlePlayChurchOrgan();
+          } else if (isNearVotiveStand && litVotiveCount < CHURCH_NAVE_CONFIG.votiveCandleCount) {
+            handleLightVotiveCandle();
+          } else if (isNearNavePew) {
+            setSitToggleToken((prev) => prev + 1);
+          } else if (isNearNaveAtticDoor) {
+            transitionToMode('churchAttic');
+          }
+        } else if (event.code === 'Escape') {
+          if (document.pointerLockElement) return;
+          if (activeCollectibleId !== null) {
+            setActiveCollectibleId(null);
+          } else if (isSeatedOnPew) {
+            setSitToggleToken((prev) => prev + 1);
+          }
+        }
+        return;
+      }
+
+      if (viewMode === 'churchAttic') {
+        if (event.code === 'KeyE') {
+          if (isLookingThroughDormer) {
+            setIsLookingThroughDormer(false);
+          } else if (activeCollectibleId !== null) {
+            setActiveCollectibleId(null);
+          } else if (aimedCollectibleId !== null) {
+            handleSelectCollectible(aimedCollectibleId);
+          } else if (isNearAtticDormer) {
+            setIsLookingThroughDormer(true);
+          } else if (isNearAtticReturnDoor) {
+            transitionToMode('bellChamber');
+          } else if (isNearAtticNaveDoor) {
+            handleDescendIntoChurch();
+          }
+        } else if (event.code === 'Escape') {
+          if (document.pointerLockElement) return;
+          if (isLookingThroughDormer) {
+            setIsLookingThroughDormer(false);
+          } else if (activeCollectibleId !== null) {
+            setActiveCollectibleId(null);
+          }
+        }
+        return;
+      }
+
       if (viewMode === 'bellChamber') {
         if (event.code === 'KeyE') {
-          if (isNearBellChamberRope) {
+          if (activeCollectibleId !== null) {
+            setActiveCollectibleId(null);
+          } else if (aimedCollectibleId !== null) {
+            handleSelectCollectible(aimedCollectibleId);
+          } else if (isNearAtticDoor) {
+            transitionToMode('churchAttic');
+          } else if (isNearBellChamberRope) {
             handleRingChamberBell();
           } else if (isNearBellChamberExit) {
             transitionToMode('interior');
           }
         } else if (event.code === 'Escape') {
           if (document.pointerLockElement) return;
-          transitionToMode('interior');
+          if (activeCollectibleId !== null) {
+            setActiveCollectibleId(null);
+          }
         }
         return;
       }
@@ -796,13 +1015,10 @@ export function App() {
             transitionToMode('exterior');
           }
         } else if (event.code === 'Escape') {
-          // If pointer lock was active, browser handles unlocking first;
-          // when already unlocked, close modal or exit back to the gallery
+          // Escape only releases pointer lock or closes an open lore modal — never exits the room
           if (document.pointerLockElement) return;
           if (activeHotspotId !== null) {
             setActiveHotspotId(null);
-          } else {
-            transitionToMode('exterior');
           }
         }
         return;
@@ -897,7 +1113,21 @@ export function App() {
     isNearTrapdoor,
     isNearBellChamberRope,
     isNearBellChamberExit,
+    isNearAtticDoor,
+    isNearAtticReturnDoor,
+    isNearAtticNaveDoor,
+    isNearAtticDormer,
+    isLookingThroughDormer,
+    isNearNaveAtticDoor,
+    isNearNaveOrgan,
+    isNearVotiveStand,
+    litVotiveCount,
+    isNearNavePew,
+    isSeatedOnPew,
     handleRingChamberBell,
+    handleDescendIntoChurch,
+    handlePlayChurchOrgan,
+    handleLightVotiveCandle,
     activeStoryPoiId,
     activeHotspotId,
     aimedHotspotId,
@@ -920,6 +1150,9 @@ export function App() {
     handleStartFireWatch,
     handleStartJackdawHunt,
     handleSelectHotspot,
+    activeCollectibleId,
+    aimedCollectibleId,
+    handleSelectCollectible,
     handleExitTelescope,
     handleToggleGalleryCamera,
     handleToggleLantern,
@@ -940,6 +1173,14 @@ export function App() {
     ? BIRTH_ROOM_HOTSPOTS.find((h) => h.id === aimedHotspotId) ?? null
     : null;
 
+  const activeCollectible = activeCollectibleId
+    ? INTERIOR_COLLECTIBLES.find((c) => c.id === activeCollectibleId) ?? null
+    : null;
+
+  const aimedCollectible = aimedCollectibleId
+    ? INTERIOR_COLLECTIBLES.find((c) => c.id === aimedCollectibleId) ?? null
+    : null;
+
   const isPlaying = gamePhase === 'playing';
 
   const showFpsCrosshair =
@@ -947,7 +1188,11 @@ export function App() {
     isPointerLocked &&
     activeTelescope === null &&
     !jackdawHunt.active &&
-    (viewMode === 'interior' || viewMode === 'bellChamber' || galleryCameraMode === 'first');
+    (viewMode === 'interior' ||
+      viewMode === 'bellChamber' ||
+      viewMode === 'churchAttic' ||
+      viewMode === 'churchNave' ||
+      galleryCameraMode === 'first');
 
   const showClickToLookHint =
     isPlaying &&
@@ -955,9 +1200,14 @@ export function App() {
     !isPointerLocked &&
     activeTelescope === null &&
     activeHotspot === null &&
+    activeCollectible === null &&
     !(fireWatch.active && fireWatch.step === 'summary') &&
     !(jackdawHunt.active && jackdawHunt.phase === 'summary') &&
-    (viewMode === 'interior' || viewMode === 'bellChamber' || galleryCameraMode === 'first');
+    (viewMode === 'interior' ||
+      viewMode === 'bellChamber' ||
+      viewMode === 'churchAttic' ||
+      viewMode === 'churchNave' ||
+      galleryCameraMode === 'first');
 
   // Picturesque warm Golden Hour on Title Screen & fly-in; crisp afternoon/golden-hour during Lov kavek
   const targetTimeProgress =
@@ -1007,8 +1257,33 @@ export function App() {
         onEnterBellChamber={handleEnterBellChamber}
         onNearBellChamberExitChange={setIsNearBellChamberExit}
         onNearBellChamberRopeChange={setIsNearBellChamberRope}
+        onNearAtticDoorChange={setIsNearAtticDoor}
         onRingChamberBell={handleRingChamberBell}
         onClimbToBirthRoom={handleClimbToBirthRoom}
+        onEnterChurchAttic={handleEnterChurchAttic}
+        onNearAtticReturnDoorChange={setIsNearAtticReturnDoor}
+        onNearAtticNaveDoorChange={setIsNearAtticNaveDoor}
+        onNearAtticDormerChange={setIsNearAtticDormer}
+        isLookingThroughDormer={isLookingThroughDormer}
+        onExitDormer={() => setIsLookingThroughDormer(false)}
+        atticSpawnFrom={atticSpawnFrom}
+        onReturnToBellChamber={handleReturnToBellChamber}
+        onDescendIntoChurch={handleDescendIntoChurch}
+        onNearNaveAtticDoorChange={setIsNearNaveAtticDoor}
+        onNearNaveOrganChange={setIsNearNaveOrgan}
+        onNearVotiveStandChange={setIsNearVotiveStand}
+        litVotiveCount={litVotiveCount}
+        onLightVotiveCandle={handleLightVotiveCandle}
+        onNearNavePewChange={setIsNearNavePew}
+        onSeatedOnPewChange={setIsSeatedOnPew}
+        sitToggleToken={sitToggleToken}
+        onClimbToChurchAttic={handleClimbToChurchAttic}
+        onPlayChurchOrgan={handlePlayChurchOrgan}
+        activeCollectibleId={activeCollectibleId}
+        aimedCollectibleId={aimedCollectibleId}
+        visitedCollectibles={visitedCollectibles}
+        onAimedCollectibleChange={setAimedCollectibleId}
+        onSelectCollectible={handleSelectCollectible}
         fireWatch={fireWatch}
         onFireSpotted={handleFireSpotted}
         onFireMaxSpread={handleFireMaxSpread}
@@ -1194,17 +1469,66 @@ export function App() {
                 );
               })}
 
-              <span
-                className={`col-span-full whitespace-nowrap rounded-full border px-2.5 py-0.5 text-center text-[11px] leading-tight ${
-                  visitedBirthRoom
-                    ? 'border-amber-300/50 bg-amber-400/20 text-amber-200'
-                    : 'border-amber-200/15 bg-stone-900/55 text-amber-100/45'
-                }`}
-              >
-                {visitedBirthRoom
-                  ? `${t.hud.birthRoomLabel} (${visitedHotspots.size}/${BIRTH_ROOM_HOTSPOTS.length})`
-                  : `${t.hud.birthRoomLabel} (???)`}
-              </span>
+              {(() => {
+                if (viewMode === 'bellChamber') {
+                  const found = countVisitedInLocation(visitedCollectibles, 'bellChamber');
+                  const total = COLLECTIBLE_COUNTS_BY_LOCATION.bellChamber;
+                  return (
+                    <span
+                      className={`col-span-full whitespace-nowrap rounded-full border px-2.5 py-0.5 text-center text-[11px] leading-tight ${
+                        found >= total
+                          ? 'border-emerald-300/45 bg-emerald-400/15 text-emerald-100'
+                          : 'border-amber-300/50 bg-amber-400/20 text-amber-200'
+                      }`}
+                    >
+                      {`${t.hud.bellChamberTitle} (${found}/${total})`}
+                    </span>
+                  );
+                }
+                if (viewMode === 'churchAttic') {
+                  const found = countVisitedInLocation(visitedCollectibles, 'churchAttic');
+                  const total = COLLECTIBLE_COUNTS_BY_LOCATION.churchAttic;
+                  return (
+                    <span
+                      className={`col-span-full whitespace-nowrap rounded-full border px-2.5 py-0.5 text-center text-[11px] leading-tight ${
+                        found >= total
+                          ? 'border-emerald-300/45 bg-emerald-400/15 text-emerald-100'
+                          : 'border-amber-300/50 bg-amber-400/20 text-amber-200'
+                      }`}
+                    >
+                      {`${t.hud.churchAtticTitle} (${found}/${total})`}
+                    </span>
+                  );
+                }
+                if (viewMode === 'churchNave') {
+                  const found = countVisitedInLocation(visitedCollectibles, 'churchNave');
+                  const total = COLLECTIBLE_COUNTS_BY_LOCATION.churchNave;
+                  return (
+                    <span
+                      className={`col-span-full whitespace-nowrap rounded-full border px-2.5 py-0.5 text-center text-[11px] leading-tight ${
+                        found >= total
+                          ? 'border-emerald-300/45 bg-emerald-400/15 text-emerald-100'
+                          : 'border-amber-300/50 bg-amber-400/20 text-amber-200'
+                      }`}
+                    >
+                      {`${t.hud.churchNaveTitle} (${found}/${total})`}
+                    </span>
+                  );
+                }
+                return (
+                  <span
+                    className={`col-span-full whitespace-nowrap rounded-full border px-2.5 py-0.5 text-center text-[11px] leading-tight ${
+                      visitedBirthRoom
+                        ? 'border-amber-300/50 bg-amber-400/20 text-amber-200'
+                        : 'border-amber-200/15 bg-stone-900/55 text-amber-100/45'
+                    }`}
+                  >
+                    {visitedBirthRoom
+                      ? `${t.hud.birthRoomLabel} (${visitedHotspots.size}/${BIRTH_ROOM_HOTSPOTS.length})`
+                      : `${t.hud.birthRoomLabel} (???)`}
+                  </span>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -1579,34 +1903,45 @@ export function App() {
           {/* Left: Eyebrow + Title */}
           <div className="leading-tight">
             <span className="block text-[9.5px] font-semibold tracking-[0.24em] text-amber-300/85 uppercase">
-              {viewMode === 'bellChamber'
-                ? t.hud.eyebrowBellChamber
-                : viewMode === 'interior'
-                  ? t.hud.eyebrowInterior
-                  : t.hud.eyebrowExterior}
+              {viewMode === 'churchNave'
+                ? t.hud.eyebrowChurchNave
+                : viewMode === 'churchAttic'
+                  ? t.hud.eyebrowChurchAttic
+                  : viewMode === 'bellChamber'
+                    ? t.hud.eyebrowBellChamber
+                    : viewMode === 'interior'
+                      ? t.hud.eyebrowInterior
+                      : t.hud.eyebrowExterior}
             </span>
             <h1 className="whitespace-nowrap text-[15px] font-semibold tracking-wide text-amber-50">
-              {viewMode === 'bellChamber'
-                ? t.hud.bellChamberTitle
-                : viewMode === 'interior'
-                  ? t.hud.birthRoomTitle
-                  : 'The Tower Keeper'}
+              {viewMode === 'churchNave'
+                ? t.hud.churchNaveTitle
+                : viewMode === 'churchAttic'
+                  ? t.hud.churchAtticTitle
+                  : viewMode === 'bellChamber'
+                    ? t.hud.bellChamberTitle
+                    : viewMode === 'interior'
+                      ? t.hud.birthRoomTitle
+                      : 'The Tower Keeper'}
             </h1>
           </div>
 
-          {/* Middle: Exit button (inside Birth Room or Bell Chamber) + Time/Season toggles */}
-          {viewMode === 'bellChamber' ? (
+          {/* Middle: Clean interior Time-of-Day toggle (no shortcut exit or season button indoors) OR Exterior Time + Season toggles */}
+          {viewMode === 'bellChamber' || viewMode === 'churchAttic' || viewMode === 'churchNave' ? (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCycleTimeOfDay();
+              }}
+              title={t.hud.timeToggleTitle}
+              className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
+            >
+              {t.hud.timeModes[timeOfDayMode]}
+            </button>
+          ) : viewMode === 'interior' ? (
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  transitionToMode('interior');
-                }}
-                className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-300/35 bg-amber-400/15 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-400/25"
-              >
-                {t.hud.backToBirthRoom}
-              </button>
               <button
                 type="button"
                 onPointerDown={(e) => e.stopPropagation()}
@@ -1615,7 +1950,7 @@ export function App() {
                   handleCycleTimeOfDay();
                 }}
                 title={t.hud.timeToggleTitle}
-                className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
+                className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
               >
                 {t.hud.timeModes[timeOfDayMode]}
               </button>
@@ -1626,27 +1961,17 @@ export function App() {
                   e.stopPropagation();
                   setIsWinter((prev) => !prev);
                 }}
+                aria-pressed={isWinter}
                 title={isWinter ? t.hud.seasonToSummerTitle : t.hud.seasonToWinterTitle}
-                className={`cursor-pointer whitespace-nowrap rounded-lg border px-2 py-1 text-xs font-medium transition ${
+                className={`cursor-pointer whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
                   isWinter
-                    ? 'border-sky-300/50 bg-sky-400/20 text-sky-100 hover:bg-sky-400/30'
+                    ? 'border-sky-200/60 bg-sky-300/25 text-sky-50 shadow-[0_0_12px_rgba(186,230,253,0.28)] hover:bg-sky-300/35'
                     : 'border-amber-200/25 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20'
                 }`}
               >
-                {isWinter ? t.hud.seasonWinter : t.hud.seasonSummer}
+                {isWinter ? t.hud.seasonSummer : t.hud.seasonWinter}
               </button>
             </div>
-          ) : viewMode === 'interior' ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                transitionToMode('exterior');
-              }}
-              className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-300/35 bg-amber-400/15 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-400/25"
-            >
-              {t.hud.backToGallery}
-            </button>
           ) : (
             <div className="flex items-center gap-1.5">
               <button
@@ -1740,6 +2065,11 @@ export function App() {
                 <dd className="text-right text-amber-100/85">{t.controls.moveDesc}</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
+                  {t.controls.sprintKey}
+                </dt>
+                <dd className="text-right text-amber-100/85">{t.controls.sprintDesc}</dd>
+
+                <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   {t.controls.lookKey}
                 </dt>
                 <dd className="text-right text-amber-100/85">{t.controls.lookDesc}</dd>
@@ -1804,6 +2134,92 @@ export function App() {
         </div>
       )}
 
+      {/* Subtle Unobtrusive St. Jacob's Church Nave Caption */}
+      {viewMode === 'churchNave' && (
+        <div className="pointer-events-none fixed right-16 bottom-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
+          {t.hud.churchNaveHint}
+        </div>
+      )}
+
+      {/* Church Nave Bottom-Center Interaction Prompt (Stand Up, Inspect Collectible, Play/Cycle Organ, Light Candle, Sit on Pew, OR Climb to Church Attic) */}
+      {viewMode === 'churchNave' &&
+        activeCollectible === null &&
+        (() => {
+          const canLightCandle =
+            isNearVotiveStand && litVotiveCount < CHURCH_NAVE_CONFIG.votiveCandleCount;
+          if (
+            !isSeatedOnPew &&
+            !aimedCollectible &&
+            !isNearNaveOrgan &&
+            !canLightCandle &&
+            !isNearNavePew &&
+            !isNearNaveAtticDoor
+          ) {
+            return null;
+          }
+          const organPromptLabel =
+            activeOrganMelody === null
+              ? t.prompts.playOrgan
+              : activeOrganMelody < 2
+                ? `${t.prompts.organPlayingPrefix}: ${t.prompts.organMelodies[activeOrganMelody]} · ${t.prompts.organNextMelody}`
+                : `${t.prompts.organPlayingPrefix}: ${t.prompts.organMelodies[2]} · ${t.prompts.stopOrgan}`;
+          const isDoorOnly =
+            !isSeatedOnPew &&
+            !aimedCollectible &&
+            !isNearNaveOrgan &&
+            !canLightCandle &&
+            !isNearNavePew;
+          return (
+            <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
+              <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
+                <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
+                  {isSeatedOnPew || isDoorOnly ? '[E]' : t.prompts.clickOrE}
+                </span>
+                {isSeatedOnPew
+                  ? t.prompts.standUp
+                  : aimedCollectible
+                    ? `${t.prompts.inspect} · ${t.interiorCollectibles.items[aimedCollectible.id].title}`
+                    : isNearNaveOrgan
+                      ? organPromptLabel
+                      : canLightCandle
+                        ? `${t.prompts.lightCandle} (${litVotiveCount}/${CHURCH_NAVE_CONFIG.votiveCandleCount})`
+                        : isNearNavePew
+                          ? t.prompts.sitOnPew
+                          : t.prompts.climbToChurchAttic}
+              </div>
+            </div>
+          );
+        })()}
+
+      {/* Subtle Unobtrusive Church Attic Caption */}
+      {viewMode === 'churchAttic' && (
+        <div className="pointer-events-none fixed right-16 bottom-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
+          {t.hud.churchAtticHint}
+        </div>
+      )}
+
+      {/* Church Attic Bottom-Center Interaction Prompt (Dormer Lookout, Inspect Sketch, Return to Bell Chamber, OR Descend into Church) */}
+      {viewMode === 'churchAttic' &&
+        activeCollectible === null &&
+        (isLookingThroughDormer || aimedCollectible || isNearAtticDormer || isNearAtticReturnDoor || isNearAtticNaveDoor) && (
+          <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
+            <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
+              <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
+                {!isLookingThroughDormer && aimedCollectible ? t.prompts.clickOrE : '[E]'}
+              </span>
+              {isLookingThroughDormer
+                ? t.prompts.exitDormer
+                : aimedCollectible
+                  ? `${t.prompts.inspect} · ${t.interiorCollectibles.items[aimedCollectible.id].title}`
+                  : isNearAtticDormer
+                    ? t.prompts.lookThroughDormer
+                    : isNearAtticReturnDoor
+                      ? t.prompts.returnToBellChamber
+                      : t.prompts.descendIntoChurch}
+            </div>
+          </div>
+        )}
+
       {/* Subtle Unobtrusive Bell Chamber Caption */}
       {viewMode === 'bellChamber' && (
         <div className="pointer-events-none fixed right-16 bottom-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
@@ -1811,24 +2227,64 @@ export function App() {
         </div>
       )}
 
-      {/* Bell Chamber Bottom-Center Interaction Prompt (Ring Great Bell OR Climb to Birth Room) */}
-      {viewMode === 'bellChamber' && (isNearBellChamberRope || isNearBellChamberExit) && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
-          <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
-            <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
-              {t.prompts.clickOrE}
-            </span>
-            {isNearBellChamberRope ? t.prompts.ringGreatBell : t.prompts.climbToBirthRoom}
+      {/* Bell Chamber Bottom-Center Interaction Prompt (Inspect Clapper, Enter Church Attic, Ring Great Bell, OR Climb to Birth Room) */}
+      {viewMode === 'bellChamber' &&
+        activeCollectible === null &&
+        (aimedCollectible || isNearAtticDoor || isNearBellChamberRope || isNearBellChamberExit) && (
+          <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
+            <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
+              <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
+                {aimedCollectible || (!isNearAtticDoor && isNearBellChamberRope)
+                  ? t.prompts.clickOrE
+                  : '[E]'}
+              </span>
+              {aimedCollectible
+                ? `${t.prompts.inspect} · ${t.interiorCollectibles.items[aimedCollectible.id].title}`
+                : isNearAtticDoor
+                  ? t.prompts.enterChurchAttic
+                  : isNearBellChamberRope
+                    ? t.prompts.ringGreatBell
+                    : t.prompts.climbToBirthRoom}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Birth Room Floor Trapdoor Prompt (Enter Bell Chamber) */}
+      {/* Historical Lore Card for Bell Chamber, Church Attic & St. Jacob's Church Collectibles */}
+      {(viewMode === 'bellChamber' || viewMode === 'churchAttic' || viewMode === 'churchNave') &&
+        activeCollectible && (
+          <aside className="fixed right-4 bottom-16 z-30 w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-amber-200/30 bg-stone-950/90 p-5 text-amber-50 shadow-2xl backdrop-blur-lg sm:right-6">
+            <div className="mb-2 flex items-start justify-between gap-3">
+              <div>
+                <span className="inline-block rounded-full border border-amber-300/30 bg-amber-400/15 px-2.5 py-0.5 text-[10px] font-semibold tracking-[0.18em] text-amber-300 uppercase">
+                  {t.interiorCollectibles.storyBadges[activeCollectible.location]}
+                </span>
+                <h2 className="mt-1.5 text-xl font-semibold tracking-wide text-amber-50">
+                  {t.interiorCollectibles.items[activeCollectible.id].title}
+                </h2>
+                <p className="text-xs text-amber-200/70">
+                  {t.interiorCollectibles.items[activeCollectible.id].subtitle}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveCollectibleId(null)}
+                className="cursor-pointer rounded-lg border border-amber-200/20 bg-stone-900/80 px-2.5 py-1 text-xs font-medium text-amber-100/80 transition hover:border-amber-200/40 hover:text-amber-50"
+              >
+                {t.telescope.closeStory}
+              </button>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-amber-100/90">
+              {t.interiorCollectibles.items[activeCollectible.id].story}
+            </p>
+          </aside>
+        )}
+
+      {/* Birth Room Floor Trapdoor Prompt (Enter Bell Chamber — [E]-only) */}
       {viewMode === 'interior' && activeHotspot === null && isNearTrapdoor && (
         <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
           <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
             <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
-              {t.prompts.clickOrE}
+              [E]
             </span>
             {t.prompts.enterBellChamber}
           </div>

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BELL_CHAMBER_CONFIG } from '../game/bellChamber';
+import { PLAYER_CONFIG } from '../game/constants';
+import { CHURCH_TRANSFORM } from '../game/pois';
 import {
   BIRTH_ROOM_HOTSPOTS,
   createBlueFolkWallpaperTexture,
@@ -13,7 +15,8 @@ import {
 } from '../game/birthRoomData';
 import { useKeyboard } from '../game/useKeyboard';
 import { settingsRuntime, type GraphicsQuality } from '../game/settings';
-import { NIGHT_MATERIALS } from '../game/timeOfDay';
+import { timeOfDayState } from '../game/timeOfDay';
+import { soundEngine } from '../audio/soundEngine';
 
 interface BirthRoomInteriorProps {
   activeHotspotId: BirthRoomHotspot['id'] | null;
@@ -27,6 +30,7 @@ interface BirthRoomInteriorProps {
   onNearExitDoorChange: (near: boolean) => void;
   onNearTrapdoorChange?: (near: boolean) => void;
   onEnterBellChamber?: () => void;
+  isWinter?: boolean;
   graphicsQuality?: GraphicsQuality;
 }
 
@@ -34,8 +38,16 @@ const ROOM_W = 5.2;
 const ROOM_D = 4.6;
 const ROOM_H = 2.85;
 const EYE_HEIGHT = 1.65;
+const BIRTH_ROOM_WORLD_Y = 0.06;
 const MAX_PITCH = (80 * Math.PI) / 180;
 const MOUSE_SENSITIVITY = 0.0022;
+
+const BR_HEMI_SUMMER = new THREE.Color('#ffecd2');
+const BR_HEMI_WINTER = new THREE.Color('#d2e8ff');
+const BR_HEMI_NIGHT = new THREE.Color('#38281c');
+const BR_SUN_SUMMER = new THREE.Color('#ffd699');
+const BR_SUN_WINTER = new THREE.Color('#dceeff');
+const _brTmpCol = new THREE.Color();
 
 const WOOD_WARM = '#8a5832';
 const WOOD_DARK = '#4d301d';
@@ -87,6 +99,8 @@ function InteriorFPSControls({
   const yawRef = useRef(0.12);
   const pitchRef = useRef(-0.06);
   const walkPhaseRef = useRef(0);
+  const lastStepCountRef = useRef(0);
+  const sprintBlendRef = useRef(0);
 
   const isLockedRef = useRef(false);
   const modalOpenRef = useRef(modalOpen);
@@ -111,6 +125,9 @@ function InteriorFPSControls({
     }
   }, [modalOpen, gl]);
 
+  const cosR = Math.cos(CHURCH_TRANSFORM.rotationY);
+  const sinR = Math.sin(CHURCH_TRANSFORM.rotationY);
+
   // Configure interior perspective FOV/near and Pointer Lock listeners
   useEffect(() => {
     const domElement = gl.domElement;
@@ -121,9 +138,14 @@ function InteriorFPSControls({
       persp.updateProjectionMatrix();
     }
 
-    camera.position.copy(posRef.current);
+    const lp = posRef.current;
+    camera.position.set(
+      CHURCH_TRANSFORM.x + lp.x * cosR + lp.z * sinR,
+      BIRTH_ROOM_WORLD_Y + lp.y,
+      CHURCH_TRANSFORM.z - lp.x * sinR + lp.z * cosR,
+    );
     camera.rotation.order = 'YXZ';
-    camera.rotation.y = yawRef.current;
+    camera.rotation.y = CHURCH_TRANSFORM.rotationY + yawRef.current;
     camera.rotation.x = pitchRef.current;
     camera.rotation.z = 0;
 
@@ -147,12 +169,9 @@ function InteriorFPSControls({
         return;
       }
 
-      // If pointer is locked and player is aiming at the trapdoor, wall rifle, or a hotspot, Left Click interacts
+      // If pointer is locked and player is aiming at the wall rifle or a hotspot, Left Click interacts
+      // (Room/trapdoor transitions are strictly [E]-only so clicking never causes accidental teleports)
       if (document.pointerLockElement === domElement) {
-        if (nearTrapdoorRef.current && onEnterBellChamber) {
-          onEnterBellChamber();
-          return;
-        }
         if (aimedRifleRef.current) {
           onInteractRifle();
           return;
@@ -223,23 +242,37 @@ function InteriorFPSControls({
 
     // 1. FPS WASD / Arrow movement relative to horizontal facing direction (paused when modal open)
     let isMoving = false;
-    if (!modalOpenRef.current && !settingsRuntime.settingsOpen) {
-      const fAxis = (input.forward ? 1 : 0) - (input.backward ? 1 : 0);
-      const rAxis = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const canMove = !modalOpenRef.current && !settingsRuntime.settingsOpen;
+    const fAxis = canMove ? (input.forward ? 1 : 0) - (input.backward ? 1 : 0) : 0;
+    const rAxis = canMove ? (input.right ? 1 : 0) - (input.left ? 1 : 0) : 0;
+    const hasMoveInput = fAxis !== 0 || rAxis !== 0;
 
-      if (fAxis !== 0 || rAxis !== 0) {
-        isMoving = true;
-        const yaw = yawRef.current;
-        const forward = forwardRef.current.set(-Math.sin(yaw), 0, -Math.cos(yaw));
-        const right = rightRef.current.set(Math.cos(yaw), 0, -Math.sin(yaw));
+    const sprintTarget = hasMoveInput && input.sprint ? 1 : 0;
+    sprintBlendRef.current += (sprintTarget - sprintBlendRef.current) * (1 - Math.exp(-8 * dt));
+    if (sprintBlendRef.current < 0.001 && sprintTarget === 0) sprintBlendRef.current = 0;
+    const sprintBlend = sprintBlendRef.current;
 
-        const moveX = forward.x * fAxis + right.x * rAxis;
-        const moveZ = forward.z * fAxis + right.z * rAxis;
-        const len = Math.hypot(moveX, moveZ) || 1;
-        const speed = 2.15;
+    if (hasMoveInput) {
+      isMoving = true;
+      const yaw = yawRef.current;
+      const forward = forwardRef.current.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+      const right = rightRef.current.set(Math.cos(yaw), 0, -Math.sin(yaw));
 
-        let nx = posRef.current.x + (moveX / len) * speed * dt;
-        let nz = posRef.current.z + (moveZ / len) * speed * dt;
+      const moveX = forward.x * fAxis + right.x * rAxis;
+      const moveZ = forward.z * fAxis + right.z * rAxis;
+      const len = Math.hypot(moveX, moveZ) || 1;
+      const speed = 2.15 * (1 + (PLAYER_CONFIG.sprintMultiplier - 1) * sprintBlend);
+      const stepDist = speed * dt;
+      const substeps = stepDist > 0.12 ? 2 : 1;
+      const subStep = stepDist / substeps;
+      const dirX = moveX / len;
+      const dirZ = moveZ / len;
+
+      let nx = posRef.current.x;
+      let nz = posRef.current.z;
+      for (let s = 0; s < substeps; s++) {
+        nx += dirX * subStep;
+        nz += dirZ * subStep;
 
         // Clamp strictly inside room wall margins
         nx = Math.max(-1.74, Math.min(1.74, nx));
@@ -272,20 +305,42 @@ function InteriorFPSControls({
         }
 
         // Re-clamp inside room bounds after furniture push-outs
-        posRef.current.x = Math.max(-1.74, Math.min(1.74, nx));
-        posRef.current.z = Math.max(-1.38, Math.min(1.85, nz));
+        nx = Math.max(-1.74, Math.min(1.74, nx));
+        nz = Math.max(-1.38, Math.min(1.85, nz));
+      }
+      posRef.current.x = nx;
+      posRef.current.z = nz;
+    }
+
+    // Subtle dynamic FOV boost when sprinting
+    const persp = camera as THREE.PerspectiveCamera;
+    if (persp.isPerspectiveCamera) {
+      const targetFov = 58 + PLAYER_CONFIG.sprintFovBoost * sprintBlend;
+      if (Math.abs(persp.fov - targetFov) > 0.02) {
+        persp.fov += (targetFov - persp.fov) * Math.min(1, dt * 10);
+        persp.updateProjectionMatrix();
       }
     }
 
-    // Subtle FPS walk head-bob
+    // Subtle FPS walk/sprint head-bob & hollow wooden plank footsteps
     if (isMoving) {
-      walkPhaseRef.current += dt * 9.5;
+      walkPhaseRef.current += dt * (9.5 + sprintBlend * 3.8);
+      const stepIdx = Math.floor(walkPhaseRef.current / Math.PI);
+      if (stepIdx !== lastStepCountRef.current) {
+        lastStepCountRef.current = stepIdx;
+        soundEngine.playFootstep('wood', sprintBlend > 0.35, false);
+      }
     }
-    const bobOffset = isMoving ? Math.sin(walkPhaseRef.current) * 0.022 : 0;
+    const bobOffset = isMoving ? Math.sin(walkPhaseRef.current) * (0.022 + sprintBlend * 0.008) : 0;
 
-    camera.position.set(posRef.current.x, EYE_HEIGHT + bobOffset, posRef.current.z);
+    const lp = posRef.current;
+    camera.position.set(
+      CHURCH_TRANSFORM.x + lp.x * cosR + lp.z * sinR,
+      BIRTH_ROOM_WORLD_Y + EYE_HEIGHT + bobOffset,
+      CHURCH_TRANSFORM.z - lp.x * sinR + lp.z * cosR,
+    );
     camera.rotation.order = 'YXZ';
-    camera.rotation.y = yawRef.current;
+    camera.rotation.y = CHURCH_TRANSFORM.rotationY + yawRef.current;
     camera.rotation.x = pitchRef.current;
     camera.rotation.z = 0;
 
@@ -906,25 +961,121 @@ function YoungBohuslavViolinist({
   );
 }
 
-/** Multi-pane 1900 wooden window with warm sunlit glass & white lace valance curtain */
+/** Wallpapered wall split cleanly into 4 flush panels around a real open window cutout */
+function WindowedWallpaperWall({
+  position,
+  rotationY,
+  wallW,
+  wallH,
+  winCenterU,
+  winCenterY,
+  winW,
+  winH,
+  wallpaperMap,
+}: {
+  position: [number, number, number];
+  rotationY: number;
+  wallW: number;
+  wallH: number;
+  winCenterU: number;
+  winCenterY: number;
+  winW: number;
+  winH: number;
+  wallpaperMap: THREE.CanvasTexture;
+}) {
+  const halfW = wallW * 0.5;
+  const winLeft = winCenterU - winW * 0.5;
+  const winRight = winCenterU + winW * 0.5;
+  const winBottom = winCenterY - winH * 0.5;
+  const winTop = winCenterY + winH * 0.5;
+
+  const leftW = Math.max(0.05, winLeft + halfW);
+  const rightW = Math.max(0.05, halfW - winRight);
+  const bottomH = Math.max(0.05, winBottom);
+  const topH = Math.max(0.05, wallH - winTop);
+
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      {/* Left pier */}
+      <mesh position={[-halfW + leftW * 0.5, wallH * 0.5, 0]} receiveShadow>
+        <planeGeometry args={[leftW, wallH]} />
+        <meshStandardMaterial map={wallpaperMap} roughness={0.92} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Right pier */}
+      <mesh position={[halfW - rightW * 0.5, wallH * 0.5, 0]} receiveShadow>
+        <planeGeometry args={[rightW, wallH]} />
+        <meshStandardMaterial map={wallpaperMap} roughness={0.92} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Lower wall apron beneath window sill */}
+      <mesh position={[winCenterU, bottomH * 0.5, 0]} receiveShadow>
+        <planeGeometry args={[winW, bottomH]} />
+        <meshStandardMaterial map={wallpaperMap} roughness={0.92} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Upper wall header above window lintel */}
+      <mesh position={[winCenterU, winTop + topH * 0.5, 0]} receiveShadow>
+        <planeGeometry args={[winW, topH]} />
+        <meshStandardMaterial map={wallpaperMap} roughness={0.92} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  );
+}
+
+/** Multi-pane 1900 wooden window with real open aperture, lightly tinted transparent glass, lace valance & winter sill snow */
 function PeriodWindow({
   position,
   rotationY = 0,
+  isWinter = false,
 }: {
   position: [number, number, number];
   rotationY?: number;
+  isWinter?: boolean;
 }) {
   return (
     <group position={position} rotation={[0, rotationY, 0]}>
-      {/* Deep recessed white plaster reveal */}
-      <mesh position={[0, 0, -0.02]}>
-        <boxGeometry args={[1.36, 1.48, 0.14]} />
+      {/* Hollow 4-sided white plaster reveal jambs framing the real open aperture */}
+      <mesh position={[0, 0.7, -0.04]}>
+        <boxGeometry args={[1.38, 0.14, 0.22]} />
         <meshStandardMaterial color="#f2ece0" roughness={0.9} />
       </mesh>
-      {/* Exterior sky glow pane (tints smoothly with exterior time of day: gold -> twilight -> moonlight) */}
-      <mesh position={[0, 0, 0.01]} material={NIGHT_MATERIALS.birthRoomWindowGlow}>
-        <planeGeometry args={[1.14, 1.28]} />
+      <mesh position={[0, -0.7, -0.04]}>
+        <boxGeometry args={[1.38, 0.14, 0.22]} />
+        <meshStandardMaterial color="#f2ece0" roughness={0.9} />
       </mesh>
+      <mesh position={[-0.64, 0, -0.04]}>
+        <boxGeometry args={[0.14, 1.32, 0.22]} />
+        <meshStandardMaterial color="#f2ece0" roughness={0.9} />
+      </mesh>
+      <mesh position={[0.64, 0, -0.04]}>
+        <boxGeometry args={[0.14, 1.32, 0.22]} />
+        <meshStandardMaterial color="#f2ece0" roughness={0.9} />
+      </mesh>
+
+      {/* Lightly tinted clear transparent window glass looking out onto live 3D Polička */}
+      <mesh position={[0, 0, 0.02]}>
+        <planeGeometry args={[1.14, 1.28]} />
+        <meshStandardMaterial
+          color={isWinter ? '#d8ecff' : '#eaf4ff'}
+          roughness={0.08}
+          metalness={0.18}
+          transparent
+          opacity={0.13}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Outer wooden window sill ledge + Winter snow buildup */}
+      <mesh position={[0, -0.66, -0.15]}>
+        <boxGeometry args={[1.32, 0.08, 0.2]} />
+        <meshStandardMaterial color={WOOD_DARK} roughness={0.84} />
+      </mesh>
+      {isWinter && (
+        <mesh position={[0, -0.6, -0.17]}>
+          <boxGeometry args={[1.24, 0.06, 0.16]} />
+          <meshStandardMaterial color="#e8f1f8" roughness={0.92} flatShading />
+        </mesh>
+      )}
+
       {/* Warm wooden outer frame & multi-pane muntins */}
       <mesh position={[0, 0.65, 0.04]}>
         <boxGeometry args={[1.24, 0.08, 0.08]} />
@@ -1100,12 +1251,46 @@ export function BirthRoomInterior({
   onNearExitDoorChange,
   onNearTrapdoorChange,
   onEnterBellChamber,
+  isWinter = false,
   graphicsQuality = 'high',
 }: BirthRoomInteriorProps) {
   const hotspotMeshesRef = useRef<THREE.Object3D[]>([]);
   const hotspotMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const rifleHitMeshRef = useRef<THREE.Object3D | null>(null);
   const trapdoorHitMeshRef = useRef<THREE.Object3D | null>(null);
+  const hemiLightRef = useRef<THREE.HemisphereLight>(null);
+  const sunLight1Ref = useRef<THREE.DirectionalLight>(null);
+  const sunLight2Ref = useRef<THREE.DirectionalLight>(null);
+  const lampLightRef = useRef<THREE.PointLight>(null);
+  const lampGlobeMatRef = useRef<THREE.MeshStandardMaterial>(null);
+
+  useFrame((state) => {
+    const t = state.clock.getElapsedTime();
+    const nf = timeOfDayState.nightFactor;
+    const dayWeight = 1 - nf;
+
+    if (hemiLightRef.current) {
+      const daySky = isWinter ? BR_HEMI_WINTER : BR_HEMI_SUMMER;
+      _brTmpCol.copy(daySky).lerp(BR_HEMI_NIGHT, nf);
+      hemiLightRef.current.color.copy(_brTmpCol);
+      hemiLightRef.current.intensity = 0.28 + dayWeight * (isWinter ? 0.65 : 0.72);
+    }
+    if (sunLight1Ref.current) {
+      sunLight1Ref.current.color.copy(isWinter ? BR_SUN_WINTER : BR_SUN_SUMMER);
+      sunLight1Ref.current.intensity = dayWeight * dayWeight * (isWinter ? 1.45 : 1.75);
+    }
+    if (sunLight2Ref.current) {
+      sunLight2Ref.current.color.copy(isWinter ? BR_SUN_WINTER : BR_SUN_SUMMER);
+      sunLight2Ref.current.intensity = dayWeight * dayWeight * 0.6;
+    }
+    if (lampLightRef.current) {
+      const flicker = 1 + Math.sin(t * 7.6) * 0.035 * nf;
+      lampLightRef.current.intensity = (0.85 + nf * 3.85) * flicker;
+    }
+    if (lampGlobeMatRef.current) {
+      lampGlobeMatRef.current.emissiveIntensity = 0.9 + nf * 1.9;
+    }
+  });
 
   const textures = useMemo(() => {
     return {
@@ -1131,9 +1316,11 @@ export function BirthRoomInterior({
   const hd = ROOM_D / 2;
 
   return (
-    <group name="bohuslav-martinu-birth-room">
-      <color attach="background" args={['#1d1713']} />
-
+    <group
+      name="bohuslav-martinu-birth-room"
+      position={[CHURCH_TRANSFORM.x, BIRTH_ROOM_WORLD_Y, CHURCH_TRANSFORM.z]}
+      rotation={[0, CHURCH_TRANSFORM.rotationY, 0]}
+    >
       <InteriorFPSControls
         hotspotMeshesRef={hotspotMeshesRef}
         rifleHitMeshRef={rifleHitMeshRef}
@@ -1149,23 +1336,39 @@ export function BirthRoomInterior({
         onEnterBellChamber={onEnterBellChamber}
       />
 
-      {/* === WARM 1900 INTERIOR LIGHTING === */}
-      <hemisphereLight args={['#ffecd2', '#523d2c', 0.95]} />
-      {/* Golden-hour sunlight streaming through the West, North & South windows */}
+      {/* === DYNAMIC DAY / NIGHT / WINTER INTERIOR LIGHTING === */}
+      <hemisphereLight
+        ref={hemiLightRef}
+        args={[isWinter ? '#d2e8ff' : '#ffecd2', '#523d2c', 0.9]}
+      />
+      {/* Natural exterior daylight streaming through windows (drops smoothly to 0 at Night) */}
       <directionalLight
+        ref={sunLight1Ref}
         position={[-4.5, 3.2, -2.5]}
-        intensity={1.75}
-        color="#ffd28e"
+        intensity={1.7}
+        color={isWinter ? '#dceeff' : '#ffd699'}
         castShadow={graphicsQuality === 'high'}
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
         shadow-bias={-0.0005}
       />
-      <directionalLight position={[1.5, 2.5, 4.5]} intensity={0.65} color="#ffe0ad" />
-      {/* Cozy kerosene lamp warm glow from center ceiling */}
-      <pointLight position={[0, 2.02, 0.08]} color="#ffbe6b" intensity={3.2} distance={8} decay={2} />
+      <directionalLight
+        ref={sunLight2Ref}
+        position={[1.5, 2.5, 4.5]}
+        intensity={0.6}
+        color={isWinter ? '#dceeff' : '#ffd699'}
+      />
+      {/* Cozy kerosene lamp warm glow from center ceiling (brightens warmly at Night) */}
+      <pointLight
+        ref={lampLightRef}
+        position={[0, 2.02, 0.08]}
+        color="#ffbe6b"
+        intensity={2.4}
+        distance={9}
+        decay={1.85}
+      />
 
-      {/* === 1. ROOM SHELL: BLUE FOLK WALLPAPER, PAINTED CEILING & WOOD FLOOR === */}
+      {/* === 1. ROOM SHELL: BLUE FOLK WALLPAPER WITH REAL WINDOW CUTOUTS, PAINTED CEILING & WOOD FLOOR === */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
         <planeGeometry args={[ROOM_W, ROOM_D]} />
         <meshStandardMaterial map={textures.floor} roughness={0.86} />
@@ -1181,19 +1384,43 @@ export function BirthRoomInterior({
         <meshStandardMaterial map={textures.ceiling} roughness={0.92} />
       </mesh>
 
-      {/* 4 Iconic Blue Folk-Wallpaper Walls */}
-      <mesh position={[0, ROOM_H / 2, -hd]} receiveShadow>
-        <planeGeometry args={[ROOM_W, ROOM_H]} />
-        <meshStandardMaterial map={textures.wallpaper} roughness={0.92} />
-      </mesh>
-      <mesh position={[0, ROOM_H / 2, hd]} rotation={[0, Math.PI, 0]} receiveShadow>
-        <planeGeometry args={[ROOM_W, ROOM_H]} />
-        <meshStandardMaterial map={textures.wallpaper} roughness={0.92} />
-      </mesh>
-      <mesh position={[-hw, ROOM_H / 2, 0]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
-        <planeGeometry args={[ROOM_D, ROOM_H]} />
-        <meshStandardMaterial map={textures.wallpaper} roughness={0.92} />
-      </mesh>
+      {/* North wall with real open window cutout at x = 1.18, y = 1.56 */}
+      <WindowedWallpaperWall
+        position={[0, 0, -hd]}
+        rotationY={0}
+        wallW={ROOM_W}
+        wallH={ROOM_H}
+        winCenterU={1.18}
+        winCenterY={1.56}
+        winW={1.18}
+        winH={1.3}
+        wallpaperMap={textures.wallpaper}
+      />
+      {/* South wall with real open window cutout at x = 0.0, y = 1.56 */}
+      <WindowedWallpaperWall
+        position={[0, 0, hd]}
+        rotationY={Math.PI}
+        wallW={ROOM_W}
+        wallH={ROOM_H}
+        winCenterU={0.0}
+        winCenterY={1.56}
+        winW={1.18}
+        winH={1.3}
+        wallpaperMap={textures.wallpaper}
+      />
+      {/* West wall with real open window cutout at z = 0.0, y = 1.56 */}
+      <WindowedWallpaperWall
+        position={[-hw, 0, 0]}
+        rotationY={Math.PI / 2}
+        wallW={ROOM_D}
+        wallH={ROOM_H}
+        winCenterU={0.0}
+        winCenterY={1.56}
+        winW={1.18}
+        winH={1.3}
+        wallpaperMap={textures.wallpaper}
+      />
+      {/* Solid East wall (exit door back to gallery) */}
       <mesh position={[hw, ROOM_H / 2, 0]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
         <planeGeometry args={[ROOM_D, ROOM_H]} />
         <meshStandardMaterial map={textures.wallpaper} roughness={0.92} />
@@ -1212,13 +1439,13 @@ export function BirthRoomInterior({
         </mesh>
       ))}
 
-      {/* === 2. BALANCED SUNLIT MULTI-PANE WINDOWS WITH LACE VALANCES === */}
+      {/* === 2. TRANSPARENT MULTI-PANE WINDOWS OVERLOOKING LIVE 3D POLIČKA === */}
       {/* North wall window cleanly balanced over the treadle sewing machine */}
-      <PeriodWindow position={[1.18, 1.56, -hd + 0.02]} rotationY={0} />
+      <PeriodWindow position={[1.18, 1.56, -hd + 0.02]} rotationY={0} isWinter={isWinter} />
       {/* West wall window centered cleanly at z = 0 */}
-      <PeriodWindow position={[-hw + 0.02, 1.56, 0.0]} rotationY={Math.PI / 2} />
-      {/* South wall matching window centered on the previously blank wallpaper wall */}
-      <PeriodWindow position={[0.0, 1.56, hd - 0.02]} rotationY={Math.PI} />
+      <PeriodWindow position={[-hw + 0.02, 1.56, 0.0]} rotationY={Math.PI / 2} isWinter={isWinter} />
+      {/* South wall matching window centered on the south wall */}
+      <PeriodWindow position={[0.0, 1.56, hd - 0.02]} rotationY={Math.PI} isWinter={isWinter} />
 
       {/* === 3. HANGING ANTIQUE KEROSENE LAMP (PETROLEJKA) === */}
       <group position={[0, ROOM_H, 0.08]}>
@@ -1233,6 +1460,7 @@ export function BirthRoomInterior({
         <mesh position={[0, -0.84, 0]}>
           <cylinderGeometry args={[0.055, 0.08, 0.24, 12]} />
           <meshStandardMaterial
+            ref={lampGlobeMatRef}
             color="#fff0c2"
             emissive="#ffb852"
             emissiveIntensity={2.2}
@@ -1597,10 +1825,6 @@ export function BirthRoomInterior({
           0.02,
           BELL_CHAMBER_CONFIG.birthRoomTrapdoorPos[2],
         ]}
-        onClick={(e) => {
-          e.stopPropagation();
-          onEnterBellChamber?.();
-        }}
       >
         {/* Dark timber frame set flush into the floorboards */}
         <mesh position={[0, 0.015, 0]} receiveShadow>

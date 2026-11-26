@@ -8,6 +8,8 @@ interface TowerProps {
   isWinter?: boolean;
   /** Hides exterior tower shaft & gallery while keeping ChurchNave & Vysočina ground plane visible (used inside Bell Chamber) */
   hideTowerShaft?: boolean;
+  /** Hides only the central watchman's cabin core walls at gallery level so Birth Room windows look cleanly out over the gallery & Polička */
+  hideWatchRoomCore?: boolean;
 }
 
 const SIDES = [0, 1, 2, 3] as const;
@@ -462,6 +464,7 @@ export function Tower({
   cameraCollidersRef,
   isWinter = false,
   hideTowerShaft = false,
+  hideWatchRoomCore = false,
 }: TowerProps) {
   const collidersGroupRef = useRef<THREE.Group>(null);
 
@@ -698,6 +701,8 @@ export function Tower({
 
       {/* === 3. WATCHMAN'S ROOM (MARTINŮ BIRTH ROOM) & TALL OXIDIZED GREEN COPPER SPIRE (CAMERA COLLIDERS) === */}
       <group ref={collidersGroupRef} name="tower-camera-colliders">
+        {/* Exterior watchman's room stone walls hidden while inside Birth Room so windows look straight out over the gallery & Polička */}
+        <group visible={!hideWatchRoomCore}>
         {/* Warm pale sandstone watchman's room core on the gallery */}
         <mesh position={[0, watchRoomHeight / 2, 0]} castShadow receiveShadow>
           <boxGeometry args={[coreWidth, watchRoomHeight, coreWidth]} />
@@ -815,6 +820,7 @@ export function Tower({
             </group>
           </group>
         ))}
+        </group>
 
         {/* DISTINCTIVE TALL OXIDIZED GREEN COPPER SPIRE (MĚDĚNKA — frosted snow-dusted in Winter Mode) */}
         {/* Flared copper base hip skirt transitioning from square room to octagonal needle */}
