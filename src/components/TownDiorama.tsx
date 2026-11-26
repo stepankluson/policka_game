@@ -37,7 +37,9 @@ import {
   TOWN_Y,
 } from '../game/pois';
 import { Marketplace } from './Marketplace';
+import { NorthwestCountryside } from './NorthwestCountryside';
 import { PolickaBrewery } from './PolickaBrewery';
+import { RuralLifeDetails } from './RuralLifeDetails';
 import { PolickaCadastral1839 } from './PolickaCadastral1839';
 import { PolickaSurvey1903 } from './PolickaSurvey1903';
 import { FireWatchWorld } from './FireWatchWorld';
@@ -959,6 +961,18 @@ export function TownDiorama({
 
       {/* 1903 Third Military Survey Additions: Eastern Factory, 2 Eastern Mills, Shrines, Strip Fields, Orchards & Suburbs */}
       <PolickaSurvey1903 burnedIds={burnedSourceIds} />
+
+      {/* Quiet ~1900 NW/N Countryside ("Z – SZ – S"): Forested Hill Slopes, Woodland Groves, Agricultural Fields & Wayside Cross */}
+      <NorthwestCountryside
+        renderedRoads={streetsResult?.renderedRoadPolylines}
+        railwayTrack={osmData?.railway?.track}
+      />
+
+      {/* Lively ~1900 Rural Details: Fenced Sheep Pasture (N–NE), Scattered Haystacks & Pond Swans/Ducks */}
+      <RuralLifeDetails
+        renderedRoads={streetsResult?.renderedRoadPolylines}
+        railwayTrack={osmData?.railway?.track}
+      />
 
       {/* Real 1896–1897 Polička Railway Line, Historic Station & Randomized Steam Train */}
       {osmData?.railway && osmData.railway.track.length >= 2 && (
