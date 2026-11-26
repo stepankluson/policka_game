@@ -36,6 +36,7 @@ import {
   TOWN_HALL_TRANSFORM,
   TOWN_Y,
 } from '../game/pois';
+import { AtmosphericEffects } from './AtmosphericEffects';
 import { Marketplace } from './Marketplace';
 import { NorthwestCountryside } from './NorthwestCountryside';
 import { PolickaBrewery } from './PolickaBrewery';
@@ -973,6 +974,9 @@ export function TownDiorama({
         renderedRoads={streetsResult?.renderedRoadPolylines}
         railwayTrack={osmData?.railway?.track}
       />
+
+      {/* Subtle Atmospheric Layers: Slow-Drifting Low-Poly Sky Clouds & Low-Lying Pond Mist */}
+      <AtmosphericEffects />
 
       {/* Real 1896–1897 Polička Railway Line, Historic Station & Randomized Steam Train */}
       {osmData?.railway && osmData.railway.track.length >= 2 && (
