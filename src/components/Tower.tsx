@@ -53,64 +53,87 @@ function GothicWindow({
 
   return (
     <group position={position}>
-      {/* Sandstone jamb frame */}
-      <mesh position={[0, -archH * 0.35, 0]} castShadow receiveShadow>
-        <boxGeometry args={[width + 0.26, rectH + 0.16, 0.14]} />
+      {/* Layer 1: Sandstone jamb frame & pointed Gothic arch hood (protruding to z = +0.06) */}
+      <mesh position={[0, -archH * 0.35, 0.02]} castShadow receiveShadow>
+        <boxGeometry args={[width + 0.26, rectH + 0.16, 0.08]} />
         <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
       </mesh>
-      {/* Pointed Gothic arch hood */}
       <mesh
-        position={[0, rectH / 2 - archH * 0.12, 0]}
+        position={[0, rectH / 2 - archH * 0.12, 0.025]}
         rotation={[0, 0, Math.PI / 4]}
         castShadow
       >
-        <boxGeometry args={[(width + 0.22) * 0.72, (width + 0.22) * 0.72, 0.14]} />
+        <boxGeometry args={[(width + 0.22) * 0.72, (width + 0.22) * 0.72, 0.07]} />
         <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
       </mesh>
       {/* Stone windowsill */}
-      <mesh position={[0, -rectH / 2 - archH * 0.38, 0.06]} castShadow>
-        <boxGeometry args={[width + 0.38, 0.14, 0.22]} />
+      <mesh position={[0, -rectH / 2 - archH * 0.38, 0.1]} castShadow>
+        <boxGeometry args={[width + 0.38, 0.14, 0.24]} />
         <meshStandardMaterial color={COLORS.sandstoneDark} roughness={0.95} />
       </mesh>
 
-      {/* Recessed window / shutter opening (stained-glass nave windows glow warmly at night) */}
+      {/* Layer 2: Dark Gothic window glass / shutter (cleanly offset ahead of frame: z = +0.07..+0.13) */}
       {shutterColor === COLORS.windowDark ? (
         <>
-          <mesh position={[0, -archH * 0.35, 0.05]} material={NIGHT_MATERIALS.churchStainedGlass}>
-            <boxGeometry args={[width, rectH, 0.09]} />
+          <mesh position={[0, -archH * 0.35, 0.1]} material={NIGHT_MATERIALS.churchStainedGlass}>
+            <boxGeometry args={[width, rectH, 0.06]} />
           </mesh>
           <mesh
-            position={[0, rectH / 2 - archH * 0.14, 0.05]}
+            position={[0, rectH / 2 - archH * 0.14, 0.105]}
             rotation={[0, 0, Math.PI / 4]}
             material={NIGHT_MATERIALS.churchStainedGlass}
           >
-            <boxGeometry args={[width * 0.71, width * 0.71, 0.09]} />
+            <boxGeometry args={[width * 0.71, width * 0.71, 0.05]} />
           </mesh>
         </>
       ) : (
         <>
-          <mesh position={[0, -archH * 0.35, 0.05]}>
-            <boxGeometry args={[width, rectH, 0.09]} />
-            <meshStandardMaterial color={shutterColor} roughness={0.92} />
+          <mesh position={[0, -archH * 0.35, 0.1]}>
+            <boxGeometry args={[width, rectH, 0.06]} />
+            <meshStandardMaterial
+              color={shutterColor}
+              roughness={0.92}
+              polygonOffset
+              polygonOffsetFactor={-1}
+              polygonOffsetUnits={-1}
+            />
           </mesh>
           <mesh
-            position={[0, rectH / 2 - archH * 0.14, 0.05]}
+            position={[0, rectH / 2 - archH * 0.14, 0.105]}
             rotation={[0, 0, Math.PI / 4]}
           >
-            <boxGeometry args={[width * 0.71, width * 0.71, 0.09]} />
-            <meshStandardMaterial color={COLORS.windowDark} roughness={0.95} />
+            <boxGeometry args={[width * 0.71, width * 0.71, 0.05]} />
+            <meshStandardMaterial
+              color={COLORS.windowDark}
+              roughness={0.95}
+              polygonOffset
+              polygonOffsetFactor={-1}
+              polygonOffsetUnits={-1}
+            />
           </mesh>
         </>
       )}
 
-      {/* Central vertical Gothic mullion & tracery bar */}
-      <mesh position={[0, -archH * 0.12, 0.095]}>
-        <boxGeometry args={[0.07, rectH + archH * 0.55, 0.06]} />
-        <meshStandardMaterial color={COLORS.sandstone} roughness={0.9} />
+      {/* Layer 3: Light sandstone vertical mullion & horizontal tracery bar (clearly ahead of glass: z = +0.145..+0.20) */}
+      <mesh position={[0, -archH * 0.12, 0.17]}>
+        <boxGeometry args={[0.07, rectH + archH * 0.55, 0.05]} />
+        <meshStandardMaterial
+          color={COLORS.sandstone}
+          roughness={0.9}
+          polygonOffset
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
+        />
       </mesh>
-      <mesh position={[0, rectH * 0.18, 0.095]}>
-        <boxGeometry args={[width * 0.92, 0.06, 0.05]} />
-        <meshStandardMaterial color={COLORS.sandstone} roughness={0.9} />
+      <mesh position={[0, rectH * 0.18, 0.178]}>
+        <boxGeometry args={[width * 0.92, 0.06, 0.045]} />
+        <meshStandardMaterial
+          color={COLORS.sandstone}
+          roughness={0.9}
+          polygonOffset
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
+        />
       </mesh>
     </group>
   );
@@ -354,7 +377,6 @@ function ChurchNave({
           const windowAngles = [-2, -1, 0, 1, 2].map((k) => (k * Math.PI) / 3);
           // 6 exterior corner buttresses around the apse (all cleanly outside the nave wall)
           const buttressAngles = [-2.15, -1.5, -0.5, 0.5, 1.5, 2.15].map((k) => (k * Math.PI) / 3);
-          const apothem = apseRadiusTop * Math.cos(Math.PI / 6); // flat-face distance from apse center
 
           return (
             <group position={[naveLength / 2 + 2.75, 0, 0]}>
@@ -413,8 +435,10 @@ function ChurchNave({
 
               {/* 5 Tall, Narrow Recessed Gothic Lancet Windows on the outward apse wall facets */}
               {windowAngles.map((ang, idx) => {
-                const wx = Math.cos(ang) * (apothem + 0.08);
-                const wz = -Math.sin(ang) * (apothem + 0.08);
+                // Use apseRadiusBot so windows clear the tapered lower apse wall cleanly at all distances
+                const apseWinDist = apseRadiusBot * Math.cos(Math.PI / 6) + 0.04;
+                const wx = Math.cos(ang) * apseWinDist;
+                const wz = -Math.sin(ang) * apseWinDist;
                 return (
                   <group
                     key={`apse-win-${idx}`}
@@ -738,25 +762,45 @@ export function Tower({ cameraCollidersRef, isWinter = false }: TowerProps) {
         {/* Paired watchman's windows on East, North & West gallery room walls (matches photo 2) */}
         {[1, 2, 3].map((side) => (
           <group key={`room-win-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
-            <group position={[0, 1.95, coreHalf + 0.04]}>
-              {/* Stone frame */}
-              <mesh castShadow>
-                <boxGeometry args={[1.85, 1.25, 0.14]} />
+            <group position={[0, 1.95, coreHalf + 0.02]}>
+              {/* Layer 1: Stone frame */}
+              <mesh position={[0, 0, 0.02]} castShadow>
+                <boxGeometry args={[1.85, 1.25, 0.08]} />
                 <meshStandardMaterial color={COLORS.sandstoneTrim} roughness={0.93} />
               </mesh>
-              {/* Two bright/warm watchman window panes */}
-              <mesh position={[-0.4, 0, 0.06]}>
-                <boxGeometry args={[0.62, 0.92, 0.06]} />
-                <meshStandardMaterial color="#3c464f" roughness={0.35} metalness={0.25} />
+              {/* Layer 2: Two dark watchman window panes (offset cleanly ahead of frame) */}
+              <mesh position={[-0.4, 0, 0.095]}>
+                <boxGeometry args={[0.62, 0.92, 0.05]} />
+                <meshStandardMaterial
+                  color="#3c464f"
+                  roughness={0.55}
+                  metalness={0.12}
+                  polygonOffset
+                  polygonOffsetFactor={-1}
+                  polygonOffsetUnits={-1}
+                />
               </mesh>
-              <mesh position={[0.4, 0, 0.06]}>
-                <boxGeometry args={[0.62, 0.92, 0.06]} />
-                <meshStandardMaterial color="#3c464f" roughness={0.35} metalness={0.25} />
+              <mesh position={[0.4, 0, 0.095]}>
+                <boxGeometry args={[0.62, 0.92, 0.05]} />
+                <meshStandardMaterial
+                  color="#3c464f"
+                  roughness={0.55}
+                  metalness={0.12}
+                  polygonOffset
+                  polygonOffsetFactor={-1}
+                  polygonOffsetUnits={-1}
+                />
               </mesh>
-              {/* White wooden window crossbars */}
-              <mesh position={[0, 0, 0.09]}>
+              {/* Layer 3: White wooden window crossbars (offset cleanly ahead of glass) */}
+              <mesh position={[0, 0, 0.145]}>
                 <boxGeometry args={[1.55, 0.06, 0.04]} />
-                <meshStandardMaterial color="#f0eadc" roughness={0.7} />
+                <meshStandardMaterial
+                  color="#f0eadc"
+                  roughness={0.7}
+                  polygonOffset
+                  polygonOffsetFactor={-2}
+                  polygonOffsetUnits={-2}
+                />
               </mesh>
             </group>
           </group>

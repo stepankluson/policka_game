@@ -11,6 +11,7 @@ import {
   type BirthRoomHotspot,
 } from '../game/birthRoomData';
 import { useKeyboard } from '../game/useKeyboard';
+import { settingsRuntime, type GraphicsQuality } from '../game/settings';
 import { NIGHT_MATERIALS } from '../game/timeOfDay';
 
 interface BirthRoomInteriorProps {
@@ -23,6 +24,7 @@ interface BirthRoomInteriorProps {
   onInteractRifle: () => void;
   onPointerLockChange: (locked: boolean) => void;
   onNearExitDoorChange: (near: boolean) => void;
+  graphicsQuality?: GraphicsQuality;
 }
 
 const ROOM_W = 5.2;
@@ -130,7 +132,7 @@ function InteriorFPSControls({
     };
 
     const handleCanvasMouseDown = (event: MouseEvent) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || settingsRuntime.settingsOpen) return;
       if ((event.target as HTMLElement | null)?.closest('button, aside, section, header')) {
         return;
       }
@@ -150,17 +152,18 @@ function InteriorFPSControls({
       }
 
       // Otherwise, lock pointer on canvas click when no modal is open
-      if (!modalOpenRef.current) {
+      if (!modalOpenRef.current && !settingsRuntime.settingsOpen) {
         domElement.requestPointerLock?.();
       }
     };
 
     const handleMouseMove = (event: MouseEvent) => {
-      if (document.pointerLockElement !== domElement) return;
-      yawRef.current -= event.movementX * MOUSE_SENSITIVITY;
+      if (document.pointerLockElement !== domElement || settingsRuntime.settingsOpen) return;
+      const sens = MOUSE_SENSITIVITY * settingsRuntime.mouseSensitivity;
+      yawRef.current -= event.movementX * sens;
       pitchRef.current = Math.max(
         -MAX_PITCH,
-        Math.min(MAX_PITCH, pitchRef.current - event.movementY * MOUSE_SENSITIVITY),
+        Math.min(MAX_PITCH, pitchRef.current - event.movementY * sens),
       );
     };
 
@@ -203,7 +206,7 @@ function InteriorFPSControls({
 
     // 1. FPS WASD / Arrow movement relative to horizontal facing direction (paused when modal open)
     let isMoving = false;
-    if (!modalOpenRef.current) {
+    if (!modalOpenRef.current && !settingsRuntime.settingsOpen) {
       const fAxis = (input.forward ? 1 : 0) - (input.backward ? 1 : 0);
       const rAxis = (input.right ? 1 : 0) - (input.left ? 1 : 0);
 
@@ -1053,6 +1056,7 @@ export function BirthRoomInterior({
   onInteractRifle,
   onPointerLockChange,
   onNearExitDoorChange,
+  graphicsQuality = 'high',
 }: BirthRoomInteriorProps) {
   const hotspotMeshesRef = useRef<THREE.Object3D[]>([]);
   const hotspotMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
@@ -1104,7 +1108,7 @@ export function BirthRoomInterior({
         position={[-4.5, 3.2, -2.5]}
         intensity={1.75}
         color="#ffd28e"
-        castShadow
+        castShadow={graphicsQuality === 'high'}
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
         shadow-bias={-0.0005}

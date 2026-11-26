@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { ChimneyTop } from '../game/osmGeometry';
 import { BREWERY_SMOKESTACK_TOP } from '../game/pois';
+import { settingsRuntime } from '../game/settings';
 import { timeOfDayState } from '../game/timeOfDay';
 
 interface TownChimneySmokeProps {
@@ -53,6 +54,8 @@ export function TownChimneySmoke({
   const houseMatRef = useRef<THREE.MeshStandardMaterial>(null);
   const breweryMatRef = useRef<THREE.MeshStandardMaterial>(null);
   const dummyRef = useRef(new THREE.Object3D());
+  const perfAccumRef = useRef(0);
+  const lastPerfModeRef = useRef(false);
 
   // Pre-allocate 100% of residential chimneys (inner town + suburbs) into one InstancedMesh pool;
   // ~18% emit light wispy smoke in summer, while 100% emit fuller cozy smoke in winter.
@@ -116,7 +119,18 @@ export function TownChimneySmoke({
     return list;
   }, []);
 
-  useFrame((state) => {
+  useFrame((state, rawDelta) => {
+    const isPerf = settingsRuntime.graphicsQuality === 'performance';
+    const modeChanged = isPerf !== lastPerfModeRef.current;
+    lastPerfModeRef.current = isPerf;
+    if (isPerf && !modeChanged) {
+      perfAccumRef.current += Math.min(rawDelta, 0.05);
+      if (perfAccumRef.current < 0.045) return; // ~22 Hz smoke updates in Performance mode
+      perfAccumRef.current = 0;
+    } else {
+      perfAccumRef.current = 0;
+    }
+
     const t = state.clock.getElapsedTime();
     const nf = timeOfDayState.nightFactor;
     const isWinter = timeOfDayState.isWinter;
@@ -144,7 +158,11 @@ export function TownChimneySmoke({
       const seasonScale = isResidential ? (isWinter ? 1.22 : 0.78) : 1.0;
       for (let i = 0; i < puffs.length; i++) {
         const p = puffs[i];
-        if (isResidential && !isWinter && !p.summerActive) {
+        // In Performance mode, also hide half of residential smoke puffs to reduce overdraw
+        if (
+          (isResidential && !isWinter && !p.summerActive) ||
+          (isPerf && isResidential && (i & 1) === 1)
+        ) {
           dummy.position.set(p.ox, p.oy, p.oz);
           dummy.scale.set(0, 0, 0);
           dummy.updateMatrix();

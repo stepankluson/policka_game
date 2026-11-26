@@ -1,7 +1,9 @@
 import { POIS, TELESCOPES, type PoiSpec, type TelescopeId } from '../game/pois';
+import { getTranslations, type Language } from '../i18n';
 import { telescopeHudRefs, type ScanState } from './TelescopeCamera';
 
 interface TelescopeOverlayProps {
+  lang: Language;
   activeTelescope: TelescopeId | null;
   scanState: ScanState;
   zoomLevel: number;
@@ -17,6 +19,7 @@ const RING_RADIUS = 38;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 export function TelescopeOverlay({
+  lang,
   activeTelescope,
   scanState,
   zoomLevel,
@@ -27,8 +30,9 @@ export function TelescopeOverlay({
   onReplayMicroScene,
   isMicroScenePlayingForStory = false,
 }: TelescopeOverlayProps) {
+  const t = getTranslations(lang);
   const scope = activeTelescope
-    ? TELESCOPES.find((t) => t.id === activeTelescope) ?? null
+    ? TELESCOPES.find((item) => item.id === activeTelescope) ?? null
     : null;
 
   const aimedPoi = scanState.poiId
@@ -147,12 +151,12 @@ export function TelescopeOverlay({
               {aimedPoi &&
                 (isAimedUnlocked ? (
                   <div className="absolute top-26 whitespace-nowrap rounded-full border border-amber-100/20 bg-stone-950/82 px-3 py-1 text-center text-[11px] tracking-wide text-amber-100/75">
-                    {aimedPoi.titleCz} · Objeveno
+                    {t.pois[aimedPoi.id].title} · {t.telescope.discoveredSuffix}
                   </div>
                 ) : (
                   <div className="absolute top-26 flex flex-col items-center whitespace-nowrap rounded-full border border-amber-200/35 bg-stone-950/88 px-3.5 py-1 text-center">
                     <span className="text-xs font-semibold tracking-wide text-amber-200">
-                      {aimedPoi.titleCz}
+                      {t.pois[aimedPoi.id].title}
                     </span>
                     <span
                       ref={(el) => {
@@ -160,7 +164,7 @@ export function TelescopeOverlay({
                       }}
                       className="text-[10px] text-amber-100/75"
                     >
-                      {`Zaměřování… ${Math.round(scanState.progress * 100)} %`}
+                      {`${t.telescope.scanningPrefix} ${Math.round(scanState.progress * 100)} %`}
                     </span>
                   </div>
                 ))}
@@ -169,7 +173,7 @@ export function TelescopeOverlay({
             {/* Subtle Zoom Indicator Badge inside bottom of lens rim (direct DOM refs, zero backdrop-blur) */}
             <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-2.5 rounded-full border border-amber-200/25 bg-stone-950/85 px-3 py-1">
               <span className="text-[10px] font-semibold tracking-[0.18em] text-amber-200/75 uppercase">
-                Zoom
+                {t.telescope.zoom}
               </span>
               <div className="h-1 w-16 overflow-hidden rounded-full bg-amber-100/15">
                 <div
@@ -193,10 +197,10 @@ export function TelescopeOverlay({
 
           {/* Top-Left Active Telescope & Controls Hint (lightweight translucent fill — zero backdrop-blur) */}
           <div className="pointer-events-auto fixed top-4 left-4 flex max-w-[min(32rem,calc(100vw-2rem))] flex-wrap items-center gap-x-2.5 gap-y-1 rounded-2xl border border-amber-200/25 bg-stone-950/85 px-3.5 py-2 text-xs text-amber-100 sm:top-5 sm:left-6">
-            <span className="font-semibold text-amber-300">{scope.label}</span>
+            <span className="font-semibold text-amber-300">{t.telescope.names[scope.id]}</span>
             <span className="text-amber-200/35">·</span>
             <span className="text-amber-100/80">
-              Tažení / Šipky otáčení · Kolečko / W·S přiblížení
+              {t.telescope.controlsHint}
             </span>
             <button
               type="button"
@@ -206,25 +210,25 @@ export function TelescopeOverlay({
               }}
               className="cursor-pointer rounded-full bg-amber-300/15 px-2.5 py-0.5 font-medium text-amber-200 transition hover:bg-amber-300/25"
             >
-              [E] / [Esc] Zavřít
+              {t.telescope.closeBtn}
             </button>
           </div>
         </div>
       )}
 
-      {/* Czech Historical Story Card */}
+      {/* Historical Story Card */}
       {activeStoryPoi && (
-        <aside className="fixed right-4 bottom-4 z-30 w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-amber-200/30 bg-stone-950/88 p-5 text-amber-50 shadow-2xl backdrop-blur-lg">
+        <aside className="fixed right-4 bottom-16 z-30 w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-amber-200/30 bg-stone-950/88 p-5 text-amber-50 shadow-2xl backdrop-blur-lg">
           <div className="mb-2 flex items-start justify-between gap-3">
             <div>
               <span className="inline-block rounded-full border border-amber-300/30 bg-amber-400/15 px-2.5 py-0.5 text-[10px] font-semibold tracking-[0.18em] text-amber-300 uppercase">
-                Historický záznam · Polička
+                {t.telescope.storyBadge}
               </span>
               <h2 className="mt-1.5 text-xl font-semibold tracking-wide text-amber-50">
-                {activeStoryPoi.titleCz}
+                {t.pois[activeStoryPoi.id].title}
               </h2>
               <p className="text-xs text-amber-200/70">
-                {activeStoryPoi.subtitleCz}
+                {t.pois[activeStoryPoi.id].subtitle}
               </p>
             </div>
             <button
@@ -232,12 +236,12 @@ export function TelescopeOverlay({
               onClick={onCloseStory}
               className="cursor-pointer rounded-lg border border-amber-200/20 bg-stone-900/80 px-2.5 py-1 text-xs font-medium text-amber-100/80 transition hover:border-amber-200/40 hover:text-amber-50"
             >
-              Zavřít
+              {t.telescope.closeStory}
             </button>
           </div>
 
           <p className="mt-3 text-sm leading-relaxed text-amber-100/90">
-            {activeStoryPoi.storyCz}
+            {t.pois[activeStoryPoi.id].story}
           </p>
 
           {onReplayMicroScene && (
@@ -250,7 +254,9 @@ export function TelescopeOverlay({
                 }}
                 className="cursor-pointer rounded-full border border-amber-300/40 bg-amber-400/15 px-3.5 py-1 text-xs font-medium tracking-wide text-amber-200 transition hover:border-amber-200/65 hover:bg-amber-400/25 hover:text-amber-50"
               >
-                {isMicroScenePlayingForStory ? 'Přehrát scénku znovu' : 'Přehrát scénku'}
+                {isMicroScenePlayingForStory
+                  ? t.telescope.replaySceneAgain
+                  : t.telescope.replayScene}
               </button>
             </div>
           )}

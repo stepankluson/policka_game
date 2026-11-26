@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CHURCH_TRANSFORM, REAL_LANDMARKS, TOWN_Y } from '../game/pois';
+import { settingsRuntime } from '../game/settings';
 import { timeOfDayState } from '../game/timeOfDay';
 
 interface AtmosphericEffectsProps {
@@ -165,9 +166,22 @@ function LowPolyClouds() {
 
   // Mutable X offsets (zero per-frame React state)
   const cloudXRef = useRef<Float32Array>(Float32Array.from(clusters.map((c) => c.x)));
+  const perfAccumRef = useRef(0);
+  const initializedRef = useRef(false);
 
   useFrame((_, rawDelta) => {
-    const dt = Math.min(rawDelta, 0.05);
+    const dtClamped = Math.min(rawDelta, 0.05);
+    const isPerf = settingsRuntime.graphicsQuality === 'performance';
+    let dt = dtClamped;
+    if (isPerf && initializedRef.current) {
+      perfAccumRef.current += dtClamped;
+      if (perfAccumRef.current < 0.05) return; // ~20 Hz updates in Performance mode
+      dt = perfAccumRef.current;
+      perfAccumRef.current = 0;
+    } else {
+      perfAccumRef.current = 0;
+    }
+    initializedRef.current = true;
     const mesh = instRef.current;
     const mat = matRef.current;
 
@@ -432,6 +446,12 @@ function SnowfallSystem({ active }: { active: boolean }) {
 
     const dt = Math.min(rawDelta, 0.05);
     const t = state.clock.getElapsedTime();
+    const isPerf = settingsRuntime.graphicsQuality === 'performance';
+    const activeCount = isPerf ? Math.floor(SNOW_COUNT / 2) : SNOW_COUNT;
+    if (geometry.drawRange.count !== activeCount) {
+      geometry.setDrawRange(0, activeCount);
+    }
+
     const posAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
     const arr = posAttr.array as Float32Array;
     const cx = CHURCH_TRANSFORM.x;
@@ -443,7 +463,7 @@ function SnowfallSystem({ active }: { active: boolean }) {
     const spanXZ = SNOW_BOX_HALF_XZ * 2;
     const spanY = SNOW_MAX_Y - SNOW_MIN_Y;
 
-    for (let i = 0; i < SNOW_COUNT; i++) {
+    for (let i = 0; i < activeCount; i++) {
       const i3 = i * 3;
       const ph = phases[i];
       let x = arr[i3] + (0.65 + Math.sin(t * 0.75 + ph) * 0.48) * dt;

@@ -5,6 +5,7 @@ import { RING_BOUNDS } from '../game/constants';
 import { churchLocalToWorld } from '../game/pois';
 import { constrainToSquareRing } from '../game/ringCollision';
 import { jackdawHuntRuntime } from '../game/jackdawHunt';
+import { settingsRuntime } from '../game/settings';
 import { NIGHT_MATERIALS, timeOfDayState } from '../game/timeOfDay';
 
 interface FirstPersonGalleryCameraProps {
@@ -98,7 +99,7 @@ export function FirstPersonGalleryCamera({
     };
 
     const handleCanvasClick = (event: MouseEvent) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || settingsRuntime.settingsOpen) return;
       if ((event.target as HTMLElement | null)?.closest('button, aside, section, header')) {
         return;
       }
@@ -108,11 +109,12 @@ export function FirstPersonGalleryCamera({
     };
 
     const handleMouseMove = (event: MouseEvent) => {
-      if (document.pointerLockElement !== domElement) return;
-      yawRef.current -= event.movementX * MOUSE_SENSITIVITY;
+      if (document.pointerLockElement !== domElement || settingsRuntime.settingsOpen) return;
+      const sens = MOUSE_SENSITIVITY * settingsRuntime.mouseSensitivity;
+      yawRef.current -= event.movementX * sens;
       pitchRef.current = Math.max(
         -MAX_PITCH,
-        Math.min(MAX_PITCH, pitchRef.current - event.movementY * MOUSE_SENSITIVITY),
+        Math.min(MAX_PITCH, pitchRef.current - event.movementY * sens),
       );
     };
 

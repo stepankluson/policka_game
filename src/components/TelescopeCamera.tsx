@@ -10,6 +10,8 @@ import {
   type PoiSpec,
   type TelescopeId,
 } from '../game/pois';
+import { settingsRuntime } from '../game/settings';
+import { getTranslations } from '../i18n';
 
 export interface ScanState {
   poiId: PoiSpec['id'] | null;
@@ -155,7 +157,7 @@ export function TelescopeCamera({
     if (!activeTelescope) return;
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || settingsRuntime.settingsOpen) return;
       if ((event.target as HTMLElement | null)?.closest('button, aside, section')) {
         return;
       }
@@ -165,15 +167,16 @@ export function TelescopeCamera({
     };
 
     const handlePointerMove = (event: PointerEvent) => {
-      if (!isDraggingRef.current) return;
+      if (!isDraggingRef.current || settingsRuntime.settingsOpen) return;
       const dx = event.clientX - lastPointerRef.current.x;
       const dy = event.clientY - lastPointerRef.current.y;
       lastPointerRef.current.x = event.clientX;
       lastPointerRef.current.y = event.clientY;
 
-      // Scale pan sensitivity dynamically with current zoom level
+      // Scale pan sensitivity dynamically with current zoom level and user mouse sensitivity
       const zoomScale = currentFovRef.current / TELESCOPE_CONFIG.maxFov;
-      const sens = TELESCOPE_CONFIG.dragSensitivity * zoomScale;
+      const sens =
+        TELESCOPE_CONFIG.dragSensitivity * zoomScale * settingsRuntime.mouseSensitivity;
 
       targetYawRef.current += dx * sens;
       targetPitchRef.current += dy * sens;
@@ -184,6 +187,7 @@ export function TelescopeCamera({
     };
 
     const handleWheel = (event: WheelEvent) => {
+      if (settingsRuntime.settingsOpen) return;
       if ((event.target as HTMLElement | null)?.closest('aside')) return;
       event.preventDefault();
       targetFovRef.current = Math.max(
@@ -420,7 +424,8 @@ export function TelescopeCamera({
           telescopeHudRefs.ringCircle.style.opacity = progress > 0.01 ? '1' : '0';
         }
         if (telescopeHudRefs.scanPercentLabel) {
-          telescopeHudRefs.scanPercentLabel.textContent = `Zaměřování… ${Math.round(progress * 100)} %`;
+          const prefix = getTranslations(settingsRuntime.lang).telescope.scanningPrefix;
+          telescopeHudRefs.scanPercentLabel.textContent = `${prefix} ${Math.round(progress * 100)} %`;
         }
 
         if (progress >= 1 && triggeredPoiRef.current !== aimedPoi.id) {

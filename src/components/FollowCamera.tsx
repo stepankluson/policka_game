@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CAMERA_CONFIG, TOWER_DIMENSIONS } from '../game/constants';
 import { CHURCH_TRANSFORM } from '../game/pois';
+import { settingsRuntime } from '../game/settings';
 
 interface FollowCameraProps {
   playerPosRef: RefObject<THREE.Vector3>;
@@ -177,7 +178,7 @@ export function FollowCamera({
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || settingsRuntime.settingsOpen) return;
       if ((event.target as HTMLElement | null)?.closest('button, aside, section')) {
         return;
       }
@@ -187,7 +188,7 @@ export function FollowCamera({
     };
 
     const handlePointerMove = (event: PointerEvent) => {
-      if (!isDraggingRef.current) return;
+      if (!isDraggingRef.current || settingsRuntime.settingsOpen) return;
       const dx = event.clientX - lastPointerRef.current.x;
       const dy = event.clientY - lastPointerRef.current.y;
       lastPointerRef.current.x = event.clientX;
@@ -198,9 +199,10 @@ export function FollowCamera({
         CAMERA_CONFIG.minPitchClose +
         (CAMERA_CONFIG.minPitchFar - CAMERA_CONFIG.minPitchClose) * farBlend;
 
-      targetYawRef.current -= dx * CAMERA_CONFIG.dragSensitivity;
+      const sens = CAMERA_CONFIG.dragSensitivity * settingsRuntime.mouseSensitivity;
+      targetYawRef.current -= dx * sens;
       targetPitchRef.current = clamp(
-        targetPitchRef.current + dy * CAMERA_CONFIG.dragSensitivity,
+        targetPitchRef.current + dy * sens,
         minPitch,
         CAMERA_CONFIG.maxPitch,
       );
@@ -211,6 +213,7 @@ export function FollowCamera({
     };
 
     const handleWheel = (event: WheelEvent) => {
+      if (settingsRuntime.settingsOpen) return;
       if ((event.target as HTMLElement | null)?.closest('aside')) return;
       event.preventDefault();
 

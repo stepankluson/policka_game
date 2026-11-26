@@ -76,7 +76,11 @@ export const NIGHT_MATERIALS = {
     color: '#262320',
     emissive: '#f6b95c',
     emissiveIntensity: 0,
-    roughness: 0.55,
+    roughness: 0.72,
+    metalness: 0.05,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
   }),
   industrialWindow: new THREE.MeshStandardMaterial({
     color: '#232830',

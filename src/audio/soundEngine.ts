@@ -11,6 +11,8 @@ const WHISTLE_COOLDOWN_MS = 18_000;
 class PolickaSoundEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private sfxBus: GainNode | null = null;
+  private musicBus: GainNode | null = null;
   private masterLimiter: DynamicsCompressorNode | null = null;
 
   // Continuous exterior wind chain
@@ -42,11 +44,19 @@ class PolickaSoundEngine {
 
   // Runtime state
   private isMuted = false;
+  private masterVolume = 0.75;
+  private sfxVolume = 1.0;
+  private musicVolume = 1.0;
   private isFireWatchActive = false;
   private viewMode: SoundViewMode = 'exterior';
   private nightFactor = 0;
   private lastEnvUpdateMs = 0;
   private lastWhistleMs = 0;
+
+  private computeMasterGain(): number {
+    if (this.isMuted) return 0;
+    return DEFAULT_MASTER_VOLUME * (this.masterVolume / 0.75);
+  }
 
   /** Lazily creates & resumes AudioContext on the first user interaction */
   public ensureStarted(): void {
@@ -62,7 +72,15 @@ class PolickaSoundEngine {
       this.ctx = ctx;
 
       const master = ctx.createGain();
-      master.gain.setValueAtTime(this.isMuted ? 0 : DEFAULT_MASTER_VOLUME, ctx.currentTime);
+      master.gain.setValueAtTime(this.computeMasterGain(), ctx.currentTime);
+
+      const sfxBus = ctx.createGain();
+      sfxBus.gain.setValueAtTime(this.sfxVolume, ctx.currentTime);
+      sfxBus.connect(master);
+
+      const musicBus = ctx.createGain();
+      musicBus.gain.setValueAtTime(this.musicVolume, ctx.currentTime);
+      musicBus.connect(master);
 
       // Gentle master dynamics compressor / soft limiter so boosted bronze church bells stay rich & clip-free
       const limiter = ctx.createDynamicsCompressor();
@@ -75,9 +93,11 @@ class PolickaSoundEngine {
       master.connect(limiter);
       limiter.connect(ctx.destination);
       this.masterGain = master;
+      this.sfxBus = sfxBus;
+      this.musicBus = musicBus;
       this.masterLimiter = limiter;
 
-      this.setupNoiseAndAmbience(ctx, master);
+      this.setupNoiseAndAmbience(ctx, sfxBus, musicBus);
       this.startSchedulers();
       this.applyEnvironmentGains(true);
     }
@@ -112,7 +132,7 @@ class PolickaSoundEngine {
 
     // One deep, authoritative resonant bronze toll of St. James Church bell (boosted presence)
     const triggerBell = () => {
-      if (!this.ctx || !this.masterGain || this.isMuted) return;
+      if (!this.ctx || !this.sfxBus || this.isMuted) return;
       const t0 = this.ctx.currentTime + 0.04;
       const f0 = 185.0; // F#3 grand tower bell fundamental
       const partials: readonly { ratio: number; amp: number; decay: number }[] = [
@@ -126,7 +146,7 @@ class PolickaSoundEngine {
 
       const bus = this.ctx.createGain();
       bus.gain.setValueAtTime(0.76, t0);
-      bus.connect(this.masterGain);
+      bus.connect(this.sfxBus);
 
       for (const p of partials) {
         const osc = this.ctx.createOscillator();
@@ -207,7 +227,11 @@ class PolickaSoundEngine {
     return buffer;
   }
 
-  private setupNoiseAndAmbience(ctx: AudioContext, master: GainNode): void {
+  private setupNoiseAndAmbience(
+    ctx: AudioContext,
+    sfxBus: GainNode,
+    musicBus: GainNode,
+  ): void {
     const pinkBuf = this.createPinkNoiseBuffer(ctx, 4);
     const brownBuf = this.createBrownNoiseBuffer(ctx, 4);
     this.whiteNoiseBuffer = this.createWhiteNoiseBuffer(ctx, 2);
@@ -240,7 +264,7 @@ class PolickaSoundEngine {
     windSrc.connect(windBp);
     windBp.connect(windMuffle);
     windMuffle.connect(windGain);
-    windGain.connect(master);
+    windGain.connect(sfxBus);
 
     windSrc.start();
     windLfo.start();
@@ -283,7 +307,7 @@ class PolickaSoundEngine {
     murmurLp.connect(murmurBp);
     murmurBp.connect(murmurModGain);
     murmurModGain.connect(murmurGain);
-    murmurGain.connect(master);
+    murmurGain.connect(sfxBus);
 
     murmurSrc.start();
     murmurLfo.start();
@@ -296,7 +320,7 @@ class PolickaSoundEngine {
     // 3. Dedicated Solo Violin Bus for Young Bohuslav Martinů inside the Birth Room
     const violinBus = ctx.createGain();
     violinBus.gain.setValueAtTime(0.0001, ctx.currentTime);
-    violinBus.connect(master);
+    violinBus.connect(musicBus);
     this.violinBus = violinBus;
   }
 
@@ -378,17 +402,31 @@ class PolickaSoundEngine {
 
   public setMuted(muted: boolean): void {
     this.isMuted = muted;
-    if (!muted) {
-      this.ensureStarted();
+    if (!muted && this.ctx && this.ctx.state === 'suspended') {
+      void this.ctx.resume();
     }
     if (!this.ctx || !this.masterGain) return;
     const now = this.ctx.currentTime;
-    // Smooth 0.15s fade to prevent any click/pop
-    this.masterGain.gain.setTargetAtTime(
-      muted ? 0 : DEFAULT_MASTER_VOLUME,
-      now,
-      0.045,
-    );
+    // Smooth fade to prevent any click/pop
+    this.masterGain.gain.setTargetAtTime(this.computeMasterGain(), now, 0.04);
+  }
+
+  public setMasterVolume(volume: number): void {
+    this.masterVolume = Math.max(0, Math.min(1, volume));
+    if (!this.ctx || !this.masterGain) return;
+    this.masterGain.gain.setTargetAtTime(this.computeMasterGain(), this.ctx.currentTime, 0.04);
+  }
+
+  public setSfxVolume(volume: number): void {
+    this.sfxVolume = Math.max(0, Math.min(1, volume));
+    if (!this.ctx || !this.sfxBus) return;
+    this.sfxBus.gain.setTargetAtTime(this.sfxVolume, this.ctx.currentTime, 0.04);
+  }
+
+  public setMusicVolume(volume: number): void {
+    this.musicVolume = Math.max(0, Math.min(1, volume));
+    if (!this.ctx || !this.musicBus) return;
+    this.musicBus.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.04);
   }
 
   public updateEnvironment(viewMode: SoundViewMode, nightFactor: number): void {
@@ -438,7 +476,7 @@ class PolickaSoundEngine {
 
   /** Wooden pendulum clock tick / tock inside Rodná světnička */
   private playClockTick(isTick: boolean): void {
-    if (!this.ctx || !this.masterGain || !this.whiteNoiseBuffer || this.ctx.state !== 'running') {
+    if (!this.ctx || !this.sfxBus || !this.whiteNoiseBuffer || this.ctx.state !== 'running') {
       return;
     }
     const ctx = this.ctx;
@@ -459,7 +497,7 @@ class PolickaSoundEngine {
 
     src.connect(bp);
     bp.connect(g);
-    g.connect(this.masterGain);
+    g.connect(this.sfxBus);
     src.start(now, Math.random() * 1.2, 0.055);
 
     // Subtle wooden resonant body tap
@@ -471,14 +509,14 @@ class PolickaSoundEngine {
     og.gain.linearRampToValueAtTime(0.025, now + 0.002);
     og.gain.exponentialRampToValueAtTime(0.0001, now + 0.032);
     osc.connect(og);
-    og.connect(this.masterGain);
+    og.connect(this.sfxBus);
     osc.start(now);
     osc.stop(now + 0.04);
   }
 
   /** Delicate distant high-pitched rhythmic cricket chirp (4.2–4.6 kHz) */
   private playCricketChirp(): void {
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
     const ctx = this.ctx;
     const now = ctx.currentTime;
     const nightScale = Math.max(0, Math.min(1, (this.nightFactor - 0.65) / 0.25));
@@ -499,7 +537,7 @@ class PolickaSoundEngine {
     }
 
     osc.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(this.sfxBus);
     osc.start(now);
     osc.stop(now + pulses * 0.075 + 0.05);
   }
@@ -582,7 +620,7 @@ class PolickaSoundEngine {
   public playChurchBell(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -598,7 +636,7 @@ class PolickaSoundEngine {
 
     const bellBus = ctx.createGain();
     bellBus.gain.setValueAtTime(0.68, now);
-    bellBus.connect(this.masterGain);
+    bellBus.connect(this.sfxBus);
 
     for (const p of partials) {
       const osc = ctx.createOscillator();
@@ -620,7 +658,7 @@ class PolickaSoundEngine {
   /** Mellow, distant ~1900 two-tone steam train whistle with steam hiss & countryside echo */
   public playTrainWhistle(): void {
     if (this.isMuted || this.viewMode !== 'exterior') return;
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const nowMs = performance.now();
     if (nowMs - this.lastWhistleMs < WHISTLE_COOLDOWN_MS) return;
@@ -639,7 +677,7 @@ class PolickaSoundEngine {
     lp.type = 'lowpass';
     lp.frequency.setValueAtTime(1350, now);
     whistleBus.connect(lp);
-    lp.connect(this.masterGain);
+    lp.connect(this.sfxBus);
 
     // Subtle distant countryside echo
     const delay = ctx.createDelay(0.6);
@@ -648,7 +686,7 @@ class PolickaSoundEngine {
     echoGain.gain.setValueAtTime(0.3, now);
     lp.connect(delay);
     delay.connect(echoGain);
-    echoGain.connect(this.masterGain);
+    echoGain.connect(this.sfxBus);
 
     // Harmonized two-tone steam whistle (~392 Hz G4 & ~494 Hz B4) with slight warm pitch bend
     for (const freq of [392, 494]) {
@@ -683,7 +721,7 @@ class PolickaSoundEngine {
   public playDoorFoley(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -702,7 +740,7 @@ class PolickaSoundEngine {
       lg.gain.exponentialRampToValueAtTime(0.0001, now + 0.065);
       latch.connect(bp);
       bp.connect(lg);
-      lg.connect(this.masterGain);
+      lg.connect(this.sfxBus);
       latch.start(now, 0.1, 0.08);
     }
 
@@ -725,7 +763,7 @@ class PolickaSoundEngine {
 
     creak.connect(lp);
     lp.connect(cg);
-    cg.connect(this.masterGain);
+    cg.connect(this.sfxBus);
     creak.start(now + 0.04);
     creak.stop(now + 0.36);
   }
@@ -734,7 +772,7 @@ class PolickaSoundEngine {
   public playTelescopeClick(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -751,7 +789,7 @@ class PolickaSoundEngine {
       g.gain.linearRampToValueAtTime(amp, now + 0.002);
       g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
       osc.connect(g);
-      g.connect(this.masterGain);
+      g.connect(this.sfxBus);
       osc.start(now);
       osc.stop(now + dur + 0.01);
     }
@@ -768,7 +806,7 @@ class PolickaSoundEngine {
       sg.gain.exponentialRampToValueAtTime(0.0001, now + 0.025);
       snap.connect(hp);
       hp.connect(sg);
-      sg.connect(this.masterGain);
+      sg.connect(this.sfxBus);
       snap.start(now, 0.3, 0.035);
     }
   }
@@ -777,7 +815,7 @@ class PolickaSoundEngine {
   public playChurchBellToll(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const baseNow = ctx.currentTime;
@@ -795,7 +833,7 @@ class PolickaSoundEngine {
       const t0 = baseNow + offset;
       const bus = ctx.createGain();
       bus.gain.setValueAtTime(0.72, t0);
-      bus.connect(this.masterGain);
+      bus.connect(this.sfxBus);
 
       for (const p of partials) {
         const osc = ctx.createOscillator();
@@ -819,7 +857,7 @@ class PolickaSoundEngine {
   public playJackdawCaws(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const baseNow = ctx.currentTime + 0.18;
@@ -847,7 +885,7 @@ class PolickaSoundEngine {
 
       osc.connect(bp);
       bp.connect(g);
-      g.connect(this.masterGain);
+      g.connect(this.sfxBus);
       osc.start(t0);
       osc.stop(t0 + dur + 0.04);
     }
@@ -857,7 +895,7 @@ class PolickaSoundEngine {
   public playFireAlarmBell(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const baseNow = ctx.currentTime;
@@ -876,7 +914,7 @@ class PolickaSoundEngine {
       const t0 = baseNow + strikeOffsets[s];
       const bus = ctx.createGain();
       bus.gain.setValueAtTime(0.64, t0);
-      bus.connect(this.masterGain);
+      bus.connect(this.sfxBus);
 
       for (const p of partials) {
         const osc = ctx.createOscillator();
@@ -900,7 +938,7 @@ class PolickaSoundEngine {
   public playSignalHangFoley(kind: 'flag' | 'lantern'): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -915,7 +953,7 @@ class PolickaSoundEngine {
     cg.gain.linearRampToValueAtTime(0.11, now + 0.004);
     cg.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
     clink.connect(cg);
-    cg.connect(this.masterGain);
+    cg.connect(this.sfxBus);
     clink.start(now);
     clink.stop(now + 0.12);
 
@@ -933,7 +971,7 @@ class PolickaSoundEngine {
       ng.gain.exponentialRampToValueAtTime(0.0001, now + (kind === 'flag' ? 0.28 : 0.16));
       src.connect(bp);
       bp.connect(ng);
-      ng.connect(this.masterGain);
+      ng.connect(this.sfxBus);
       src.start(now + 0.03, 0.2, 0.3);
     }
   }
@@ -942,7 +980,7 @@ class PolickaSoundEngine {
   public playFireExtinguishedChime(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -957,7 +995,7 @@ class PolickaSoundEngine {
       g.gain.linearRampToValueAtTime(0.085, t0 + 0.02);
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.4);
       osc.connect(g);
-      g.connect(this.masterGain);
+      g.connect(this.sfxBus);
       osc.start(t0);
       osc.stop(t0 + 1.5);
     }
@@ -967,7 +1005,7 @@ class PolickaSoundEngine {
   public playRifleShot(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -989,7 +1027,7 @@ class PolickaSoundEngine {
 
       crack.connect(bp);
       bp.connect(g);
-      g.connect(this.masterGain);
+      g.connect(this.sfxBus);
       crack.start(now, Math.random() * 0.6, 0.25);
 
       // 2. Subtle open-air town-square echoes
@@ -1008,7 +1046,7 @@ class PolickaSoundEngine {
         eg.gain.exponentialRampToValueAtTime(0.0005, now + delay + 0.32);
         echo.connect(lp);
         lp.connect(eg);
-        eg.connect(this.masterGain);
+        eg.connect(this.sfxBus);
         echo.start(now + delay, Math.random() * 0.5, 0.35);
       }
     }
@@ -1023,7 +1061,7 @@ class PolickaSoundEngine {
     tg.gain.linearRampToValueAtTime(0.42, now + 0.008);
     tg.gain.exponentialRampToValueAtTime(0.0008, now + 0.17);
     thump.connect(tg);
-    tg.connect(this.masterGain);
+    tg.connect(this.sfxBus);
     thump.start(now);
     thump.stop(now + 0.19);
   }
@@ -1032,7 +1070,7 @@ class PolickaSoundEngine {
   public playRifleReloadClick(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -1059,7 +1097,7 @@ class PolickaSoundEngine {
 
       osc.connect(bp);
       bp.connect(g);
-      g.connect(this.masterGain);
+      g.connect(this.sfxBus);
       osc.start(t0);
       osc.stop(t0 + 0.045);
     }
@@ -1069,7 +1107,7 @@ class PolickaSoundEngine {
   public playJackdawHitFeedback(): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -1084,7 +1122,7 @@ class PolickaSoundEngine {
     tg.gain.linearRampToValueAtTime(0.16, now + 0.005);
     tg.gain.exponentialRampToValueAtTime(0.0005, now + 0.07);
     tick.connect(tg);
-    tg.connect(this.masterGain);
+    tg.connect(this.sfxBus);
     tick.start(now);
     tick.stop(now + 0.08);
 
@@ -1103,7 +1141,7 @@ class PolickaSoundEngine {
     cg.gain.exponentialRampToValueAtTime(0.0005, now + 0.18);
     caw.connect(bp);
     bp.connect(cg);
-    cg.connect(this.masterGain);
+    cg.connect(this.sfxBus);
     caw.start(now + 0.02);
     caw.stop(now + 0.19);
   }
@@ -1112,7 +1150,7 @@ class PolickaSoundEngine {
   public playLanternToggle(isOut: boolean): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -1131,7 +1169,7 @@ class PolickaSoundEngine {
       ng.gain.exponentialRampToValueAtTime(0.0001, now + 0.038);
       src.connect(bp);
       bp.connect(ng);
-      ng.connect(this.masterGain);
+      ng.connect(this.sfxBus);
       src.start(now, Math.random() * 1.2, 0.045);
     }
 
@@ -1147,7 +1185,7 @@ class PolickaSoundEngine {
     og.gain.exponentialRampToValueAtTime(0.0001, now + 0.068);
 
     osc.connect(og);
-    og.connect(this.masterGain);
+    og.connect(this.sfxBus);
     osc.start(now + 0.014);
     osc.stop(now + 0.075);
   }
@@ -1169,7 +1207,7 @@ class PolickaSoundEngine {
   ): void {
     if (this.isMuted) return;
     this.ensureStarted();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -1193,7 +1231,7 @@ class PolickaSoundEngine {
       g.gain.linearRampToValueAtTime(amp, now + startOffset + Math.min(0.03, dur * 0.25));
       g.gain.exponentialRampToValueAtTime(0.0001, now + startOffset + dur);
       osc.connect(g);
-      g.connect(this.masterGain!);
+      g.connect(this.sfxBus!);
       osc.start(now + startOffset);
       osc.stop(now + startOffset + dur + 0.03);
     };
@@ -1218,7 +1256,7 @@ class PolickaSoundEngine {
       g.gain.exponentialRampToValueAtTime(0.0001, now + startOffset + dur);
       src.connect(bp);
       bp.connect(g);
-      g.connect(this.masterGain!);
+      g.connect(this.sfxBus!);
       src.start(now + startOffset, Math.random() * 1.1, dur + 0.04);
     };
 
@@ -1332,6 +1370,8 @@ class PolickaSoundEngine {
     this.murmurLfo?.disconnect();
     this.murmurLfoGain?.disconnect();
     this.violinBus?.disconnect();
+    this.sfxBus?.disconnect();
+    this.musicBus?.disconnect();
     this.masterGain?.disconnect();
     this.masterLimiter?.disconnect();
 
@@ -1341,6 +1381,8 @@ class PolickaSoundEngine {
     }
 
     this.masterGain = null;
+    this.sfxBus = null;
+    this.musicBus = null;
     this.masterLimiter = null;
     this.windSource = null;
     this.windBandpass = null;

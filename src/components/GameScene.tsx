@@ -1,8 +1,9 @@
-import { useRef, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { DOOR_INTERACTION, type BirthRoomHotspot } from '../game/birthRoomData';
 import { CAMERA_CONFIG, INITIAL_PLAYER_POSITION, RING_BOUNDS } from '../game/constants';
+import { fpsHudRef, type GraphicsQuality } from '../game/settings';
 import {
   CHURCH_TRANSFORM,
   churchLocalToWorld,
@@ -157,6 +158,59 @@ function TitleOrbitCamera({
   return null;
 }
 
+/** Dynamically toggles WebGL shadow maps & recompiles scene materials without remounting Canvas */
+function GraphicsQualityDriver({
+  graphicsQuality,
+}: {
+  graphicsQuality: GraphicsQuality;
+}) {
+  const { gl, scene } = useThree();
+
+  useEffect(() => {
+    const isHigh = graphicsQuality === 'high';
+    gl.shadowMap.enabled = isHigh;
+    gl.shadowMap.autoUpdate = isHigh;
+    gl.shadowMap.needsUpdate = true;
+
+    scene.traverse((obj) => {
+      const mat = (obj as THREE.Mesh).material;
+      if (!mat) return;
+      if (Array.isArray(mat)) {
+        for (let i = 0; i < mat.length; i++) {
+          mat[i].needsUpdate = true;
+        }
+      } else {
+        mat.needsUpdate = true;
+      }
+    });
+  }, [gl, scene, graphicsQuality]);
+
+  return null;
+}
+
+/** Throttled 500ms FPS monitor writing directly to DOM ref (zero React setState in useFrame) */
+function FpsMonitorDriver({ active }: { active: boolean }) {
+  const stateRef = useRef({ frames: 0, lastMs: performance.now() });
+
+  useFrame(() => {
+    if (!active) return;
+    const st = stateRef.current;
+    st.frames += 1;
+    const now = performance.now();
+    const elapsed = now - st.lastMs;
+    if (elapsed >= 500) {
+      const fps = Math.round((st.frames * 1000) / elapsed);
+      if (fpsHudRef.el) {
+        fpsHudRef.el.textContent = `${fps} FPS`;
+      }
+      st.frames = 0;
+      st.lastMs = now;
+    }
+  });
+
+  return null;
+}
+
 /** Drives the top-center compass tape directly via DOM transform inside useFrame (zero React re-renders) */
 function CompassDriver({ active }: { active: boolean }) {
   const { camera } = useThree();
@@ -213,6 +267,9 @@ interface GameSceneProps {
   activeMicroScene: ActiveMicroScene | null;
   onMicroSceneComplete: () => void;
   isWinter: boolean;
+  graphicsQuality: GraphicsQuality;
+  showFps: boolean;
+  settingsOpen: boolean;
 }
 
 const TELESCOPE_LOOK_DOT_THRESHOLD = 0.35;
@@ -745,6 +802,9 @@ export function GameScene({
   activeMicroScene,
   onMicroSceneComplete,
   isWinter,
+  graphicsQuality,
+  showFps,
+  settingsOpen,
 }: GameSceneProps) {
   const playerLocalPosRef = useRef<THREE.Vector3>(
     new THREE.Vector3(
@@ -774,7 +834,7 @@ export function GameScene({
   return (
     <Canvas
       shadows="percentage"
-      dpr={[1, 1.5]}
+      dpr={graphicsQuality === 'high' ? [1, 2] : 0.75}
       camera={{ fov: TELESCOPE_CONFIG.normalFov, near: 0.5, far: 3000 }}
       gl={{
         powerPreference: 'high-performance',
@@ -784,6 +844,9 @@ export function GameScene({
       }}
       className="h-full w-full"
     >
+      <GraphicsQualityDriver graphicsQuality={graphicsQuality} />
+      <FpsMonitorDriver active={showFps} />
+
       {/* Global Time-of-Day Interpolation & Soundscape Driver (runs seamlessly across exterior & Birth Room) */}
       <TimeOfDayDriver
         targetProgress={targetTimeProgress}
@@ -812,7 +875,7 @@ export function GameScene({
       />
 
       {/* Exterior sky, fog & golden-hour sunlight (unmounted while inside birth room) */}
-      {!isInterior && <Atmosphere />}
+      {!isInterior && <Atmosphere graphicsQuality={graphicsQuality} />}
 
       {/* Exterior St. James Church & Polička Town (kept mounted for instant gallery return) */}
       <group visible={!isInterior}>
@@ -834,7 +897,9 @@ export function GameScene({
             playerLocalPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
             galleryCameraMode={galleryCameraMode}
-            active={isPlaying && !isInterior && !isInTelescope && !jackdawHunt.active}
+            active={
+              isPlaying && !isInterior && !isInTelescope && !jackdawHunt.active && !settingsOpen
+            }
             fireWatchActive={fireWatch.active}
             fireWatchStep={fireWatch.step}
             onNearDoorChange={onNearDoorChange}
@@ -845,7 +910,7 @@ export function GameScene({
           <Player
             playerPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
-            disabled={!isPlaying || isInTelescope || isInterior}
+            disabled={!isPlaying || isInTelescope || isInterior || settingsOpen}
             visible={!isExteriorFirstPerson}
             isLanternOut={isLanternOut}
             innerLimit={
@@ -908,6 +973,7 @@ export function GameScene({
           onInteractRifle={onInteractRifle}
           onPointerLockChange={onPointerLockChange}
           onNearExitDoorChange={onNearInteriorExitDoorChange}
+          graphicsQuality={graphicsQuality}
         />
       )}
     </Canvas>

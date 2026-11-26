@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { soundEngine } from './audio/soundEngine';
 import {
   COMPASS_PX_PER_DEG,
@@ -10,6 +10,7 @@ import {
   type ViewMode,
 } from './components/GameScene';
 import { triggerJackdawStartle } from './components/PolickaJackdaws';
+import { SettingsModal } from './components/SettingsModal';
 import type { ScanState } from './components/TelescopeCamera';
 import { TelescopeOverlay } from './components/TelescopeOverlay';
 import {
@@ -17,7 +18,6 @@ import {
   type BirthRoomHotspot,
 } from './game/birthRoomData';
 import {
-  COMPASS_LABELS_CZ,
   INACTIVE_FIRE_WATCH_STATE,
   createFireWatchShift,
   evaluateShiftRank,
@@ -36,18 +36,22 @@ import {
   saveJackdawHuntBestScore,
   type JackdawHuntState,
 } from './game/jackdawHunt';
-import {
-  MICRO_SCENES,
-  type ActiveMicroScene,
-} from './game/microScenes';
+import type { ActiveMicroScene } from './game/microScenes';
 import { POIS, TELESCOPE_CONFIG, type PoiSpec, type TelescopeId } from './game/pois';
 import {
+  fpsHudRef,
+  loadSettings,
+  saveSettings,
+  settingsRuntime,
+  type GameSettings,
+} from './game/settings';
+import {
   computeTargetTimeProgress,
-  TIME_MODE_LABELS,
   TIME_MODE_ORDER,
   timeOfDayState,
   type TimeOfDayMode,
 } from './game/timeOfDay';
+import { getTranslations } from './i18n';
 
 const DEFAULT_ZOOM = TELESCOPE_CONFIG.maxFov / TELESCOPE_CONFIG.defaultZoomFov;
 const UNLOCK_FIRE_WATCH_KEY = 'policka_unlocked_fire_watch';
@@ -69,27 +73,15 @@ function writeBoolFlag(key: string, value: boolean): void {
   }
 }
 
-const COMPASS_CARDINALS: Record<number, string> = {
-  0: 'S',
-  45: 'SV',
-  90: 'V',
-  135: 'JV',
-  180: 'J',
-  225: 'JZ',
-  270: 'Z',
-  315: 'SZ',
-};
-
-/** Precomputed 3-cycle (-360°..+720°) Czech compass ticks at 15° intervals for seamless wrapping */
-const COMPASS_TICKS: readonly { key: number; leftPx: number; label: string | null; isMajor: boolean }[] = (() => {
+/** Precomputed 3-cycle (-360°..+720°) compass tick geometry at 15° intervals */
+const COMPASS_TICK_SPECS: readonly { key: number; norm: number; leftPx: number; isMajor: boolean }[] = (() => {
   const ticks = [];
   for (let deg = -360; deg <= 720; deg += 15) {
     const norm = ((deg % 360) + 360) % 360;
-    const label = COMPASS_CARDINALS[norm] ?? null;
     ticks.push({
       key: deg,
+      norm,
       leftPx: (deg + 360) * COMPASS_PX_PER_DEG,
-      label,
       isMajor: norm % 90 === 0,
     });
   }
@@ -97,6 +89,31 @@ const COMPASS_TICKS: readonly { key: number; leftPx: number; label: string | nul
 })();
 
 export function App() {
+  const [settings, setSettings] = useState<GameSettings>(() => loadSettings());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const t = useMemo(() => getTranslations(settings.lang), [settings.lang]);
+
+  // Persist settings and sync runtime bridge & Web Audio buses immediately
+  useEffect(() => {
+    saveSettings(settings);
+    settingsRuntime.lang = settings.lang;
+    settingsRuntime.mouseSensitivity = settings.mouseSensitivity;
+    settingsRuntime.graphicsQuality = settings.graphicsQuality;
+    soundEngine.setMasterVolume(settings.masterVolume);
+    soundEngine.setSfxVolume(settings.sfxVolume);
+    soundEngine.setMusicVolume(settings.musicVolume);
+    soundEngine.setMuted(settings.isMuted);
+  }, [settings]);
+
+  useEffect(() => {
+    settingsRuntime.settingsOpen = settingsOpen;
+  }, [settingsOpen]);
+
+  const handleUpdateSettings = useCallback((patch: Partial<GameSettings>) => {
+    setSettings((prev) => ({ ...prev, ...patch }));
+  }, []);
+
   const [gamePhase, setGamePhase] = useState<GamePhase>('title');
   const [viewMode, setViewMode] = useState<ViewMode>('exterior');
   const [galleryCameraMode, setGalleryCameraMode] = useState<GalleryCameraMode>('third');
@@ -106,7 +123,6 @@ export function App() {
   useEffect(() => {
     timeOfDayState.isWinter = isWinter;
   }, [isWinter]);
-  const [, setIsMuted] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [landmarksOpen, setLandmarksOpen] = useState(true);
   const [isPointerLocked, setIsPointerLocked] = useState(false);
@@ -241,11 +257,27 @@ export function App() {
   }, []);
 
   const handleToggleMute = useCallback(() => {
-    setIsMuted((prev) => {
-      const next = !prev;
-      soundEngine.setMuted(next);
-      return next;
-    });
+    setSettings((prev) => ({ ...prev, isMuted: !prev.isMuted }));
+  }, []);
+
+  const handleOpenSettings = useCallback(() => {
+    exitPointerLockIfActive();
+    setSettingsOpen(true);
+  }, [exitPointerLockIfActive]);
+
+  const handleCloseSettings = useCallback(() => {
+    setSettingsOpen(false);
+  }, []);
+
+  const handleResetProgress = useCallback(() => {
+    unlockedPoisRef.current.clear();
+    setUnlockedPois(new Set());
+    setVisitedBirthRoom(false);
+    setVisitedHotspots(new Set());
+    setActiveStoryPoiId(null);
+    setActiveHotspotId(null);
+    setActiveMicroScene(null);
+    setFireWatchOfferDismissed(false);
   }, []);
 
   const handleToggleGalleryCamera = useCallback(() => {
@@ -428,7 +460,7 @@ export function App() {
           chainJumpsInRound: nextJump,
           currentTarget: nextTarget,
           burnedBuildings: nextBurned,
-          alertMessage: 'Oheň se rozšířil na sousední dům!',
+          alertMessage: getTranslations(settingsRuntime.lang).fireWatch.alertSpread,
         };
       }
 
@@ -464,7 +496,7 @@ export function App() {
         step: 'between-rounds',
         burnedBuildings: nextBurned,
         signalMounted: false,
-        alertMessage: 'Požár zničil tři domy a vyhořel!',
+        alertMessage: getTranslations(settingsRuntime.lang).fireWatch.alertBurnedOut,
         results: nextResults,
       };
     });
@@ -476,7 +508,7 @@ export function App() {
     if (!unlockedJackdawHunt) {
       setUnlockedJackdawHunt(true);
       writeBoolFlag(UNLOCK_JACKDAW_HUNT_KEY, true);
-      showUnlockToast('Odemčena minihra: Lov kavek');
+      showUnlockToast(getTranslations(settingsRuntime.lang).toasts.unlockedJackdawHunt);
     } else {
       handleStartJackdawHunt();
     }
@@ -493,7 +525,7 @@ export function App() {
     if (!unlockedFireWatch) {
       setUnlockedFireWatch(true);
       writeBoolFlag(UNLOCK_FIRE_WATCH_KEY, true);
-      showUnlockToast('Odemčena minihra: Požární hlídka');
+      showUnlockToast(getTranslations(settingsRuntime.lang).toasts.unlockedFireWatch);
     }
   }, [unlockedFireWatch, showUnlockToast]);
 
@@ -666,6 +698,14 @@ export function App() {
         return;
       }
 
+      if (settingsOpen) {
+        if (event.code === 'Escape') {
+          event.preventDefault();
+          setSettingsOpen(false);
+        }
+        return;
+      }
+
       if (gamePhase === 'title') {
         if (event.code === 'Enter' || event.code === 'Space') {
           event.preventDefault();
@@ -784,6 +824,7 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
+    settingsOpen,
     gamePhase,
     handleEnterGallery,
     viewMode,
@@ -844,6 +885,7 @@ export function App() {
 
   const showClickToLookHint =
     isPlaying &&
+    !settingsOpen &&
     !isPointerLocked &&
     activeTelescope === null &&
     activeHotspot === null &&
@@ -860,7 +902,6 @@ export function App() {
         : fireWatch.active
           ? fireWatch.roundTimeProgress
           : computeTargetTimeProgress(timeOfDayMode, unlockedPois.size, POIS.length);
-  const timeModeMeta = TIME_MODE_LABELS[timeOfDayMode];
   const activeFire = fireWatch.active ? fireWatch.rounds[fireWatch.roundIndex] ?? null : null;
   const showAllPoisFireOffer =
     unlockedFireWatch &&
@@ -912,6 +953,9 @@ export function App() {
         activeMicroScene={activeMicroScene}
         onMicroSceneComplete={handleMicroSceneComplete}
         isWinter={isWinter}
+        graphicsQuality={settings.graphicsQuality}
+        showFps={settings.showFps}
+        settingsOpen={settingsOpen}
       />
 
       {/* Cinematic Minimalist Title Screen Overlay (fades out smoothly during 1.65s fly-in) */}
@@ -927,7 +971,7 @@ export function App() {
         >
           <div className="flex max-w-xl flex-col items-center">
             <span className="text-[11px] font-semibold tracking-[0.34em] text-amber-300/90 uppercase drop-shadow-[0_1px_6px_rgba(0,0,0,0.85)]">
-              Polička · kolem roku 1900
+              {t.title.eyebrow}
             </span>
 
             <h1 className="mt-3 font-serif text-5xl font-semibold tracking-wide text-amber-50 drop-shadow-[0_4px_24px_rgba(0,0,0,0.85)] sm:text-6xl">
@@ -937,7 +981,7 @@ export function App() {
             <div className="mt-3.5 h-px w-28 bg-gradient-to-r from-transparent via-amber-300/65 to-transparent" />
 
             <p className="mt-3.5 text-sm tracking-[0.14em] text-amber-100/90 drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)] sm:text-base">
-              Věž kostela sv. Jakuba · Strážce města
+              {t.title.subtitle}
             </p>
 
             <button
@@ -948,7 +992,7 @@ export function App() {
               }}
               className="mt-8 cursor-pointer rounded-full border border-amber-300/55 bg-stone-950/75 px-8 py-3 text-sm font-semibold tracking-[0.16em] text-amber-100 uppercase shadow-[0_0_28px_rgba(245,180,75,0.22)] transition duration-300 hover:border-amber-200/85 hover:bg-amber-400/20 hover:text-amber-50 hover:shadow-[0_0_38px_rgba(245,180,75,0.42)]"
             >
-              Vstoupit na ochoz
+              {t.title.enterBtn}
             </button>
           </div>
         </div>
@@ -989,11 +1033,11 @@ export function App() {
       {/* Subtle Pointer-Lock Prompt when unlocked in First-Person mode */}
       {showClickToLookHint && (
         <div className="pointer-events-none fixed top-1/2 left-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-amber-200/25 bg-stone-950/70 px-4 py-2 text-center text-xs tracking-wide text-amber-100/95 shadow-lg backdrop-blur-md">
-          Klikni pro rozhlížení · WASD pohyb · Esc uvolnit myš
+          {t.hud.clickToLookHint}
         </div>
       )}
 
-      {/* Top-Right Collapsible Shrink-Wrapped "Objevené památky" Card (symmetric padding, zero dead space) */}
+      {/* Top-Right Collapsible Shrink-Wrapped "Objevené památky" / "Discovered Landmarks" Card */}
       <section
         onPointerDown={(e) => e.stopPropagation()}
         className="fixed top-4 right-4 z-30 w-fit"
@@ -1007,11 +1051,11 @@ export function App() {
               setLandmarksOpen((prev) => !prev);
             }}
             aria-expanded={landmarksOpen}
-            title={landmarksOpen ? 'Skrýt seznam památek' : 'Zobrazit seznam památek'}
+            title={landmarksOpen ? t.hud.hideLandmarksTitle : t.hud.showLandmarksTitle}
             className="flex cursor-pointer items-center justify-end gap-2 whitespace-nowrap text-right text-[10px] font-semibold tracking-[0.18em] text-amber-300/90 uppercase transition hover:text-amber-200"
           >
             <span>
-              Objevené památky · {unlockedPois.size} / {POIS.length}
+              {t.hud.discoveredLandmarks} · {unlockedPois.size} / {POIS.length}
             </span>
             <svg
               viewBox="0 0 12 12"
@@ -1058,7 +1102,7 @@ export function App() {
                         : 'cursor-default border-amber-200/15 bg-stone-900/55 text-amber-100/45'
                     }`}
                   >
-                    {unlocked ? poi.titleCz : '???'}
+                    {unlocked ? t.pois[poi.id].title : '???'}
                   </button>
                 );
               })}
@@ -1071,8 +1115,8 @@ export function App() {
                 }`}
               >
                 {visitedBirthRoom
-                  ? `Rodná světnička (${visitedHotspots.size}/${BIRTH_ROOM_HOTSPOTS.length})`
-                  : 'Rodná světnička (???)'}
+                  ? `${t.hud.birthRoomLabel} (${visitedHotspots.size}/${BIRTH_ROOM_HOTSPOTS.length})`
+                  : `${t.hud.birthRoomLabel} (???)`}
               </span>
             </div>
           )}
@@ -1082,7 +1126,7 @@ export function App() {
       {/* Top-Center Stack: Sleek Compass Bar (exterior) + Fire Watch Objective Bar cleanly below it */}
       {viewMode === 'exterior' && (
         <div className="pointer-events-none fixed top-4 left-1/2 z-30 flex w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 flex-col items-center gap-2">
-          {/* Sleek Minimal Czech Compass Tape (updated directly via DOM ref — zero React re-renders) */}
+          {/* Sleek Minimal Compass Tape (updated directly via DOM ref — zero React re-renders) */}
           <div
             className="relative h-8 overflow-hidden rounded-full border border-amber-200/25 bg-stone-950/75 shadow-lg"
             style={{ width: `${COMPASS_VIEWPORT_W}px` }}
@@ -1107,27 +1151,30 @@ export function App() {
               className="relative h-full will-change-transform"
               style={{ width: `${1080 * COMPASS_PX_PER_DEG}px` }}
             >
-              {COMPASS_TICKS.map((tk) => (
-                <div
-                  key={tk.key}
-                  className="absolute top-0 flex h-full -translate-x-1/2 flex-col items-center justify-end pb-1"
-                  style={{ left: `${tk.leftPx}px` }}
-                >
-                  {tk.label ? (
-                    <span
-                      className={
-                        tk.isMajor
-                          ? 'text-[11px] font-bold tracking-wider text-amber-200'
-                          : 'text-[9.5px] font-medium tracking-wider text-amber-200/65'
-                      }
-                    >
-                      {tk.label}
-                    </span>
-                  ) : (
-                    <span className="mb-1 h-1.5 w-px bg-amber-200/30" />
-                  )}
-                </div>
-              ))}
+              {COMPASS_TICK_SPECS.map((tk) => {
+                const label = t.hud.compass[tk.norm] ?? null;
+                return (
+                  <div
+                    key={tk.key}
+                    className="absolute top-0 flex h-full -translate-x-1/2 flex-col items-center justify-end pb-1"
+                    style={{ left: `${tk.leftPx}px` }}
+                  >
+                    {label ? (
+                      <span
+                        className={
+                          tk.isMajor
+                            ? 'text-[11px] font-bold tracking-wider text-amber-200'
+                            : 'text-[9.5px] font-medium tracking-wider text-amber-200/65'
+                        }
+                      >
+                        {label}
+                      </span>
+                    ) : (
+                      <span className="mb-1 h-1.5 w-px bg-amber-200/30" />
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -1136,7 +1183,7 @@ export function App() {
             <div className="flex items-center gap-4 rounded-full border border-amber-300/35 bg-stone-950/80 px-5 py-1.5 text-amber-50 shadow-xl backdrop-blur-md">
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] font-semibold tracking-wider text-amber-300/80 uppercase">
-                  Čas
+                  {t.jackdawHunt.time}
                 </span>
                 <span
                   ref={(el) => {
@@ -1150,7 +1197,7 @@ export function App() {
               <div className="h-3.5 w-px bg-amber-200/20" />
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] font-semibold tracking-wider text-amber-300/80 uppercase">
-                  Skóre
+                  {t.jackdawHunt.score}
                 </span>
                 <span
                   ref={(el) => {
@@ -1178,10 +1225,10 @@ export function App() {
             <div className="w-full rounded-xl border border-amber-300/30 bg-stone-950/80 px-4 py-2.5 text-amber-50 shadow-xl backdrop-blur-md">
             <div className="flex items-center justify-between gap-2 text-[11px] font-semibold tracking-wider text-amber-300 uppercase">
               <span>
-                Požár {fireWatch.roundIndex + 1} / {fireWatch.totalRounds}
+                {t.fireWatch.fireCounter} {fireWatch.roundIndex + 1} / {fireWatch.totalRounds}
               </span>
               <span className="rounded-full border border-amber-200/25 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-100">
-                {fireWatch.signalKind === 'flag' ? 'Červený prapor' : 'Červená lucerna'}
+                {fireWatch.signalKind === 'flag' ? t.fireWatch.redFlag : t.fireWatch.redLantern}
               </span>
             </div>
 
@@ -1197,9 +1244,9 @@ export function App() {
               <div className="mt-1.5">
                 <div className="mb-0.5 flex items-center justify-between text-[10px] text-amber-100/80">
                   <span>
-                    Šíření požáru
+                    {t.fireWatch.fireSpread}
                     {fireWatch.chainJumpsInRound > 0
-                      ? ` (přeskok ${fireWatch.chainJumpsInRound}/2)`
+                      ? ` (${t.fireWatch.jumpPrefix} ${fireWatch.chainJumpsInRound}/2)`
                       : ''}
                   </span>
                   <span
@@ -1226,8 +1273,8 @@ export function App() {
             <div className="mt-2 text-xs font-medium text-amber-100">
               {fireWatch.step === 'spot' && (
                 <div>
-                  <span className="text-amber-300">1. Zpozoruj požár:</span> Rozhlédni se po městě
-                  (očima nebo dalekohledem [E]) a zaměř kouř a plameny.
+                  <span className="text-amber-300">{t.fireWatch.step1Title}</span>{' '}
+                  {t.fireWatch.step1Desc}
                   <div
                     ref={(el) => {
                       fireWatchHudRefs.spotBarWrap = el;
@@ -1247,42 +1294,47 @@ export function App() {
               )}
               {fireWatch.step === 'ring-bell' && (
                 <div>
-                  <span className="text-amber-300">2. Zazvoň na poplach:</span> Požár hlášen (
-                  {COMPASS_LABELS_CZ[activeFire.direction]} —{' '}
-                  {fireWatch.currentTarget?.nameCz ?? activeFire.nameCz}). Dojdi k provazu
-                  poplašného zvonu u dveří a stiskni{' '}
+                  <span className="text-amber-300">{t.fireWatch.step2Title}</span>{' '}
+                  {t.fireWatch.step2Prefix}
+                  {t.hud.compassFull[activeFire.direction]} —{' '}
+                  {t.fireWatch.locations[fireWatch.currentTarget?.id ?? activeFire.id] ??
+                    fireWatch.currentTarget?.nameCz ??
+                    activeFire.nameCz}
+                  {t.fireWatch.step2Suffix}{' '}
                   <span className="font-semibold text-amber-300">[F]</span>.
                 </div>
               )}
               {fireWatch.step === 'hang-signal' && (
                 <div>
-                  <span className="text-amber-300">3. Vyvěs znamení:</span> Dojdi na{' '}
+                  <span className="text-amber-300">{t.fireWatch.step3Title}</span>{' '}
+                  {t.fireWatch.step3Prefix}{' '}
                   <span className="font-semibold text-orange-300">
-                    {activeFire.direction === 'south'
-                      ? 'jižní'
-                      : `${COMPASS_LABELS_CZ[activeFire.direction].toLowerCase()}ní`}
+                    {t.hud.compassSide[activeFire.direction]}
                   </span>{' '}
-                  stranu ochozu a vyvěs{' '}
-                  {fireWatch.signalKind === 'flag' ? 'červený prapor' : 'červenou lucernu'}{' '}
+                  {t.fireWatch.step3Mid}{' '}
+                  {fireWatch.signalKind === 'flag'
+                    ? t.fireWatch.step3Flag
+                    : t.fireWatch.step3Lantern}{' '}
                   <span className="font-semibold text-amber-300">[F]</span>.
                 </div>
               )}
               {fireWatch.step === 'dispatching' && (
                 <div className="text-amber-200">
-                  Koňská hasičská stříkačka vyjíždí z Palackého náměstí k požáru (
-                  {fireWatch.currentTarget?.nameCz ?? activeFire.nameCz})…
+                  {t.fireWatch.dispatchingPrefix} (
+                  {t.fireWatch.locations[fireWatch.currentTarget?.id ?? activeFire.id] ??
+                    fireWatch.currentTarget?.nameCz ??
+                    activeFire.nameCz}
+                  )…
                 </div>
               )}
               {fireWatch.step === 'extinguishing' && (
-                <div className="text-sky-200">
-                  Hasiči dorazili na místo a hasí plameny!
-                </div>
+                <div className="text-sky-200">{t.fireWatch.extinguishing}</div>
               )}
               {fireWatch.step === 'between-rounds' && (
                 <div className={fireWatch.alertMessage ? 'text-rose-200' : 'text-emerald-200'}>
                   {fireWatch.alertMessage
-                    ? 'Připrav se na další hlášení požáru…'
-                    : 'Požár uhašen! Připrav se na další hlídku…'}
+                    ? t.fireWatch.nextFireSoon
+                    : t.fireWatch.extinguishedNext}
                 </div>
               )}
             </div>
@@ -1298,7 +1350,8 @@ export function App() {
           className="pointer-events-auto fixed bottom-16 left-1/2 z-30 flex w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300/40 bg-stone-950/90 px-4 py-3 text-amber-50 shadow-2xl backdrop-blur-md"
         >
           <div className="text-xs sm:text-sm">
-            <span className="font-semibold text-amber-300">Všechny památky objeveny</span> — Zahájit noční požární hlídku?
+            <span className="font-semibold text-amber-300">{t.fireWatch.offerAllDiscovered}</span> —{' '}
+            {t.fireWatch.offerQuestion}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -1309,7 +1362,7 @@ export function App() {
               }}
               className="cursor-pointer rounded-full border border-orange-300/50 bg-orange-500/25 px-3.5 py-1 text-xs font-semibold text-amber-100 transition hover:bg-orange-500/35"
             >
-              Zahájit hlídku
+              {t.fireWatch.offerStart}
             </button>
             <button
               type="button"
@@ -1319,7 +1372,7 @@ export function App() {
               }}
               className="cursor-pointer rounded-full border border-amber-200/20 bg-stone-900/70 px-3 py-1 text-xs text-amber-200/80 transition hover:text-amber-100"
             >
-              Později
+              {t.fireWatch.offerLater}
             </button>
           </div>
         </div>
@@ -1363,9 +1416,9 @@ export function App() {
           {/* Subtle bottom-center controls hint during Lov kavek */}
           <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
             <div className="rounded-full border border-amber-200/25 bg-stone-950/75 px-4 py-1.5 text-xs text-amber-100/90 shadow-lg backdrop-blur-md">
-              <span className="font-semibold text-amber-300">[LMB]</span> Střelba ·{' '}
-              <span className="font-semibold text-amber-300">[RMB]</span> Míření ·{' '}
-              <span className="font-semibold text-amber-300">[Esc]</span> Konec
+              <span className="font-semibold text-amber-300">[LMB]</span> {t.jackdawHunt.hintShoot} ·{' '}
+              <span className="font-semibold text-amber-300">[RMB]</span> {t.jackdawHunt.hintAim} ·{' '}
+              <span className="font-semibold text-amber-300">[Esc]</span> {t.jackdawHunt.hintExit}
             </div>
           </div>
         </>
@@ -1379,49 +1432,52 @@ export function App() {
               <span className="mr-2 rounded bg-orange-400/25 px-1.5 py-0.5 font-semibold text-orange-300">
                 [F]
               </span>
-              Nahlásit zpozorovaný požár
+              {t.prompts.reportFire}
             </div>
           ) : fireWatch.active && fireWatch.step === 'ring-bell' && nearBellRope ? (
             <div className="max-w-full rounded-full border border-amber-300/55 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
               <span className="mr-2 rounded bg-amber-300/25 px-1.5 py-0.5 font-semibold text-amber-300">
                 [F]
               </span>
-              Zazvonit na poplašný zvon
+              {t.prompts.ringAlarmBell}
             </div>
           ) : fireWatch.active && fireWatch.step === 'hang-signal' && nearSignalHook && activeFire ? (
             <div className="max-w-full rounded-full border border-rose-400/55 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
               <span className="mr-2 rounded bg-rose-400/25 px-1.5 py-0.5 font-semibold text-rose-300">
                 [F]
               </span>
-              Vyvěsit {fireWatch.signalKind === 'flag' ? 'červený prapor' : 'červenou lucernu'} ({COMPASS_LABELS_CZ[activeFire.direction]})
+              {fireWatch.signalKind === 'flag'
+                ? t.prompts.hangSignalFlag
+                : t.prompts.hangSignalLantern}{' '}
+              ({t.hud.compassFull[activeFire.direction]})
             </div>
           ) : isNearDoor && !fireWatch.active ? (
             <div className="max-w-full rounded-full border border-amber-300/45 bg-stone-950/80 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
               <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
                 [E]
               </span>
-              Vstoupit do rodné světničky
+              {t.prompts.enterBirthRoom}
             </div>
           ) : !fireWatch.active && nearBellRope ? (
             <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/80 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
               <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
                 [E]
               </span>
-              Spustit Požární hlídku
+              {t.prompts.startFireWatch}
             </div>
           ) : !fireWatch.active && nearGalleryRifle ? (
             <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/80 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
               <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
                 [E]
               </span>
-              Vzít pušku — Lov kavek
+              {t.prompts.takeRifleHunt}
             </div>
           ) : nearbyTelescope !== null ? (
             <div className="max-w-full rounded-full border border-amber-300/40 bg-stone-950/75 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
               <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
                 [E]
               </span>
-              Podívat se dalekohledem
+              {t.prompts.useTelescope}
             </div>
           ) : null}
         </div>
@@ -1436,10 +1492,10 @@ export function App() {
           {/* Left: Eyebrow + Title */}
           <div className="leading-tight">
             <span className="block text-[9.5px] font-semibold tracking-[0.24em] text-amber-300/85 uppercase">
-              {viewMode === 'interior' ? 'Polička · cca 1900' : 'Polička · Ochoz'}
+              {viewMode === 'interior' ? t.hud.eyebrowInterior : t.hud.eyebrowExterior}
             </span>
             <h1 className="whitespace-nowrap text-[15px] font-semibold tracking-wide text-amber-50">
-              {viewMode === 'interior' ? 'Rodná světnička' : 'The Tower Keeper'}
+              {viewMode === 'interior' ? t.hud.birthRoomTitle : 'The Tower Keeper'}
             </h1>
           </div>
 
@@ -1453,7 +1509,7 @@ export function App() {
               }}
               className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-300/35 bg-amber-400/15 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-400/25"
             >
-              [E] Zpět na ochoz
+              {t.hud.backToGallery}
             </button>
           ) : (
             <div className="flex items-center gap-1.5">
@@ -1464,10 +1520,10 @@ export function App() {
                   e.stopPropagation();
                   handleCycleTimeOfDay();
                 }}
-                title="Přepnout denní dobu (Auto → Den → Západ → Noc)"
+                title={t.hud.timeToggleTitle}
                 className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
               >
-                {timeModeMeta.label}
+                {t.hud.timeModes[timeOfDayMode]}
               </button>
               <button
                 type="button"
@@ -1477,14 +1533,14 @@ export function App() {
                   setIsWinter((prev) => !prev);
                 }}
                 aria-pressed={isWinter}
-                title={isWinter ? 'Přepnout na léto' : 'Přepnout na zimu'}
+                title={isWinter ? t.hud.seasonToSummerTitle : t.hud.seasonToWinterTitle}
                 className={`cursor-pointer whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
                   isWinter
                     ? 'border-sky-200/60 bg-sky-300/25 text-sky-50 shadow-[0_0_12px_rgba(186,230,253,0.28)] hover:bg-sky-300/35'
                     : 'border-amber-200/25 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20'
                 }`}
               >
-                {isWinter ? 'Léto' : 'Zima'}
+                {isWinter ? t.hud.seasonSummer : t.hud.seasonWinter}
               </button>
             </div>
           )}
@@ -1499,7 +1555,7 @@ export function App() {
               }}
               className="cursor-pointer whitespace-nowrap rounded-lg border border-rose-400/50 bg-rose-500/25 px-3 py-1 text-xs font-semibold text-rose-100 transition hover:bg-rose-500/35"
             >
-              Ukončit hlídku
+              {t.hud.endFireWatch}
             </button>
           )}
 
@@ -1521,13 +1577,13 @@ export function App() {
               }}
               className="cursor-pointer whitespace-nowrap rounded-lg border border-rose-400/50 bg-rose-500/25 px-3 py-1 text-xs font-semibold text-rose-100 transition hover:bg-rose-500/35"
             >
-              Ukončit lov
+              {t.hud.endJackdawHunt}
             </button>
           )}
         </header>
       )}
 
-      {/* Bottom-Left Collapsible "Ovládání" (Controls) Popover (expands upward, left-aligned) */}
+      {/* Bottom-Left Collapsible "Ovládání" / "Controls" Popover (expands upward, left-aligned) */}
       {activeTelescope === null && (
         <div
           onPointerDown={(e) => e.stopPropagation()}
@@ -1537,50 +1593,50 @@ export function App() {
             <div className="mb-1.5 w-64 rounded-xl border border-amber-200/25 bg-stone-950/85 p-3 text-xs text-amber-50 shadow-2xl backdrop-blur-md">
               <div className="mb-2 flex items-center justify-between border-b border-amber-200/15 pb-1.5">
                 <span className="text-[10px] font-semibold tracking-[0.2em] text-amber-300/90 uppercase">
-                  Ovládání
+                  {t.controls.title}
                 </span>
                 <span className="text-[10px] text-amber-200/60">[H]</span>
               </div>
               <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5">
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                  WASD / Šipky
+                  {t.controls.moveKey}
                 </dt>
-                <dd className="text-right text-amber-100/85">Pohyb po ochozu</dd>
+                <dd className="text-right text-amber-100/85">{t.controls.moveDesc}</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                  Myš
+                  {t.controls.lookKey}
                 </dt>
-                <dd className="text-right text-amber-100/85">Rozhlížení</dd>
+                <dd className="text-right text-amber-100/85">{t.controls.lookDesc}</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   E
                 </dt>
-                <dd className="text-right text-amber-100/85">Dalekohled, dveře, zvon, puška</dd>
+                <dd className="text-right text-amber-100/85">{t.controls.interactDesc}</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   V
                 </dt>
-                <dd className="text-right text-amber-100/85">Přepnout 1. / 3. osobu</dd>
+                <dd className="text-right text-amber-100/85">{t.controls.cameraDesc}</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   F
                 </dt>
-                <dd className="text-right text-amber-100/85">Interakce (zvon, prapor)</dd>
+                <dd className="text-right text-amber-100/85">{t.controls.fireInteractDesc}</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   L
                 </dt>
-                <dd className="text-right text-amber-100/85">Lucerna (vytáhnout / schovat)</dd>
+                <dd className="text-right text-amber-100/85">{t.controls.lanternDesc}</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   M
                 </dt>
-                <dd className="text-right text-amber-100/85">Ztlumit zvuk</dd>
+                <dd className="text-right text-amber-100/85">{t.controls.muteDesc}</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   Esc
                 </dt>
-                <dd className="text-right text-amber-100/85">Uvolnit myš</dd>
+                <dd className="text-right text-amber-100/85">{t.controls.releaseMouseDesc}</dd>
               </dl>
             </div>
           )}
@@ -1592,10 +1648,10 @@ export function App() {
               setControlsOpen((prev) => !prev);
             }}
             aria-expanded={controlsOpen}
-            title="Zobrazit nebo skrýt ovládání [H]"
+            title={t.controls.buttonTitle}
             className="flex cursor-pointer items-center gap-1.5 rounded-full border border-amber-200/25 bg-stone-950/65 px-3.5 py-1.5 text-xs font-medium text-amber-100 shadow-lg backdrop-blur-md transition hover:border-amber-200/45 hover:bg-stone-950/80"
           >
-            <span>Ovládání</span>
+            <span>{t.controls.title}</span>
             <span className="ml-0.5 text-[10px] text-amber-300/80">
               {controlsOpen ? '▾' : '▴'}
             </span>
@@ -1612,10 +1668,10 @@ export function App() {
         </div>
       )}
 
-      {/* Subtle Unobtrusive Birth Room Caption for Young Bohuslav Martinů (Bottom-Right while indoors) */}
+      {/* Subtle Unobtrusive Birth Room Caption for Young Bohuslav Martinů (shifted left of gear button) */}
       {viewMode === 'interior' && activeHotspot === null && (
-        <div className="pointer-events-none fixed right-4 bottom-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
-          Mladý Bohuslav Martinů cvičí na housle
+        <div className="pointer-events-none fixed right-16 bottom-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
+          {t.hud.youngMartinuCaption}
         </div>
       )}
 
@@ -1624,40 +1680,44 @@ export function App() {
         <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
           <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
             <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
-              [E] / Kliknout
+              {t.prompts.clickOrE}
             </span>
             {aimedRifle
               ? unlockedJackdawHunt
-                ? 'Spustit Lov kavek'
-                : 'Vzít pušku'
-              : aimedHotspot?.titleCz}
+                ? t.prompts.startJackdawHunt
+                : t.prompts.takeRifle
+              : aimedHotspot
+                ? t.birthRoom.hotspots[aimedHotspot.id].title
+                : null}
           </div>
         </div>
       )}
 
-      {/* Birth Room Interior Czech Historical Story Card */}
+      {/* Birth Room Interior Historical Story Card */}
       {viewMode === 'interior' && activeHotspot && (
         <aside className="fixed right-4 bottom-16 z-30 w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-amber-200/30 bg-stone-950/90 p-5 text-amber-50 shadow-2xl backdrop-blur-lg sm:right-6">
           <div className="mb-2 flex items-start justify-between gap-3">
             <div>
               <span className="inline-block rounded-full border border-amber-300/30 bg-amber-400/15 px-2.5 py-0.5 text-[10px] font-semibold tracking-[0.18em] text-amber-300 uppercase">
-                Rodná světnička · 1900
+                {t.birthRoom.storyBadge}
               </span>
               <h2 className="mt-1.5 text-xl font-semibold tracking-wide text-amber-50">
-                {activeHotspot.titleCz}
+                {t.birthRoom.hotspots[activeHotspot.id].title}
               </h2>
-              <p className="text-xs text-amber-200/70">{activeHotspot.subtitleCz}</p>
+              <p className="text-xs text-amber-200/70">
+                {t.birthRoom.hotspots[activeHotspot.id].subtitle}
+              </p>
             </div>
             <button
               type="button"
               onClick={() => setActiveHotspotId(null)}
               className="cursor-pointer rounded-lg border border-amber-200/20 bg-stone-900/80 px-2.5 py-1 text-xs font-medium text-amber-100/80 transition hover:border-amber-200/40 hover:text-amber-50"
             >
-              Zavřít
+              {t.telescope.closeStory}
             </button>
           </div>
           <p className="mt-3 text-sm leading-relaxed text-amber-100/90">
-            {activeHotspot.storyCz}
+            {t.birthRoom.hotspots[activeHotspot.id].story}
           </p>
         </aside>
       )}
@@ -1678,23 +1738,23 @@ export function App() {
             <div className="w-full max-w-md rounded-2xl border border-amber-300/35 bg-stone-950/95 p-6 text-amber-50 shadow-2xl">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] font-semibold tracking-[0.22em] text-amber-300/85 uppercase">
-                  Polička · Lov kavek dokončen
+                  {t.jackdawHunt.summaryEyebrow}
                 </span>
                 {isNewBest && (
                   <span className="rounded-full border border-amber-300/45 bg-amber-400/15 px-3 py-0.5 text-xs font-semibold text-amber-200">
-                    Nový rekord
+                    {t.jackdawHunt.newRecord}
                   </span>
                 )}
               </div>
 
               <h2 className="mt-2 text-2xl font-semibold tracking-wide text-amber-50">
-                Výsledky lovu kavek
+                {t.jackdawHunt.summaryTitle}
               </h2>
 
               <div className="mt-4 grid grid-cols-2 gap-2.5 text-center sm:grid-cols-4">
                 <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
                   <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
-                    Zásahy
+                    {t.jackdawHunt.statHits}
                   </div>
                   <div className="mt-0.5 text-lg font-semibold text-emerald-300">
                     {jackdawHunt.finalHits}
@@ -1702,7 +1762,7 @@ export function App() {
                 </div>
                 <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
                   <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
-                    Přesnost
+                    {t.jackdawHunt.statAccuracy}
                   </div>
                   <div className="mt-0.5 text-lg font-semibold text-amber-100">
                     {accuracy} %
@@ -1710,7 +1770,7 @@ export function App() {
                 </div>
                 <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
                   <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
-                    Skóre
+                    {t.jackdawHunt.statScore}
                   </div>
                   <div className="mt-0.5 text-lg font-semibold text-amber-300">
                     {jackdawHunt.finalScore}
@@ -1718,7 +1778,7 @@ export function App() {
                 </div>
                 <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
                   <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
-                    Rekord
+                    {t.jackdawHunt.statBest}
                   </div>
                   <div className="mt-0.5 text-lg font-semibold text-amber-200">
                     {jackdawHunt.bestScore}
@@ -1735,7 +1795,7 @@ export function App() {
                   }}
                   className="cursor-pointer rounded-full border border-amber-200/25 bg-stone-900/80 px-4 py-2 text-xs font-medium text-amber-100/90 transition hover:border-amber-200/45 hover:text-amber-50"
                 >
-                  Zpět do volné prohlídky
+                  {t.jackdawHunt.backToFreeRoam}
                 </button>
                 <button
                   type="button"
@@ -1745,7 +1805,7 @@ export function App() {
                   }}
                   className="cursor-pointer rounded-full border border-amber-300/50 bg-amber-500/25 px-4 py-2 text-xs font-semibold text-amber-50 transition hover:bg-amber-500/35"
                 >
-                  Hrát znovu
+                  {t.jackdawHunt.playAgain}
                 </button>
               </div>
             </div>
@@ -1764,26 +1824,32 @@ export function App() {
           burnedCount,
           fireWatch.totalScore,
         );
+        const localizedRankTitle =
+          rank.titleCz === 'Vzorný pověžný'
+            ? t.fireWatch.ranks.exemplary
+            : rank.titleCz === 'Bdělý strážce'
+              ? t.fireWatch.ranks.vigilant
+              : t.fireWatch.ranks.damaged;
         return (
           <div className="fixed inset-0 z-40 flex items-center justify-center bg-stone-950/70 p-4 backdrop-blur-sm">
             <div className="w-full max-w-lg rounded-2xl border border-amber-300/35 bg-stone-950/95 p-6 text-amber-50 shadow-2xl">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] font-semibold tracking-[0.22em] text-amber-300/85 uppercase">
-                  Polička · Požární hlídka dokončena
+                  {t.fireWatch.summaryEyebrow}
                 </span>
                 <span className={`rounded-full border px-3 py-0.5 text-xs font-semibold ${rank.badgeColor}`}>
-                  {rank.titleCz}
+                  {localizedRankTitle}
                 </span>
               </div>
 
               <h2 className="mt-2 text-2xl font-semibold tracking-wide text-amber-50">
-                Závěr požární hlídky
+                {t.fireWatch.summaryTitle}
               </h2>
 
               <div className="mt-4 grid grid-cols-2 gap-2.5 text-center sm:grid-cols-4">
                 <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
                   <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
-                    Zachráněné
+                    {t.fireWatch.statSaved}
                   </div>
                   <div className="mt-0.5 text-lg font-semibold text-emerald-300">
                     {savedCount} / {fireWatch.totalRounds}
@@ -1791,7 +1857,7 @@ export function App() {
                 </div>
                 <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
                   <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
-                    Shořelo domů
+                    {t.fireWatch.statBurned}
                   </div>
                   <div
                     className={`mt-0.5 text-lg font-semibold ${
@@ -1803,7 +1869,7 @@ export function App() {
                 </div>
                 <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
                   <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
-                    Čas zásahu
+                    {t.fireWatch.statResponseTime}
                   </div>
                   <div className="mt-0.5 text-lg font-semibold text-amber-100">
                     {totalTime} s
@@ -1811,25 +1877,23 @@ export function App() {
                 </div>
                 <div className="rounded-xl border border-amber-200/20 bg-stone-900/70 p-2.5">
                   <div className="text-[10px] tracking-wider text-amber-200/70 uppercase">
-                    Hodnocení
+                    {t.fireWatch.statScore}
                   </div>
                   <div className="mt-0.5 text-lg font-semibold text-amber-300">
-                    {fireWatch.totalScore} b.
+                    {fireWatch.totalScore} {t.fireWatch.ptsSuffix}
                   </div>
                 </div>
               </div>
 
               <div className="mt-4 rounded-xl border border-amber-200/20 bg-amber-950/25 p-3.5 text-xs leading-relaxed text-amber-100/90">
                 <span className="mb-1 block font-semibold tracking-wide text-amber-300">
-                  Historická poznámka
+                  {t.fireWatch.historyTitle}
                 </span>
-                Po ničivém <strong className="text-amber-100">velkém požáru Poličky v roce 1845</strong>,
-                který zničil podstatnou část historického města, byla nepřetržitá služba pověžného
-                na věži kostela sv. Jakuba naprosto klíčová. Tuto odpovědnou službu vykonával i{' '}
-                <strong className="text-amber-100">Ferdinand Martinů</strong>, otec skladatele
-                Bohuslava Martinů, který s rodinou bydlel přímo v horní věžní světničce. Při spatření
-                ohně pověžný okamžitě zvonil na poplach a vyvěšoval ze správné strany ochozu ve dne
-                červený prapor a v noci červenou lucernu, aby hasiči věděli, kterým směrem vyrazit.
+                {t.fireWatch.historyBody1}
+                <strong className="text-amber-100">{t.fireWatch.historyHighlight1}</strong>
+                {t.fireWatch.historyBody2}
+                <strong className="text-amber-100">{t.fireWatch.historyHighlight2}</strong>
+                {t.fireWatch.historyBody3}
               </div>
 
               <div className="mt-5 flex flex-wrap justify-end gap-2.5">
@@ -1838,14 +1902,14 @@ export function App() {
                   onClick={handleExitFireWatch}
                   className="cursor-pointer rounded-full border border-amber-200/25 bg-stone-900/80 px-4 py-2 text-xs font-medium text-amber-100/90 transition hover:border-amber-200/45 hover:text-amber-50"
                 >
-                  Zpět do volné prohlídky
+                  {t.fireWatch.backToFreeRoam}
                 </button>
                 <button
                   type="button"
                   onClick={handleStartFireWatch}
                   className="cursor-pointer rounded-full border border-orange-300/50 bg-orange-500/25 px-4 py-2 text-xs font-semibold text-amber-50 transition hover:bg-orange-500/35"
                 >
-                  Hrát hlídku znovu
+                  {t.fireWatch.playAgain}
                 </button>
               </div>
             </div>
@@ -1853,7 +1917,7 @@ export function App() {
         );
       })()}
 
-      {/* Sleek Non-Blocking 1-Sentence Czech Historical Micro-Scene Caption Pill */}
+      {/* Sleek Non-Blocking 1-Sentence Historical Micro-Scene Caption Pill */}
       {viewMode === 'exterior' && activeMicroScene && !jackdawHunt.active && (
         <div
           className={`pointer-events-none fixed left-1/2 z-30 w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 px-2 text-center transition-opacity duration-500 ${
@@ -1861,16 +1925,17 @@ export function App() {
           }`}
         >
           <div className="inline-block rounded-full border border-amber-300/40 bg-stone-950/88 px-5 py-2 text-xs font-medium tracking-wide text-amber-100 shadow-2xl backdrop-blur-md sm:text-sm">
-            {isWinter && MICRO_SCENES[activeMicroScene.poiId].winterCaptionCz
-              ? MICRO_SCENES[activeMicroScene.poiId].winterCaptionCz
-              : MICRO_SCENES[activeMicroScene.poiId].captionCz}
+            {isWinter && t.microScenes[activeMicroScene.poiId].winterCaption
+              ? t.microScenes[activeMicroScene.poiId].winterCaption
+              : t.microScenes[activeMicroScene.poiId].caption}
           </div>
         </div>
       )}
 
-      {/* Telescope Lens Vignette, Crosshair, Radial Scan Ring, Zoom Badge & Exterior Czech Story Card */}
+      {/* Telescope Lens Vignette, Crosshair, Radial Scan Ring, Zoom Badge & Exterior Story Card */}
       {viewMode === 'exterior' && (
         <TelescopeOverlay
+          lang={settings.lang}
           activeTelescope={activeTelescope}
           scanState={scanState}
           zoomLevel={zoomLevel}
@@ -1887,6 +1952,65 @@ export function App() {
           </>
         )}
       </div>
+
+      {/* Bottom-Right Minimal Inline SVG Settings Gear Button + Optional Throttled FPS Counter */}
+      <div
+        onPointerDown={(e) => e.stopPropagation()}
+        className="fixed right-4 bottom-4 z-40 flex items-center gap-2"
+      >
+        {settings.showFps && (
+          <span
+            ref={(el) => {
+              fpsHudRef.el = el;
+            }}
+            className="pointer-events-none rounded-full border border-amber-200/20 bg-stone-950/75 px-2.5 py-1 font-mono text-[11px] font-medium tracking-wide text-amber-200/90 shadow-md backdrop-blur-md"
+          >
+            60 FPS
+          </span>
+        )}
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (settingsOpen) {
+              handleCloseSettings();
+            } else {
+              handleOpenSettings();
+            }
+          }}
+          title={t.settings.openTitle}
+          aria-label={t.settings.openTitle}
+          aria-expanded={settingsOpen}
+          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-amber-200/25 bg-stone-950/70 text-amber-200/90 shadow-lg backdrop-blur-md transition hover:border-amber-300/55 hover:bg-stone-900/85 hover:text-amber-50"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="17"
+            height="17"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className={`transition-transform duration-300 ${settingsOpen ? 'rotate-45' : 'rotate-0'}`}
+          >
+            <circle cx="12" cy="12" r="3.2" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Persistent Settings Modal ("Nastavení" / "Settings") */}
+      {settingsOpen && (
+        <SettingsModal
+          settings={settings}
+          onUpdateSettings={handleUpdateSettings}
+          onResetProgress={handleResetProgress}
+          onClose={handleCloseSettings}
+        />
+      )}
     </main>
   );
 }

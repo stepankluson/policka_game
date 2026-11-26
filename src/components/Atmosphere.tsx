@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Sparkles } from '@react-three/drei';
 import * as THREE from 'three';
+import type { GraphicsQuality } from '../game/settings';
 import { timeOfDayState } from '../game/timeOfDay';
 
 // Crisp winter sky & daylight tint targets (zero per-frame allocations)
@@ -170,7 +171,11 @@ const KEYFRAMES: readonly SkyKeyframe[] = [
 
 const MOON_DIR = new THREE.Vector3(-22, 24, -18).normalize();
 
-export function Atmosphere() {
+export function Atmosphere({
+  graphicsQuality = 'high',
+}: {
+  graphicsQuality?: GraphicsQuality;
+}) {
   const skyDomeRef = useRef<THREE.Mesh>(null);
   const starsRef = useRef<THREE.Points>(null);
   const starMatRef = useRef<THREE.PointsMaterial>(null);
@@ -377,7 +382,7 @@ export function Atmosphere() {
         position={[24, 14, 18]}
         intensity={2.6}
         color="#ffcf8c"
-        castShadow
+        castShadow={graphicsQuality === 'high'}
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={4}

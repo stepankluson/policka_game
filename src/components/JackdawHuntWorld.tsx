@@ -9,6 +9,8 @@ import {
   type JackdawHuntState,
 } from '../game/jackdawHunt';
 import { CHURCH_TRANSFORM } from '../game/pois';
+import { settingsRuntime } from '../game/settings';
+import { getTranslations } from '../i18n';
 
 interface JackdawHuntWorldProps {
   hunt: JackdawHuntState;
@@ -281,6 +283,7 @@ export function JackdawHuntWorld({ hunt, onHuntFinished }: JackdawHuntWorldProps
     };
 
     const handleMouseDown = (event: MouseEvent) => {
+      if (settingsRuntime.settingsOpen) return;
       if (event.button === 2) {
         jackdawHuntRuntime.aiming = true;
         return;
@@ -382,7 +385,7 @@ export function JackdawHuntWorld({ hunt, onHuntFinished }: JackdawHuntWorldProps
         }
         if (jackdawHuntHudRefs.bonusEl) {
           jackdawHuntHudRefs.bonusEl.textContent = isLongShot
-            ? `+${pts} · Dlouhá rána!`
+            ? `+${pts} · ${getTranslations(settingsRuntime.lang).jackdawHunt.longShot}`
             : `+${pts}`;
           jackdawHuntHudRefs.bonusEl.style.opacity = '1';
         }
@@ -431,8 +434,8 @@ export function JackdawHuntWorld({ hunt, onHuntFinished }: JackdawHuntWorldProps
     const t = state.clock.getElapsedTime();
     const isPlaying = hunt.phase === 'playing' && !jackdawHuntRuntime.finished;
 
-    // 1. 60-Second Countdown Timer + Cooldown / Hitmarker / Bonus Timers
-    if (isPlaying) {
+    // 1. 60-Second Countdown Timer + Cooldown / Hitmarker / Bonus Timers (paused while Settings modal is open)
+    if (isPlaying && !settingsRuntime.settingsOpen) {
       jackdawHuntRuntime.timeLeft = Math.max(0, jackdawHuntRuntime.timeLeft - dt);
       const dispSec = Math.ceil(jackdawHuntRuntime.timeLeft);
       if (dispSec !== lastDisplayedSecRef.current) {
