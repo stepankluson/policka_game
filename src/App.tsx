@@ -102,6 +102,7 @@ export function App() {
   const [timeOfDayMode, setTimeOfDayMode] = useState<TimeOfDayMode>('auto');
   const [, setIsMuted] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [landmarksOpen, setLandmarksOpen] = useState(true);
   const [isPointerLocked, setIsPointerLocked] = useState(false);
   const [isFading, setIsFading] = useState(false);
   const fadeTimerRef = useRef<number | null>(null);
@@ -971,52 +972,89 @@ export function App() {
         </div>
       )}
 
-      {/* Top-Right Shrink-Wrapped "Objevené památky" Card (zero dead space) */}
+      {/* Top-Right Collapsible Shrink-Wrapped "Objevené památky" Card (symmetric padding, zero dead space) */}
       <section
         onPointerDown={(e) => e.stopPropagation()}
-        className="fixed top-4 right-4 z-30 w-fit max-w-[16.5rem]"
+        className="fixed top-4 right-4 z-30 w-fit"
       >
-        <div className="inline-flex w-fit flex-col items-end rounded-xl border border-amber-200/25 bg-stone-950/65 px-3 py-2 text-right shadow-lg backdrop-blur-md">
-          <div className="whitespace-nowrap text-[10px] font-semibold tracking-[0.18em] text-amber-300/90 uppercase">
-            Objevené památky · {unlockedPois.size} / {POIS.length}
-          </div>
-          <div className="mt-1.5 flex flex-wrap justify-end gap-1">
-            {POIS.map((poi) => {
-              const unlocked = unlockedPois.has(poi.id);
-              return (
-                <button
-                  key={poi.id}
-                  type="button"
-                  disabled={!unlocked || viewMode === 'interior'}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (unlocked && viewMode === 'exterior') {
-                      setActiveStoryPoiId(poi.id);
-                    }
-                  }}
-                  className={`rounded-full border px-2 py-0.5 text-[11px] leading-tight transition ${
-                    unlocked
-                      ? 'cursor-pointer border-emerald-300/40 bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25'
-                      : 'cursor-default border-amber-200/15 bg-stone-900/55 text-amber-100/45'
-                  }`}
-                >
-                  {unlocked ? poi.titleCz : '???'}
-                </button>
-              );
-            })}
-
-            <span
-              className={`rounded-full border px-2 py-0.5 text-[11px] leading-tight ${
-                visitedBirthRoom
-                  ? 'border-amber-300/50 bg-amber-400/20 text-amber-200'
-                  : 'border-amber-200/15 bg-stone-900/55 text-amber-100/45'
+        <div className="inline-flex w-fit flex-col items-stretch rounded-xl border border-amber-200/25 bg-stone-950/65 px-3.5 py-2.5 shadow-lg backdrop-blur-md">
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setLandmarksOpen((prev) => !prev);
+            }}
+            aria-expanded={landmarksOpen}
+            title={landmarksOpen ? 'Skrýt seznam památek' : 'Zobrazit seznam památek'}
+            className="flex cursor-pointer items-center justify-end gap-2 whitespace-nowrap text-right text-[10px] font-semibold tracking-[0.18em] text-amber-300/90 uppercase transition hover:text-amber-200"
+          >
+            <span>
+              Objevené památky · {unlockedPois.size} / {POIS.length}
+            </span>
+            <svg
+              viewBox="0 0 12 12"
+              width="11"
+              height="11"
+              fill="none"
+              aria-hidden="true"
+              className={`shrink-0 text-amber-300/85 transition-transform duration-200 ${
+                landmarksOpen ? 'rotate-180' : 'rotate-0'
               }`}
             >
-              {visitedBirthRoom
-                ? `Rodná světnička (${visitedHotspots.size}/${BIRTH_ROOM_HOTSPOTS.length})`
-                : 'Rodná světnička (???)'}
-            </span>
-          </div>
+              <path
+                d="M2.25 4.5L6 8.25L9.75 4.5"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+
+          {landmarksOpen && (
+            <div
+              className={`mt-2 grid gap-1.5 ${
+                unlockedPois.size === 0 ? 'grid-cols-4' : 'grid-cols-2'
+              }`}
+            >
+              {POIS.map((poi) => {
+                const unlocked = unlockedPois.has(poi.id);
+                return (
+                  <button
+                    key={poi.id}
+                    type="button"
+                    disabled={!unlocked || viewMode === 'interior'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (unlocked && viewMode === 'exterior') {
+                        setActiveStoryPoiId(poi.id);
+                      }
+                    }}
+                    className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 text-center text-[11px] leading-tight transition ${
+                      unlocked
+                        ? 'cursor-pointer border-emerald-300/40 bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25'
+                        : 'cursor-default border-amber-200/15 bg-stone-900/55 text-amber-100/45'
+                    }`}
+                  >
+                    {unlocked ? poi.titleCz : '???'}
+                  </button>
+                );
+              })}
+
+              <span
+                className={`col-span-full whitespace-nowrap rounded-full border px-2.5 py-0.5 text-center text-[11px] leading-tight ${
+                  visitedBirthRoom
+                    ? 'border-amber-300/50 bg-amber-400/20 text-amber-200'
+                    : 'border-amber-200/15 bg-stone-900/55 text-amber-100/45'
+                }`}
+              >
+                {visitedBirthRoom
+                  ? `Rodná světnička (${visitedHotspots.size}/${BIRTH_ROOM_HOTSPOTS.length})`
+                  : 'Rodná světnička (???)'}
+              </span>
+            </div>
+          )}
         </div>
       </section>
 
