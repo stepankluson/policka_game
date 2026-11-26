@@ -42,6 +42,8 @@ import { PolickaCadastral1839 } from './PolickaCadastral1839';
 import { PolickaSurvey1903 } from './PolickaSurvey1903';
 import { FireWatchWorld } from './FireWatchWorld';
 import type { FireWatchState } from '../game/fireWatch';
+import type { ActiveMicroScene } from '../game/microScenes';
+import { LandmarkMicroScenes } from './LandmarkMicroScenes';
 import {
   StMichaelCemetery,
   SynskyRybnikDetails,
@@ -61,6 +63,8 @@ interface TownDioramaProps {
   onFireEngineArrived?: () => void;
   onExtinguishComplete?: () => void;
   hideAmbientJackdaws?: boolean;
+  activeMicroScene?: ActiveMicroScene | null;
+  onMicroSceneComplete?: () => void;
 }
 
 interface TreeInstance {
@@ -221,6 +225,8 @@ export function TownDiorama({
   onFireEngineArrived,
   onExtinguishComplete,
   hideAmbientJackdaws = false,
+  activeMicroScene = null,
+  onMicroSceneComplete,
 }: TownDioramaProps) {
   const [osmData, setOsmData] = useState<PolickaOsmData | null>(null);
 
@@ -1159,6 +1165,14 @@ export function TownDiorama({
           </group>
         );
       })}
+      {/* === 8. IN-WORLD ~6s HISTORICAL LANDMARK MICRO-SCENES ("Historické scénky") === */}
+      {onMicroSceneComplete && (
+        <LandmarkMicroScenes
+          activeScene={activeMicroScene}
+          onSceneComplete={onMicroSceneComplete}
+          railwayTrack={osmData?.railway?.track}
+        />
+      )}
     </group>
   );
 }

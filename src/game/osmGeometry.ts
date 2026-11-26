@@ -3065,6 +3065,16 @@ export function buildMergedStreetsGeometry(
       ],
       halfW: 2.3,
     },
+    // Connect the NE city gate road stub (OSM way 237102315) cleanly across the open grass to the outer suburban road
+    {
+      points: [
+        [175.5, -317.1],
+        [188.0, -340.0],
+        [201.0, -356.0],
+        [210.0, -366.0],
+      ],
+      halfW: 2.25,
+    },
   ];
 
   for (const ext of rawSuburbanExtensions) {

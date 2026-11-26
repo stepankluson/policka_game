@@ -21,6 +21,7 @@ import {
   type FireWatchState,
 } from '../game/fireWatch';
 import type { JackdawHuntState } from '../game/jackdawHunt';
+import type { ActiveMicroScene } from '../game/microScenes';
 import {
   smoothstep,
   timeOfDayState,
@@ -206,6 +207,10 @@ interface GameSceneProps {
   onExtinguishComplete: () => void;
   jackdawHunt: JackdawHuntState;
   onJackdawHuntFinished: (summary: { hits: number; shots: number; score: number }) => void;
+  isLanternOut: boolean;
+  onDuskNightTransition: (isDuskOrNight: boolean) => void;
+  activeMicroScene: ActiveMicroScene | null;
+  onMicroSceneComplete: () => void;
 }
 
 const TELESCOPE_LOOK_DOT_THRESHOLD = 0.35;
@@ -393,14 +398,21 @@ function GalleryInteractionSensor({
   return null;
 }
 
+/** Night-factor threshold matching streetlamp dusk turn-on ([0.15..0.74] in TownNightLights) */
+const DUSK_LANTERN_NIGHT_THRESHOLD = 0.18;
+
 /** Smoothly interpolates global timeOfDayState & updates shared night materials + soundscape once per frame */
 function TimeOfDayDriver({
   targetProgress,
   viewMode,
+  onDuskNightTransition,
 }: {
   targetProgress: number;
   viewMode: ViewMode;
+  onDuskNightTransition: (isDuskOrNight: boolean) => void;
 }) {
+  const lastDuskNightRef = useRef<boolean | null>(null);
+
   useFrame((_, rawDelta) => {
     const dt = Math.min(rawDelta, 0.05);
     timeOfDayState.targetProgress = targetProgress;
@@ -416,6 +428,15 @@ function TimeOfDayDriver({
     timeOfDayState.starFactor = smoothstep(0.55, 0.92, timeOfDayState.progress);
     updateSharedNightMaterials(timeOfDayState.progress, timeOfDayState.nightFactor);
     soundEngine.updateEnvironment(viewMode, timeOfDayState.nightFactor);
+
+    // Smart day <-> dusk/night crossing edge detection for automatic lantern default
+    const isDuskOrNight = timeOfDayState.nightFactor >= DUSK_LANTERN_NIGHT_THRESHOLD;
+    if (lastDuskNightRef.current === null) {
+      lastDuskNightRef.current = isDuskOrNight;
+    } else if (isDuskOrNight !== lastDuskNightRef.current) {
+      lastDuskNightRef.current = isDuskOrNight;
+      onDuskNightTransition(isDuskOrNight);
+    }
   });
   return null;
 }
@@ -634,6 +655,10 @@ export function GameScene({
   onExtinguishComplete,
   jackdawHunt,
   onJackdawHuntFinished,
+  isLanternOut,
+  onDuskNightTransition,
+  activeMicroScene,
+  onMicroSceneComplete,
 }: GameSceneProps) {
   const playerLocalPosRef = useRef<THREE.Vector3>(
     new THREE.Vector3(
@@ -674,7 +699,11 @@ export function GameScene({
       className="h-full w-full"
     >
       {/* Global Time-of-Day Interpolation & Soundscape Driver (runs seamlessly across exterior & Birth Room) */}
-      <TimeOfDayDriver targetProgress={targetTimeProgress} viewMode={viewMode} />
+      <TimeOfDayDriver
+        targetProgress={targetTimeProgress}
+        viewMode={viewMode}
+        onDuskNightTransition={onDuskNightTransition}
+      />
 
       {/* Cinematic Live-3D Title Orbit & 1.65s Fly-In Camera */}
       <TitleOrbitCamera
@@ -728,6 +757,7 @@ export function GameScene({
             playerWorldPosRef={playerWorldPosRef}
             disabled={!isPlaying || isInTelescope || isInterior}
             visible={!isExteriorFirstPerson}
+            isLanternOut={isLanternOut}
             innerLimit={
               isExteriorFirstPerson
                 ? RING_BOUNDS.innerLimitFirstPerson
@@ -742,6 +772,8 @@ export function GameScene({
           onFireEngineArrived={onFireEngineArrived}
           onExtinguishComplete={onExtinguishComplete}
           hideAmbientJackdaws={jackdawHunt.active}
+          activeMicroScene={activeMicroScene}
+          onMicroSceneComplete={onMicroSceneComplete}
         />
       </group>
 
@@ -757,6 +789,7 @@ export function GameScene({
         active={isExteriorFirstPerson}
         onPointerLockChange={onPointerLockChange}
         jackdawHuntActive={jackdawHunt.active && jackdawHunt.phase === 'playing'}
+        isLanternOut={isLanternOut}
       />
       <JackdawHuntWorld
         hunt={jackdawHunt}

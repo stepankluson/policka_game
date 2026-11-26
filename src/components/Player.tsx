@@ -17,6 +17,8 @@ interface PlayerProps {
   visible?: boolean;
   /** Inner-cabin collision half-extent (padded in First-Person mode) */
   innerLimit?: number;
+  /** Whether the Tower Keeper's handheld lantern is currently held out (true) or stowed (false) */
+  isLanternOut?: boolean;
 }
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -119,6 +121,7 @@ export function Player({
   disabled = false,
   visible = true,
   innerLimit = RING_BOUNDS.innerLimit,
+  isLanternOut = false,
 }: PlayerProps) {
   const { camera } = useThree();
   const inputRef = useKeyboard();
@@ -142,6 +145,7 @@ export function Player({
   const walkPhaseRef = useRef(0);
   const idleTimeRef = useRef(0);
   const hiddenByCameraRef = useRef(false);
+  const lanternArmBlendRef = useRef(isLanternOut ? 1 : 0);
 
   useFrame((_, rawDelta) => {
     if (disabled) {
@@ -261,21 +265,33 @@ export function Player({
       leftLegRef.current.rotation.x = swing;
       rightLegRef.current.rotation.x = -swing;
     }
+    // Smoothly blend left arm between raised lantern-holding pose (1) and relaxed natural walking swing (0)
+    const armTarget = isLanternOut ? 1 : 0;
+    lanternArmBlendRef.current +=
+      (armTarget - lanternArmBlendRef.current) * (1 - Math.exp(-10 * dt));
+    const armBlend = lanternArmBlendRef.current;
+
     if (leftArmRef.current && rightArmRef.current) {
-      // Anatomical LEFT arm (+X) grips the lit vintage lantern forward with gentle pendulum sway
-      leftArmRef.current.rotation.x = -0.44 + swing * 0.2;
+      // Anatomical LEFT arm (+X): raised to hold lantern when out, relaxed natural swing when stowed
+      const stowedLeftRot = swing * 0.72;
+      const heldLeftRot = -0.44 + swing * 0.2;
+      leftArmRef.current.rotation.x = stowedLeftRot + (heldLeftRot - stowedLeftRot) * armBlend;
       // Anatomical RIGHT arm (-X) rests naturally at his side and swings freely while walking
       rightArmRef.current.rotation.x = -swing * 0.72;
     }
     if (lanternGroupRef.current) {
-      lanternGroupRef.current.rotation.x = 0.44 - swing * 0.14;
-      lanternGroupRef.current.rotation.z = Math.sin(idleTimeRef.current * 2.1) * 0.035;
+      lanternGroupRef.current.visible = isLanternOut;
+      if (isLanternOut) {
+        lanternGroupRef.current.rotation.x = 0.44 - swing * 0.14;
+        lanternGroupRef.current.rotation.z = Math.sin(idleTimeRef.current * 2.1) * 0.035;
+      }
     }
 
-    // Scale warm handheld lantern PointLight smoothly with nightFactor (active in 3rd person; 1st person has its own viewmodel light)
+    // Scale warm handheld lantern PointLight smoothly with nightFactor (zero glow when stowed or in 1st person)
     if (lanternLightRef.current) {
-      const nf = timeOfDayState.nightFactor;
-      lanternLightRef.current.intensity = visible ? 1.8 + nf * 2.8 : 0;
+      const lightOn = visible && isLanternOut;
+      lanternLightRef.current.visible = lightOn;
+      lanternLightRef.current.intensity = lightOn ? 1.8 + timeOfDayState.nightFactor * 2.8 : 0;
     }
   });
 
@@ -522,8 +538,12 @@ export function Player({
           </mesh>
         </group>
 
-        {/* Anatomical Left Arm (+X): Naturally grips the glowing Vintage Watchman's Lantern */}
-        <group ref={leftArmRef} position={[0.265, 1.31, 0]} rotation={[-0.44, 0, 0]}>
+        {/* Anatomical Left Arm (+X): Raises to hold the Watchman's Lantern when out, hangs relaxed when stowed */}
+        <group
+          ref={leftArmRef}
+          position={[0.265, 1.31, 0]}
+          rotation={[isLanternOut ? -0.44 : 0, 0, 0]}
+        >
           <mesh position={[0, -0.22, 0]} material={KEEPER_MATS.coat} castShadow>
             <boxGeometry args={[0.12, 0.44, 0.125]} />
           </mesh>
@@ -537,7 +557,12 @@ export function Player({
           </mesh>
 
           {/* Vintage Lit Watchman's Lantern (glowing yellow cylinder inside dark iron frame) */}
-          <group ref={lanternGroupRef} position={[0, -0.63, 0.075]} rotation={[0.44, 0, 0]}>
+          <group
+            ref={lanternGroupRef}
+            visible={isLanternOut}
+            position={[0, -0.63, 0.075]}
+            rotation={[0.44, 0, 0]}
+          >
             {/* Wire handle ring */}
             <mesh position={[0, 0.165, 0]} material={KEEPER_MATS.lanternIron}>
               <torusGeometry args={[0.036, 0.008, 5, 8]} />
@@ -566,8 +591,9 @@ export function Player({
             </mesh>
             <pointLight
               ref={lanternLightRef}
+              visible={visible && isLanternOut}
               color="#ffb65c"
-              intensity={2.4}
+              intensity={visible && isLanternOut ? 2.4 : 0}
               distance={8.5}
               decay={1.8}
             />

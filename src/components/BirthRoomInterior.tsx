@@ -324,15 +324,145 @@ function InteriorFPSControls({
 
 // Module-level reusable scratch vectors/quaternions for YoungBohuslavViolinist (zero per-frame GC)
 const _upAxis = new THREE.Vector3(0, 1, 0);
-const _shoulderPos = new THREE.Vector3(-0.16, 0.37, 0.02);
+const _shoulderPos = new THREE.Vector3(-0.185, 0.375, 0.035);
 const _frogLocal = new THREE.Vector3();
 const _frogInTorso = new THREE.Vector3();
 const _elbowPos = new THREE.Vector3();
 const _armDir = new THREE.Vector3();
 const _midPt = new THREE.Vector3();
 const _sideVec = new THREE.Vector3();
-const _poleDir = new THREE.Vector3(-0.72, -0.58, -0.38).normalize();
+// Elbow bends outward (-X), slightly down (-Y), and forward (+Z) so the sleeve NEVER clips the waistcoat
+const _poleDir = new THREE.Vector3(-0.82, -0.36, 0.44).normalize();
 const _qScratch = new THREE.Quaternion();
+
+/**
+ * Procedurally sculpted low-poly ~10-year-old boy's head (~80 flat-shaded triangles),
+ * matching the Tower Keeper's crisp stylized low-poly art direction with youthful proportions.
+ */
+function createBoyHeadGeometry(): THREE.BufferGeometry {
+  const base = new THREE.IcosahedronGeometry(0.104, 1);
+  const geom = base.toNonIndexed();
+  base.dispose();
+
+  const pos = geom.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    let x = pos.getX(i);
+    let y = pos.getY(i);
+    let z = pos.getZ(i);
+
+    // Youthful head proportions (slightly rounder cheeks than adult, crisp jawline)
+    x *= 0.88;
+    y *= 1.12;
+    z *= 0.96;
+
+    if (y < -0.015) {
+      const jawT = Math.min(1, (-y - 0.015) / 0.1);
+      x *= 1 - jawT * 0.32;
+      if (z > 0) {
+        z += jawT * 0.011;
+      } else {
+        z *= 1 - jawT * 0.24;
+      }
+    }
+
+    // Subtle brow ridge & recessed eye sockets
+    if (z > 0.035) {
+      if (y > 0.016 && y < 0.048) {
+        z += 0.008;
+      } else if (y > -0.01 && y <= 0.016 && Math.abs(x) > 0.015 && Math.abs(x) < 0.06) {
+        z -= 0.006;
+      }
+    }
+
+    pos.setXYZ(i, x, y, z);
+  }
+  geom.computeVertexNormals();
+  return geom;
+}
+
+const BOY_HEAD_GEOM = createBoyHeadGeometry();
+
+/**
+ * Rounded, faceted low-poly hair cap (~1.09x head radius) wrapping seamlessly over the crown,
+ * sides, and back nape with zero flat Minecraft boxes and 100% top coverage (zero bald spot).
+ */
+function createBoyHairCapGeometry(): THREE.BufferGeometry {
+  const base = new THREE.IcosahedronGeometry(0.114, 1);
+  const geom = base.toNonIndexed();
+  base.dispose();
+
+  const pos = geom.getAttribute('position');
+  const triVerts: [number, number, number][] = [];
+  for (let i = 0; i < pos.count; i += 3) {
+    // Compute deformed triangle vertices matching head proportions scaled ~1.09x
+    const v: [number, number, number][] = [];
+    let avgY = 0;
+    let avgZ = 0;
+    for (let k = 0; k < 3; k++) {
+      let x = pos.getX(i + k) * 0.94;
+      let y = pos.getY(i + k) * 1.16 + 0.012;
+      let z = pos.getZ(i + k) * 1.03 - 0.01;
+      // Gently puff crown & back volume for natural ~1900 boy's haircut
+      if (y > 0.04) y += 0.008;
+      if (z < -0.02 && y < 0.02) {
+        // Taper nape cleanly down the back of the head
+        z -= 0.006;
+      }
+      v.push([x, y, z]);
+      avgY += y;
+      avgZ += z;
+    }
+    // Compute triangle centroid & lowest vertex for clean forehead hairline & ear-relief cutouts
+    const avgX = (v[0][0] + v[1][0] + v[2][0]) / 3;
+    avgY /= 3;
+    avgZ /= 3;
+    const minY = Math.min(v[0][1], v[1][1], v[2][1]);
+
+    // Carve out front face opening & any sharp central forehead V-spike while keeping temples continuous;
+    // also carve clean relief around both ears & lower cheeks
+    const isFrontFace = Math.abs(avgX) < 0.072 && avgZ > 0.025 && avgY < 0.044;
+    const isForeheadSpike = Math.abs(avgX) < 0.065 && avgZ > 0.042 && minY < 0.052;
+    const isEarRelief =
+      Math.abs(avgX) > 0.064 && avgZ > -0.042 && avgZ < 0.022 && avgY < 0.024;
+    const isLowerCheek = avgZ > 0.008 && avgY < 0.016;
+    const isUnderChin = avgY < -0.042;
+    if (isFrontFace || isForeheadSpike || isEarRelief || isLowerCheek || isUnderChin) continue;
+
+    triVerts.push(v[0], v[1], v[2]);
+  }
+
+  const out = new THREE.BufferGeometry();
+  const flat = new Float32Array(triVerts.length * 3);
+  for (let i = 0; i < triVerts.length; i++) {
+    flat[i * 3] = triVerts[i][0];
+    flat[i * 3 + 1] = triVerts[i][1];
+    flat[i * 3 + 2] = triVerts[i][2];
+  }
+  out.setAttribute('position', new THREE.BufferAttribute(flat, 3));
+  out.computeVertexNormals();
+  return out;
+}
+
+const BOY_HAIR_CAP_GEOM = createBoyHairCapGeometry();
+
+// Shared module-level materials for YoungBohuslavViolinist (strict 60 FPS)
+const BOY_MATS = {
+  skin: new THREE.MeshStandardMaterial({ color: '#ecc29c', roughness: 0.78, flatShading: true }),
+  skinShadow: new THREE.MeshStandardMaterial({ color: '#dba983', roughness: 0.82, flatShading: true }),
+  mouth: new THREE.MeshStandardMaterial({ color: '#b87d62', roughness: 0.85 }),
+  eyeWhite: new THREE.MeshStandardMaterial({ color: '#ebe4d8', roughness: 0.6 }),
+  eyeDark: new THREE.MeshStandardMaterial({ color: '#1b1714', roughness: 0.45 }),
+  hair: new THREE.MeshStandardMaterial({ color: '#3b2618', roughness: 0.9, flatShading: true }),
+  hairDark: new THREE.MeshStandardMaterial({ color: '#2d1c11', roughness: 0.92, flatShading: true }),
+  shirt: new THREE.MeshStandardMaterial({ color: '#efe7d6', roughness: 0.86, flatShading: true }),
+  shirtCuff: new THREE.MeshStandardMaterial({ color: '#e2d8c5', roughness: 0.88, flatShading: true }),
+  vest: new THREE.MeshStandardMaterial({ color: '#3d2d22', roughness: 0.88, flatShading: true }),
+  vestLapel: new THREE.MeshStandardMaterial({ color: '#2e2118', roughness: 0.9, flatShading: true }),
+  brass: new THREE.MeshStandardMaterial({ color: '#cfa83c', roughness: 0.3, metalness: 0.82 }),
+  trousers: new THREE.MeshStandardMaterial({ color: '#2f333c', roughness: 0.9, flatShading: true }),
+  shoes: new THREE.MeshStandardMaterial({ color: '#251a13', roughness: 0.84, flatShading: true }),
+  sole: new THREE.MeshStandardMaterial({ color: '#17100b', roughness: 0.92 }),
+};
 
 /** Places a cylinder limb mesh cleanly between points A and B (zero allocations) */
 function alignLimbBetween(
@@ -373,6 +503,7 @@ function YoungBohuslavViolinist({
   const violinGroupRef = useRef<THREE.Group>(null);
   const bowGroupRef = useRef<THREE.Group>(null);
   const rightUpperArmRef = useRef<THREE.Mesh>(null);
+  const rightElbowRef = useRef<THREE.Mesh>(null);
   const rightForearmRef = useRef<THREE.Mesh>(null);
   const rightHandRef = useRef<THREE.Mesh>(null);
 
@@ -390,20 +521,20 @@ function YoungBohuslavViolinist({
     const t = state.clock.elapsedTime;
 
     // 1. Smooth, expressive bowing glide strictly along the bow's longitudinal X axis on the strings
-    const slide = Math.sin(t * 2.15) * 0.115 + Math.sin(t * 4.4 + 0.7) * 0.028;
+    const slide = 0.02 + Math.sin(t * 2.15) * 0.095 + Math.sin(t * 4.4 + 0.7) * 0.022;
     if (bowGroupRef.current) {
       bowGroupRef.current.position.x = slide;
       // Subtle string-crossing roll tilt while staying anchored on the strings
       bowGroupRef.current.rotation.z = 0.04 + Math.sin(t * 1.1) * 0.035;
     }
 
-    // 2. Transform the bow frog (violin-local [slide - 0.19, 0.052, 0.075]) into torso-local space
-    _frogLocal.set(slide - 0.19, 0.052, 0.075);
+    // 2. Transform the bow frog (violin-local [slide - 0.17, 0.056, 0.09]) into torso-local space
+    _frogLocal.set(slide - 0.17, 0.056, 0.09);
     _frogInTorso.copy(_frogLocal).applyMatrix4(violinMat);
 
-    // 3. Analytical 2-bone IK for right arm: shoulder -> elbow -> bow frog
-    const L1 = 0.22;
-    const L2 = 0.22;
+    // 3. Analytical 2-bone IK for right arm: shoulder -> elbow -> bow frog (strictly outside torso)
+    const L1 = 0.225;
+    const L2 = 0.225;
     _armDir.subVectors(_frogInTorso, _shoulderPos);
     const d = Math.max(0.08, Math.min(L1 + L2 - 0.015, _armDir.length()));
     _armDir.normalize();
@@ -425,6 +556,9 @@ function YoungBohuslavViolinist({
 
     if (rightUpperArmRef.current) {
       alignLimbBetween(rightUpperArmRef.current, _shoulderPos, _elbowPos);
+    }
+    if (rightElbowRef.current) {
+      rightElbowRef.current.position.copy(_elbowPos);
     }
     if (rightForearmRef.current) {
       alignLimbBetween(rightForearmRef.current, _elbowPos, _frogInTorso);
@@ -448,9 +582,9 @@ function YoungBohuslavViolinist({
 
   // Precompute left-arm elbow & neck-grip vectors cleanly under the violin neck
   const leftArmRig = useMemo(() => {
-    const sh = new THREE.Vector3(0.16, 0.37, 0.02);
+    const sh = new THREE.Vector3(0.18, 0.375, 0.03);
     const hand = new THREE.Vector3(0, -0.01, 0.24).applyMatrix4(violinMat);
-    const elbow = new THREE.Vector3(0.22, 0.22, 0.20);
+    const elbow = new THREE.Vector3(0.24, 0.22, 0.21);
     const makeTransform = (a: THREE.Vector3, b: THREE.Vector3) => {
       const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
       const dir = new THREE.Vector3().subVectors(b, a);
@@ -461,6 +595,7 @@ function YoungBohuslavViolinist({
     return {
       upper: makeTransform(sh, elbow),
       lower: makeTransform(elbow, hand),
+      elbow,
       hand,
     };
   }, [violinMat]);
@@ -471,96 +606,197 @@ function YoungBohuslavViolinist({
       position={position}
       rotation={[0, rotationY, 0]}
     >
-      {/* === LEGS & DARK 1900 SHOES (total child height ~1.35m) === */}
-      {([-0.085, 0.085] as const).map((lx, i) => (
+      {/* === LEGS & PERIOD ~1900 SHOES (total child height ~1.35m) === */}
+      {([-0.082, 0.082] as const).map((lx, i) => (
         <group key={`bm-leg-${i}`} position={[lx, 0, 0]}>
-          <mesh position={[0, 0.045, 0.03]} castShadow>
-            <boxGeometry args={[0.095, 0.085, 0.18]} />
-            <meshStandardMaterial color="#241b15" roughness={0.85} />
+          {/* Dark-brown period shoe + sole */}
+          <mesh position={[0, 0.048, 0.032]} material={BOY_MATS.shoes} castShadow>
+            <boxGeometry args={[0.095, 0.075, 0.175]} />
           </mesh>
-          <mesh position={[0, 0.34, 0]} castShadow>
-            <cylinderGeometry args={[0.055, 0.048, 0.56, 7]} />
-            <meshStandardMaterial color="#30343d" roughness={0.92} />
+          <mesh position={[0, 0.012, 0.032]} material={BOY_MATS.sole}>
+            <boxGeometry args={[0.102, 0.024, 0.184]} />
+          </mesh>
+          {/* Structured low-poly dark trousers */}
+          <mesh position={[0, 0.35, 0]} material={BOY_MATS.trousers} castShadow>
+            <boxGeometry args={[0.102, 0.56, 0.114]} />
           </mesh>
         </group>
       ))}
 
       {/* === UPPER TORSO (SWAYS GENTLY WHILE PLAYING) === */}
       <group ref={torsoRef} position={[0, 0.62, 0]}>
-        {/* Dark wool vest over white linen shirt */}
-        <mesh position={[0, 0.22, 0]} castShadow>
-          <boxGeometry args={[0.29, 0.42, 0.17]} />
-          <meshStandardMaterial color="#3d2f25" roughness={0.9} />
+        {/* Refined dark-brown ~1900 waistcoat (vest) */}
+        <mesh position={[0, 0.22, 0]} material={BOY_MATS.vest} castShadow>
+          <boxGeometry args={[0.3, 0.43, 0.175]} />
         </mesh>
-        {/* White linen shirt collar & front placket */}
-        <mesh position={[0, 0.38, 0.075]}>
-          <boxGeometry args={[0.11, 0.11, 0.04]} />
-          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+        {/* Subtle structured shoulders */}
+        <mesh position={[0, 0.39, 0]} material={BOY_MATS.vest} castShadow>
+          <boxGeometry args={[0.33, 0.08, 0.18]} />
         </mesh>
-        {/* Tiny brass vest buttons */}
-        {[0.12, 0.21, 0.3].map((by, idx) => (
-          <mesh key={`btn-${idx}`} position={[0, by, 0.09]}>
-            <sphereGeometry args={[0.012, 6, 5]} />
-            <meshStandardMaterial color="#d4a94c" roughness={0.4} metalness={0.7} />
+        {/* Crisp white linen shirt V-front & folded shirt collar */}
+        <mesh position={[0, 0.37, 0.074]} material={BOY_MATS.shirt}>
+          <boxGeometry args={[0.105, 0.13, 0.042]} />
+        </mesh>
+        <mesh position={[0, 0.435, 0.005]} material={BOY_MATS.shirt} castShadow>
+          <cylinderGeometry args={[0.072, 0.085, 0.065, 8]} />
+        </mesh>
+        {/* Left & right angled waistcoat lapels */}
+        <mesh position={[-0.056, 0.34, 0.092]} rotation={[0, 0, -0.26]} material={BOY_MATS.vestLapel}>
+          <boxGeometry args={[0.052, 0.15, 0.02]} />
+        </mesh>
+        <mesh position={[0.056, 0.34, 0.092]} rotation={[0, 0, 0.26]} material={BOY_MATS.vestLapel}>
+          <boxGeometry args={[0.052, 0.15, 0.02]} />
+        </mesh>
+        {/* 4 small metallic brass vest buttons */}
+        {[0.08, 0.155, 0.23, 0.305].map((by, idx) => (
+          <mesh key={`btn-${idx}`} position={[0, by, 0.092]} material={BOY_MATS.brass}>
+            <cylinderGeometry args={[0.011, 0.011, 0.01, 6]} />
           </mesh>
         ))}
 
-        {/* === HEAD WITH TOUSLED BROWN HAIR (TILTED TOWARD VIOLIN CHINREST) === */}
-        <group ref={headRef} position={[0, 0.49, 0.01]}>
-          <mesh position={[0, -0.02, 0]}>
-            <cylinderGeometry args={[0.045, 0.05, 0.08, 7]} />
-            <meshStandardMaterial color="#e5bc96" roughness={0.82} />
+        {/* === SCULPTED YOUTHFUL LOW-POLY HEAD, EXPRESSIVE FACE & ~1900 PARTED HAIR === */}
+        <group ref={headRef} position={[0, 0.48, 0.01]}>
+          {/* Neck */}
+          <mesh position={[0, -0.015, 0]} material={BOY_MATS.skinShadow}>
+            <cylinderGeometry args={[0.044, 0.052, 0.085, 7]} />
           </mesh>
-          <mesh position={[0, 0.1, 0]} castShadow>
-            <dodecahedronGeometry args={[0.115, 1]} />
-            <meshStandardMaterial color="#e6be98" roughness={0.8} flatShading />
+
+          {/* Sculpted 80-triangle low-poly boy's head (matching Tower Keeper style) */}
+          <mesh position={[0, 0.105, 0]} geometry={BOY_HEAD_GEOM} material={BOY_MATS.skin} castShadow />
+
+          {/* Ears seated cleanly on the sides of the head with zero hair clipping */}
+          <mesh position={[-0.095, 0.098, -0.008]} material={BOY_MATS.skinShadow}>
+            <boxGeometry args={[0.024, 0.044, 0.028]} />
           </mesh>
-          <mesh position={[0, 0.145, -0.015]} castShadow>
-            <dodecahedronGeometry args={[0.118, 1]} />
-            <meshStandardMaterial color="#543723" roughness={0.92} flatShading />
+          <mesh position={[0.095, 0.098, -0.008]} material={BOY_MATS.skinShadow}>
+            <boxGeometry args={[0.024, 0.044, 0.028]} />
           </mesh>
-          <mesh position={[0.02, 0.2, 0.04]} rotation={[0.3, 0.2, -0.2]}>
-            <boxGeometry args={[0.11, 0.05, 0.09]} />
-            <meshStandardMaterial color="#4a301e" roughness={0.92} />
+
+          {/* Sculpted low-poly nose */}
+          <mesh position={[0, 0.098, 0.098]} rotation={[0.2, 0, 0]} material={BOY_MATS.skinShadow}>
+            <coneGeometry args={[0.018, 0.044, 4]} />
+          </mesh>
+
+          {/* Crisp dark eyes (white sclera + dark pupils) & expressive brown eyebrows */}
+          {([-1, 1] as const).map((side) => (
+            <group key={`bm-eye-${side}`}>
+              <mesh position={[side * 0.032, 0.118, 0.084]} material={BOY_MATS.eyeWhite}>
+                <boxGeometry args={[0.024, 0.014, 0.012]} />
+              </mesh>
+              <mesh position={[side * 0.032, 0.118, 0.09]} material={BOY_MATS.eyeDark}>
+                <boxGeometry args={[0.013, 0.012, 0.008]} />
+              </mesh>
+              <mesh
+                position={[side * 0.033, 0.136, 0.089]}
+                rotation={[0, 0, -side * 0.08]}
+                material={BOY_MATS.hair}
+              >
+                <boxGeometry args={[0.032, 0.01, 0.014]} />
+              </mesh>
+            </group>
+          ))}
+
+          {/* Subtle neutral/focused mouth (no mustache) */}
+          <mesh position={[0, 0.056, 0.088]} material={BOY_MATS.mouth}>
+            <boxGeometry args={[0.034, 0.008, 0.01]} />
+          </mesh>
+
+          {/* Smooth Rounded Faceted Low-Poly Hair Cap (100% top coverage, continuous temples, clean ear relief) */}
+          <mesh position={[0, 0.105, 0]} geometry={BOY_HAIR_CAP_GEOM} material={BOY_MATS.hair} castShadow />
+          {/* Soft, slightly asymmetric side-swept front fringe sitting cleanly above both eyebrows */}
+          <mesh
+            position={[0.024, 0.186, 0.052]}
+            rotation={[0.1, 0.12, -0.12]}
+            scale={[1.52, 0.46, 0.78]}
+            material={BOY_MATS.hair}
+            castShadow
+          >
+            <dodecahedronGeometry args={[0.052, 0]} />
+          </mesh>
+          <mesh
+            position={[-0.046, 0.181, 0.05]}
+            rotation={[0.1, -0.14, 0.1]}
+            scale={[1.12, 0.44, 0.74]}
+            material={BOY_MATS.hairDark}
+          >
+            <dodecahedronGeometry args={[0.045, 0]} />
+          </mesh>
+          {/* Smooth upper-temple bridges connecting fringe seamlessly into side hair */}
+          <mesh
+            position={[-0.072, 0.156, 0.036]}
+            scale={[0.58, 0.72, 0.85]}
+            material={BOY_MATS.hair}
+          >
+            <dodecahedronGeometry args={[0.046, 0]} />
+          </mesh>
+          <mesh
+            position={[0.072, 0.156, 0.036]}
+            scale={[0.58, 0.72, 0.85]}
+            material={BOY_MATS.hair}
+          >
+            <dodecahedronGeometry args={[0.046, 0]} />
+          </mesh>
+          {/* Trimmed short boy's sideburn wisps stopping cleanly at mid-ear level tight against front of ear */}
+          <mesh
+            position={[-0.086, 0.128, 0.014]}
+            scale={[0.24, 0.42, 0.26]}
+            material={BOY_MATS.hairDark}
+          >
+            <dodecahedronGeometry args={[0.032, 0]} />
+          </mesh>
+          <mesh
+            position={[0.086, 0.128, 0.014]}
+            scale={[0.24, 0.42, 0.26]}
+            material={BOY_MATS.hairDark}
+          >
+            <dodecahedronGeometry args={[0.032, 0]} />
           </mesh>
         </group>
 
-        {/* === LEFT ARM BENT NATURALLY UNDERNEATH VIOLIN NECK === */}
+        {/* === LEFT ARM (STRUCTURED SHIRT SLEEVE, ELBOW JOINT & HAND UNDER VIOLIN NECK) === */}
+        <mesh position={[0.18, 0.375, 0.03]} material={BOY_MATS.shirt} castShadow>
+          <boxGeometry args={[0.078, 0.078, 0.078]} />
+        </mesh>
         <mesh
           position={leftArmRig.upper.mid}
           quaternion={leftArmRig.upper.q}
           scale={[1, leftArmRig.upper.len, 1]}
+          material={BOY_MATS.shirt}
           castShadow
         >
-          <cylinderGeometry args={[0.039, 0.036, 1, 6]} />
-          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+          <boxGeometry args={[0.078, 1, 0.078]} />
+        </mesh>
+        <mesh position={leftArmRig.elbow} material={BOY_MATS.shirtCuff} castShadow>
+          <boxGeometry args={[0.072, 0.072, 0.072]} />
         </mesh>
         <mesh
           position={leftArmRig.lower.mid}
           quaternion={leftArmRig.lower.q}
           scale={[1, leftArmRig.lower.len, 1]}
+          material={BOY_MATS.shirt}
           castShadow
         >
-          <cylinderGeometry args={[0.034, 0.031, 1, 6]} />
-          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+          <boxGeometry args={[0.068, 1, 0.068]} />
         </mesh>
-        <mesh position={leftArmRig.hand}>
-          <sphereGeometry args={[0.036, 6, 5]} />
-          <meshStandardMaterial color="#e5bc96" roughness={0.82} />
+        <mesh position={leftArmRig.hand} material={BOY_MATS.skin} castShadow>
+          <boxGeometry args={[0.056, 0.062, 0.064]} />
         </mesh>
 
-        {/* === RIGHT ARM (ANALYTICAL 2-BONE IK LOCKED TO BOW FROG) === */}
-        <mesh ref={rightUpperArmRef} castShadow>
-          <cylinderGeometry args={[0.039, 0.036, 1, 6]} />
-          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+        {/* === RIGHT ARM (STRUCTURED SHIRT SLEEVE + ANALYTICAL 2-BONE IK CLEAR OF WAISTCOAT) === */}
+        <mesh position={[-0.185, 0.375, 0.035]} material={BOY_MATS.shirt} castShadow>
+          <boxGeometry args={[0.078, 0.078, 0.078]} />
         </mesh>
-        <mesh ref={rightForearmRef} castShadow>
-          <cylinderGeometry args={[0.034, 0.031, 1, 6]} />
-          <meshStandardMaterial color="#efe7d6" roughness={0.88} />
+        <mesh ref={rightUpperArmRef} material={BOY_MATS.shirt} castShadow>
+          <boxGeometry args={[0.078, 1, 0.078]} />
         </mesh>
-        <mesh ref={rightHandRef}>
-          <sphereGeometry args={[0.036, 6, 5]} />
-          <meshStandardMaterial color="#e5bc96" roughness={0.82} />
+        <mesh ref={rightElbowRef} material={BOY_MATS.shirtCuff} castShadow>
+          <boxGeometry args={[0.072, 0.072, 0.072]} />
+        </mesh>
+        <mesh ref={rightForearmRef} material={BOY_MATS.shirt} castShadow>
+          <boxGeometry args={[0.068, 1, 0.068]} />
+        </mesh>
+        <mesh ref={rightHandRef} material={BOY_MATS.skin} castShadow>
+          <boxGeometry args={[0.056, 0.062, 0.064]} />
         </mesh>
 
         {/* === STYLIZED WOODEN VIOLIN ON LEFT COLLARBONE + BOW PHYSICALLY ON STRINGS === */}

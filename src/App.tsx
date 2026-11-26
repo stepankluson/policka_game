@@ -36,6 +36,10 @@ import {
   saveJackdawHuntBestScore,
   type JackdawHuntState,
 } from './game/jackdawHunt';
+import {
+  MICRO_SCENES,
+  type ActiveMicroScene,
+} from './game/microScenes';
 import { POIS, TELESCOPE_CONFIG, type PoiSpec, type TelescopeId } from './game/pois';
 import {
   computeTargetTimeProgress,
@@ -152,22 +156,61 @@ export function App() {
   // Jackdaw Hunt ("Lov kavek") 60s 1st-person arcade minigame state
   const [jackdawHunt, setJackdawHunt] = useState<JackdawHuntState>(INACTIVE_JACKDAW_HUNT_STATE);
 
+  // Tower Keeper's handheld lantern state (auto-stowed during day, auto-held at dusk/night, manually toggled with [L])
+  const [isLanternOut, setIsLanternOut] = useState<boolean>(false);
+
+  const handleToggleLantern = useCallback(() => {
+    setIsLanternOut((prev) => {
+      const next = !prev;
+      soundEngine.playLanternToggle(next);
+      return next;
+    });
+  }, []);
+
+  const handleDuskNightTransition = useCallback((isDuskOrNight: boolean) => {
+    setIsLanternOut(isDuskOrNight);
+  }, []);
+
+  // In-world ~6s historical landmark micro-scenes ("Historické scénky")
+  const [activeMicroScene, setActiveMicroScene] = useState<ActiveMicroScene | null>(null);
+  const microScenePlayIdRef = useRef(0);
+
+  const handleTriggerMicroScene = useCallback((poiId: PoiSpec['id']) => {
+    microScenePlayIdRef.current += 1;
+    setActiveMicroScene({ poiId, playId: microScenePlayIdRef.current });
+    soundEngine.playMicroSceneCue(poiId);
+  }, []);
+
+  const handleMicroSceneComplete = useCallback(() => {
+    setActiveMicroScene(null);
+  }, []);
+
   const exitPointerLockIfActive = useCallback(() => {
     if (document.pointerLockElement) {
       document.exitPointerLock();
     }
   }, []);
 
-  const handlePoiUnlocked = useCallback((poiId: PoiSpec['id']) => {
-    setUnlockedPois((prev) => {
-      if (prev.has(poiId)) return prev;
-      soundEngine.playChurchBell();
-      const next = new Set(prev);
-      next.add(poiId);
-      return next;
-    });
-    setActiveStoryPoiId(poiId);
-  }, []);
+  const unlockedPoisRef = useRef<Set<string>>(new Set());
+
+  const handlePoiUnlocked = useCallback(
+    (poiId: PoiSpec['id']) => {
+      const isNew = !unlockedPoisRef.current.has(poiId);
+      if (isNew) {
+        unlockedPoisRef.current.add(poiId);
+        soundEngine.playChurchBell();
+        setUnlockedPois((prev) => {
+          if (prev.has(poiId)) return prev;
+          const next = new Set(prev);
+          next.add(poiId);
+          return next;
+        });
+        handleTriggerMicroScene(poiId);
+      }
+      setActiveStoryPoiId(poiId);
+    },
+    [handleTriggerMicroScene],
+  );
 
   const handleSelectHotspot = useCallback(
     (id: BirthRoomHotspot['id']) => {
@@ -212,6 +255,7 @@ export function App() {
     setActiveStoryPoiId(null);
     setActiveHotspotId(null);
     setAimedHotspotId(null);
+    setActiveMicroScene(null);
     setIsNearInteriorExitDoor(false);
     setIsNearDoor(false);
     setNearBellRope(false);
@@ -272,6 +316,7 @@ export function App() {
     setActiveStoryPoiId(null);
     setActiveHotspotId(null);
     setAimedHotspotId(null);
+    setActiveMicroScene(null);
     setIsNearInteriorExitDoor(false);
     setAimingAtFire(false);
     setNearBellRope(false);
@@ -595,10 +640,20 @@ export function App() {
     };
   }, []);
 
-  // Keyboard shortcuts: Title [Enter]/[Space], [M] Mute, [H] Controls, [V] 1st/3rd person, [E] interact, [F] bell/fire watch
+  // Keyboard shortcuts: Title [Enter]/[Space], [M] Mute, [H] Controls, [L] Lantern, [V] 1st/3rd person, [E] interact, [F] bell/fire watch
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
+      const targetEl = event.target as HTMLElement | null;
+      if (
+        targetEl &&
+        (targetEl.tagName === 'INPUT' ||
+          targetEl.tagName === 'TEXTAREA' ||
+          targetEl.tagName === 'SELECT' ||
+          targetEl.isContentEditable)
+      ) {
+        return;
+      }
 
       if (gamePhase === 'title') {
         if (event.code === 'Enter' || event.code === 'Space') {
@@ -673,6 +728,16 @@ export function App() {
         return;
       }
 
+      if (
+        event.code === 'KeyL' &&
+        activeTelescope === null &&
+        activeStoryPoiId === null &&
+        !(fireWatch.active && fireWatch.step === 'summary')
+      ) {
+        handleToggleLantern();
+        return;
+      }
+
       if (event.code === 'KeyV' && activeTelescope === null && !fireWatch.active) {
         handleToggleGalleryCamera();
       } else if (event.code === 'KeyE') {
@@ -731,6 +796,7 @@ export function App() {
     handleSelectHotspot,
     handleExitTelescope,
     handleToggleGalleryCamera,
+    handleToggleLantern,
     handleToggleMute,
     exitPointerLockIfActive,
     transitionToMode,
@@ -821,6 +887,10 @@ export function App() {
         onExtinguishComplete={handleExtinguishComplete}
         jackdawHunt={jackdawHunt}
         onJackdawHuntFinished={handleFinishJackdawHunt}
+        isLanternOut={isLanternOut}
+        onDuskNightTransition={handleDuskNightTransition}
+        activeMicroScene={activeMicroScene}
+        onMicroSceneComplete={handleMicroSceneComplete}
       />
 
       {/* Cinematic Minimalist Title Screen Overlay (fades out smoothly during 1.65s fly-in) */}
@@ -1430,6 +1500,11 @@ export function App() {
                 <dd className="text-right text-amber-100/85">Interakce (zvon, prapor)</dd>
 
                 <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
+                  L
+                </dt>
+                <dd className="text-right text-amber-100/85">Lucerna (vytáhnout / schovat)</dd>
+
+                <dt className="rounded border border-amber-200/20 bg-amber-300/10 px-1.5 py-0.5 font-semibold text-amber-300">
                   M
                 </dt>
                 <dd className="text-right text-amber-100/85">Ztlumit zvuk</dd>
@@ -1710,6 +1785,19 @@ export function App() {
         );
       })()}
 
+      {/* Sleek Non-Blocking 1-Sentence Czech Historical Micro-Scene Caption Pill */}
+      {viewMode === 'exterior' && activeMicroScene && !jackdawHunt.active && (
+        <div
+          className={`pointer-events-none fixed left-1/2 z-30 w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 px-2 text-center transition-opacity duration-500 ${
+            activeTelescope !== null ? 'bottom-16' : 'bottom-16'
+          }`}
+        >
+          <div className="inline-block rounded-full border border-amber-300/40 bg-stone-950/88 px-5 py-2 text-xs font-medium tracking-wide text-amber-100 shadow-2xl backdrop-blur-md sm:text-sm">
+            {MICRO_SCENES[activeMicroScene.poiId].captionCz}
+          </div>
+        </div>
+      )}
+
       {/* Telescope Lens Vignette, Crosshair, Radial Scan Ring, Zoom Badge & Exterior Czech Story Card */}
       {viewMode === 'exterior' && (
         <TelescopeOverlay
@@ -1720,6 +1808,10 @@ export function App() {
           activeStoryPoi={activeStoryPoi}
           onExitTelescope={handleExitTelescope}
           onCloseStory={() => setActiveStoryPoiId(null)}
+          onReplayMicroScene={handleTriggerMicroScene}
+          isMicroScenePlayingForStory={
+            activeMicroScene !== null && activeMicroScene.poiId === activeStoryPoi?.id
+          }
         />
       )}
           </>

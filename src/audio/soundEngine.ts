@@ -1108,6 +1108,195 @@ class PolickaSoundEngine {
     caw.stop(now + 0.19);
   }
 
+  /** Subtle, crisp metallic brass latch/bail click when pulling out or stowing the handheld lantern */
+  public playLanternToggle(isOut: boolean): void {
+    if (this.isMuted) return;
+    this.ensureStarted();
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // 1. Crisp metallic latch transient (short filtered noise burst)
+    if (this.whiteNoiseBuffer) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.whiteNoiseBuffer;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(isOut ? 2750 : 2050, now);
+      bp.Q.setValueAtTime(5.2, now);
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.0001, now);
+      ng.gain.linearRampToValueAtTime(0.085, now + 0.004);
+      ng.gain.exponentialRampToValueAtTime(0.0001, now + 0.038);
+      src.connect(bp);
+      bp.connect(ng);
+      ng.connect(this.masterGain);
+      src.start(now, Math.random() * 1.2, 0.045);
+    }
+
+    // 2. Subtle iron/brass lantern handle clink (slightly brighter when raising, lower when stowing)
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(isOut ? 1360 : 1120, now + 0.014);
+    osc.frequency.exponentialRampToValueAtTime(isOut ? 1740 : 820, now + 0.056);
+
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, now + 0.014);
+    og.gain.linearRampToValueAtTime(0.07, now + 0.019);
+    og.gain.exponentialRampToValueAtTime(0.0001, now + 0.068);
+
+    osc.connect(og);
+    og.connect(this.masterGain);
+    osc.start(now + 0.014);
+    osc.stop(now + 0.075);
+  }
+
+  /**
+   * Plays a tailored, subtle ~1900 synthesized Web Audio cue for each of Polička's 8
+   * landmark historical micro-scenes (zero external audio files, respects mute).
+   */
+  public playMicroSceneCue(
+    poiId:
+      | 'market'
+      | 'town-hall'
+      | 'plague-column'
+      | 'medieval-gate'
+      | 'brewery'
+      | 'synsky-pond'
+      | 'st-michael-cemetery'
+      | 'railway',
+  ): void {
+    if (this.isMuted) return;
+    this.ensureStarted();
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    const scheduleTone = (
+      freq: number,
+      startOffset: number,
+      dur: number,
+      amp: number,
+      type: OscillatorType = 'sine',
+      endFreq?: number,
+    ) => {
+      const osc = ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now + startOffset);
+      if (endFreq !== undefined) {
+        osc.frequency.exponentialRampToValueAtTime(endFreq, now + startOffset + dur);
+      }
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now + startOffset);
+      g.gain.linearRampToValueAtTime(amp, now + startOffset + Math.min(0.03, dur * 0.25));
+      g.gain.exponentialRampToValueAtTime(0.0001, now + startOffset + dur);
+      osc.connect(g);
+      g.connect(this.masterGain!);
+      osc.start(now + startOffset);
+      osc.stop(now + startOffset + dur + 0.03);
+    };
+
+    const scheduleNoiseBurst = (
+      startOffset: number,
+      dur: number,
+      bpFreq: number,
+      q: number,
+      amp: number,
+    ) => {
+      if (!this.whiteNoiseBuffer) return;
+      const src = ctx.createBufferSource();
+      src.buffer = this.whiteNoiseBuffer;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(bpFreq, now + startOffset);
+      bp.Q.setValueAtTime(q, now + startOffset);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now + startOffset);
+      g.gain.linearRampToValueAtTime(amp, now + startOffset + Math.min(0.035, dur * 0.3));
+      g.gain.exponentialRampToValueAtTime(0.0001, now + startOffset + dur);
+      src.connect(bp);
+      bp.connect(g);
+      g.connect(this.masterGain!);
+      src.start(now + startOffset, Math.random() * 1.1, dur + 0.04);
+    };
+
+    switch (poiId) {
+      case 'railway': {
+        // Two-tone ~1900 steam whistle + 6 rhythmic chugging bursts
+        scheduleTone(587.3, 0.05, 1.05, 0.055, 'triangle');
+        scheduleTone(739.9, 0.08, 1.0, 0.045, 'sine');
+        for (let i = 0; i < 6; i++) {
+          scheduleNoiseBurst(0.25 + i * 0.42, 0.22, 680 + (i % 2) * 140, 2.2, 0.075);
+        }
+        break;
+      }
+      case 'town-hall': {
+        // Warm bronze double town-hall clock chime (grounded on open pavement)
+        scheduleTone(392.0, 0.08, 1.55, 0.08, 'sine');
+        scheduleTone(784.0, 0.08, 0.95, 0.028, 'sine');
+        scheduleTone(329.6, 0.85, 1.95, 0.085, 'sine');
+        scheduleTone(659.2, 0.85, 1.15, 0.028, 'sine');
+        break;
+      }
+      case 'market': {
+        // Warm bustling market crowd murmur swell (no bird sounds)
+        scheduleNoiseBurst(0.05, 1.65, 760, 0.9, 0.048);
+        scheduleNoiseBurst(1.15, 1.55, 980, 1.0, 0.042);
+        scheduleNoiseBurst(2.2, 1.35, 680, 0.95, 0.036);
+        break;
+      }
+      case 'plague-column': {
+        // Reverent soft triad bell shimmer + animated pigeon wing flutters
+        scheduleTone(523.25, 0.05, 1.7, 0.05, 'sine');
+        scheduleTone(659.25, 0.24, 1.6, 0.045, 'sine');
+        scheduleTone(783.99, 0.44, 1.8, 0.04, 'sine');
+        for (let i = 0; i < 5; i++) {
+          scheduleNoiseBurst(0.45 + i * 0.16, 0.12, 1620 + i * 70, 2.4, 0.042);
+        }
+        break;
+      }
+      case 'medieval-gate': {
+        // Crisp rhythmic watchman footsteps along outer footpath + subtle brass lantern clink
+        for (let i = 0; i < 6; i++) {
+          scheduleNoiseBurst(0.18 + i * 0.44, 0.065, 480 + (i % 2) * 70, 2.8, 0.05);
+        }
+        scheduleTone(1460, 0.36, 0.08, 0.042, 'triangle', 1760);
+        scheduleTone(1380, 1.68, 0.075, 0.034, 'triangle', 1640);
+        break;
+      }
+      case 'brewery': {
+        // Horse-drawn dray hooves + wooden barrel clatter outside brewery gate
+        for (let i = 0; i < 7; i++) {
+          scheduleNoiseBurst(0.14 + i * 0.34, 0.07, 520 + (i % 2) * 90, 2.8, 0.052);
+        }
+        scheduleTone(170, 0.38, 0.16, 0.07, 'triangle', 112);
+        scheduleTone(155, 0.94, 0.16, 0.06, 'triangle', 102);
+        break;
+      }
+      case 'synsky-pond': {
+        // Gentle oar ripples + crisp fish-jump water splashes (zero bird sounds)
+        scheduleNoiseBurst(0.15, 0.32, 1080, 2.8, 0.042);
+        const splashTimes = [0.72, 1.92, 3.22, 4.32];
+        for (const st of splashTimes) {
+          scheduleNoiseBurst(st, 0.22, 1420, 2.2, 0.058);
+          scheduleTone(460, st + 0.02, 0.12, 0.032, 'sine', 240);
+        }
+        break;
+      }
+      case 'st-michael-cemetery': {
+        // Soft, distant low bronze church bell toll (respectful & atmospheric)
+        scheduleTone(146.83, 0.1, 3.4, 0.085, 'sine'); // D3 fundamental
+        scheduleTone(293.66, 0.1, 2.4, 0.04, 'sine');  // D4 octave
+        scheduleTone(174.61, 0.1, 2.0, 0.028, 'sine'); // F3 minor tierce
+        scheduleTone(146.83, 2.85, 3.2, 0.072, 'sine'); // Second distant toll
+        scheduleTone(293.66, 2.85, 2.1, 0.032, 'sine');
+        break;
+      }
+    }
+  }
+
   /** Cleanly stops all schedulers, oscillators, sources, and closes AudioContext */
   public dispose(): void {
     if (this.clockIntervalId !== null) {

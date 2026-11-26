@@ -9,6 +9,8 @@ interface TelescopeOverlayProps {
   activeStoryPoi: PoiSpec | null;
   onExitTelescope: () => void;
   onCloseStory: () => void;
+  onReplayMicroScene?: (poiId: PoiSpec['id']) => void;
+  isMicroScenePlayingForStory?: boolean;
 }
 
 const RING_RADIUS = 38;
@@ -22,6 +24,8 @@ export function TelescopeOverlay({
   activeStoryPoi,
   onExitTelescope,
   onCloseStory,
+  onReplayMicroScene,
+  isMicroScenePlayingForStory = false,
 }: TelescopeOverlayProps) {
   const scope = activeTelescope
     ? TELESCOPES.find((t) => t.id === activeTelescope) ?? null
@@ -235,6 +239,21 @@ export function TelescopeOverlay({
           <p className="mt-3 text-sm leading-relaxed text-amber-100/90">
             {activeStoryPoi.storyCz}
           </p>
+
+          {onReplayMicroScene && (
+            <div className="mt-3.5 flex justify-end border-t border-amber-200/15 pt-3">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onReplayMicroScene(activeStoryPoi.id);
+                }}
+                className="cursor-pointer rounded-full border border-amber-300/40 bg-amber-400/15 px-3.5 py-1 text-xs font-medium tracking-wide text-amber-200 transition hover:border-amber-200/65 hover:bg-amber-400/25 hover:text-amber-50"
+              >
+                {isMicroScenePlayingForStory ? 'Přehrát scénku znovu' : 'Přehrát scénku'}
+              </button>
+            </div>
+          )}
         </aside>
       )}
     </>

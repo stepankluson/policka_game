@@ -13,6 +13,7 @@ interface FirstPersonGalleryCameraProps {
   active: boolean;
   onPointerLockChange: (locked: boolean) => void;
   jackdawHuntActive?: boolean;
+  isLanternOut?: boolean;
 }
 
 const EYE_HEIGHT = 1.65;
@@ -34,6 +35,7 @@ export function FirstPersonGalleryCamera({
   active,
   onPointerLockChange,
   jackdawHuntActive = false,
+  isLanternOut = false,
 }: FirstPersonGalleryCameraProps) {
   const { camera, gl } = useThree();
 
@@ -195,10 +197,13 @@ export function FirstPersonGalleryCamera({
     camera.rotation.x = Math.min(MAX_PITCH, pitchRef.current + recoilPitch);
     camera.rotation.z = 0;
 
-    // Update subtle First-Person handheld brass lantern viewmodel & warm PointLight (hidden when rifle is equipped)
-    if (jackdawHuntActive) {
+    // Update subtle First-Person handheld brass lantern viewmodel & warm PointLight (hidden when stowed or rifle is equipped)
+    if (jackdawHuntActive || !isLanternOut) {
       if (lanternGroupRef.current) lanternGroupRef.current.visible = false;
-      if (lanternLightRef.current) lanternLightRef.current.intensity = 0;
+      if (lanternLightRef.current) {
+        lanternLightRef.current.visible = false;
+        lanternLightRef.current.intensity = 0;
+      }
       return;
     }
     const moveDist = Math.hypot(
@@ -227,6 +232,7 @@ export function FirstPersonGalleryCamera({
 
     if (lanternLightRef.current) {
       const nf = timeOfDayState.nightFactor;
+      lanternLightRef.current.visible = true;
       lanternLightRef.current.intensity = 1.6 + nf * 3.4;
     }
   });
