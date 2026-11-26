@@ -6,6 +6,8 @@ import { NIGHT_MATERIALS } from '../game/timeOfDay';
 interface TowerProps {
   cameraCollidersRef?: RefObject<THREE.Object3D[]>;
   isWinter?: boolean;
+  /** Hides exterior tower shaft & gallery while keeping ChurchNave & Vysočina ground plane visible (used inside Bell Chamber) */
+  hideTowerShaft?: boolean;
 }
 
 const SIDES = [0, 1, 2, 3] as const;
@@ -456,7 +458,11 @@ function ChurchNave({
   );
 }
 
-export function Tower({ cameraCollidersRef, isWinter = false }: TowerProps) {
+export function Tower({
+  cameraCollidersRef,
+  isWinter = false,
+  hideTowerShaft = false,
+}: TowerProps) {
   const collidersGroupRef = useRef<THREE.Group>(null);
 
   useEffect(() => {
@@ -542,6 +548,7 @@ export function Tower({ cameraCollidersRef, isWinter = false }: TowerProps) {
 
   return (
     <group name="church-of-st-james-policka">
+      <group visible={!hideTowerShaft}>
       {/* === 1. WARM PALE SANDSTONE TOWER SHAFT BELOW GALLERY === */}
       <mesh
         position={[0, -shaftDepth / 2 - floorThickness, 0]}
@@ -633,9 +640,12 @@ export function Tower({ cameraCollidersRef, isWinter = false }: TowerProps) {
         ))}
       </group>
 
-      {/* Main Neo-Gothic Church Nave (chrámová loď) below */}
+      </group>
+
+      {/* Main Neo-Gothic Church Nave (chrámová loď) below — kept visible from Bell Chamber louvers */}
       <ChurchNave groundY={groundY} coreHalf={coreHalf} isWinter={isWinter} />
 
+      <group visible={!hideTowerShaft}>
       {/* Carved Sandstone Gothic Corbel Brackets (krakorce) supporting the stone ochoz */}
       {SIDES.map((side) => (
         <group key={`corbels-${side}`} rotation={[0, (side * Math.PI) / 2, 0]}>
@@ -972,8 +982,9 @@ export function Tower({ cameraCollidersRef, isWinter = false }: TowerProps) {
           </mesh>
         </group>
       ))}
+      </group>
 
-      {/* === 6. VYSOČINA VALLEY GROUND PLANE FAR BELOW === */}
+      {/* === 6. VYSOČINA VALLEY GROUND PLANE FAR BELOW (shared with Bell Chamber view) === */}
       <mesh
         position={[0, groundY, 0]}
         rotation={[-Math.PI / 2, 0, 0]}

@@ -29,6 +29,7 @@ import {
   updateSharedNightMaterials,
 } from '../game/timeOfDay';
 import { Atmosphere } from './Atmosphere';
+import { BellChamberInterior } from './BellChamberInterior';
 import { BirthRoomInterior } from './BirthRoomInterior';
 import { FireWatchGalleryProps } from './FireWatchGalleryProps';
 import { FirstPersonGalleryCamera } from './FirstPersonGalleryCamera';
@@ -41,7 +42,7 @@ import { Tower } from './Tower';
 import { TownDiorama } from './TownDiorama';
 
 export type GamePhase = 'title' | 'transitioning' | 'playing';
-export type ViewMode = 'exterior' | 'interior';
+export type ViewMode = 'exterior' | 'interior' | 'bellChamber';
 export type GalleryCameraMode = 'third' | 'first';
 
 /** Pixels per degree on the top-center compass tape (576px per full 360° cycle) */
@@ -305,6 +306,12 @@ interface GameSceneProps {
   onInteractRifle: () => void;
   onPointerLockChange: (locked: boolean) => void;
   onNearInteriorExitDoorChange: (near: boolean) => void;
+  onNearTrapdoorChange?: (near: boolean) => void;
+  onEnterBellChamber?: () => void;
+  onNearBellChamberExitChange?: (near: boolean) => void;
+  onNearBellChamberRopeChange?: (near: boolean) => void;
+  onRingChamberBell?: () => void;
+  onClimbToBirthRoom?: () => void;
   fireWatch: FireWatchState;
   onFireSpotted: () => void;
   onFireMaxSpread: () => void;
@@ -841,6 +848,12 @@ export function GameScene({
   onInteractRifle,
   onPointerLockChange,
   onNearInteriorExitDoorChange,
+  onNearTrapdoorChange,
+  onEnterBellChamber,
+  onNearBellChamberExitChange,
+  onNearBellChamberRopeChange,
+  onRingChamberBell,
+  onClimbToBirthRoom,
   fireWatch,
   onFireSpotted,
   onFireMaxSpread,
@@ -885,11 +898,13 @@ export function GameScene({
 
   const isPlaying = gamePhase === 'playing';
   const isInterior = isPlaying && viewMode === 'interior';
-  const isInTelescope = isPlaying && !isInterior && activeTelescope !== null;
+  const isBellChamber = isPlaying && viewMode === 'bellChamber';
+  const isAnyInterior = isInterior || isBellChamber;
+  const isInTelescope = isPlaying && !isAnyInterior && activeTelescope !== null;
   const isExteriorFirstPerson =
-    isPlaying && !isInterior && !isInTelescope && galleryCameraMode === 'first';
+    isPlaying && !isAnyInterior && !isInTelescope && galleryCameraMode === 'first';
   const isExteriorThirdPerson =
-    isPlaying && !isInterior && !isInTelescope && galleryCameraMode === 'third';
+    isPlaying && !isAnyInterior && !isInTelescope && galleryCameraMode === 'third';
 
   return (
     <Canvas
@@ -928,7 +943,7 @@ export function GameScene({
       />
 
       {/* Zero-Re-Render Top-Center Compass Driver (active only while playing outdoors) */}
-      <CompassDriver active={isPlaying && !isInterior} />
+      <CompassDriver active={isPlaying && !isAnyInterior} />
 
       {/* Fire Watch Frame Driver (spotting ray, 22-28s spread timer, direct DOM HUD refs, proximity) */}
       <FireWatchDriver
@@ -943,28 +958,34 @@ export function GameScene({
       {/* Exterior sky, fog & golden-hour sunlight (unmounted while inside birth room) */}
       {!isInterior && <Atmosphere graphicsQuality={graphicsQuality} />}
 
-      {/* Exterior St. James Church & Polička Town (kept mounted for instant gallery return) */}
+      {/* Exterior St. James Church & Polička Town (in Bell Chamber, keep ChurchNave, Vysočina ground & TownDiorama visible through louvers while hiding only exterior tower shaft/gallery props) */}
       <group visible={!isInterior}>
         <group
           name="st-james-church-root"
           position={[CHURCH_TRANSFORM.x, 0, CHURCH_TRANSFORM.z]}
           rotation={[0, CHURCH_TRANSFORM.rotationY, 0]}
         >
-          <Tower cameraCollidersRef={cameraCollidersRef} isWinter={isWinter} />
-          <Telescopes
-            nearbyTelescope={nearbyTelescope}
-            activeTelescope={activeTelescope}
+          <Tower
+            cameraCollidersRef={cameraCollidersRef}
+            isWinter={isWinter}
+            hideTowerShaft={isBellChamber}
           />
-          <FireWatchGalleryProps
-            fireWatch={fireWatch}
-            hideGalleryRifle={jackdawHunt.active}
-          />
+          <group visible={!isBellChamber}>
+            <Telescopes
+              nearbyTelescope={nearbyTelescope}
+              activeTelescope={activeTelescope}
+            />
+            <FireWatchGalleryProps
+              fireWatch={fireWatch}
+              hideGalleryRifle={jackdawHunt.active}
+            />
+          </group>
           <GalleryInteractionSensor
             playerLocalPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
             galleryCameraMode={galleryCameraMode}
             active={
-              isPlaying && !isInterior && !isInTelescope && !jackdawHunt.active && !settingsOpen
+              isPlaying && !isAnyInterior && !isInTelescope && !jackdawHunt.active && !settingsOpen
             }
             fireWatchActive={fireWatch.active}
             fireWatchStep={fireWatch.step}
@@ -976,8 +997,8 @@ export function GameScene({
           <Player
             playerPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
-            disabled={!isPlaying || isInTelescope || isInterior || settingsOpen}
-            visible={!isExteriorFirstPerson}
+            disabled={!isPlaying || isInTelescope || isAnyInterior || settingsOpen}
+            visible={!isExteriorFirstPerson && !isBellChamber}
             isLanternOut={isLanternOut}
             innerLimit={
               isExteriorFirstPerson
@@ -1020,9 +1041,9 @@ export function GameScene({
         onHuntFinished={onJackdawHuntFinished}
       />
       <TelescopeCamera
-        activeTelescope={!isPlaying || isInterior ? null : activeTelescope}
+        activeTelescope={!isPlaying || isAnyInterior ? null : activeTelescope}
         unlockedPois={unlockedPois}
-        disabled={!isPlaying || isInterior}
+        disabled={!isPlaying || isAnyInterior}
         onScanChange={onScanChange}
         onZoomChange={onZoomChange}
         onPoiUnlocked={onPoiUnlocked}
@@ -1040,6 +1061,21 @@ export function GameScene({
           onInteractRifle={onInteractRifle}
           onPointerLockChange={onPointerLockChange}
           onNearExitDoorChange={onNearInteriorExitDoorChange}
+          onNearTrapdoorChange={onNearTrapdoorChange}
+          onEnterBellChamber={onEnterBellChamber}
+          graphicsQuality={graphicsQuality}
+        />
+      )}
+
+      {/* Interactive Bell Chamber ("Zvonové patro") inside St. Jacob's Tower overlooking live 3D Polička */}
+      {isBellChamber && (
+        <BellChamberInterior
+          onPointerLockChange={onPointerLockChange}
+          onNearStairExitChange={onNearBellChamberExitChange ?? (() => {})}
+          onNearBellRopeChange={onNearBellChamberRopeChange ?? (() => {})}
+          onRingBell={onRingChamberBell ?? (() => {})}
+          onClimbToBirthRoom={onClimbToBirthRoom ?? (() => {})}
+          isWinter={isWinter}
           graphicsQuality={graphicsQuality}
         />
       )}

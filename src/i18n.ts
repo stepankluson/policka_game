@@ -13,9 +13,13 @@ export interface Translations {
   };
   hud: {
     eyebrowInterior: string;
+    eyebrowBellChamber: string;
     eyebrowExterior: string;
     birthRoomTitle: string;
+    bellChamberTitle: string;
     backToGallery: string;
+    backToBirthRoom: string;
+    bellChamberHint: string;
     timeModes: Record<TimeOfDayMode, string>;
     timeToggleTitle: string;
     seasonWinter: string;
@@ -40,6 +44,9 @@ export interface Translations {
     hangSignalFlag: string;
     hangSignalLantern: string;
     enterBirthRoom: string;
+    enterBellChamber: string;
+    climbToBirthRoom: string;
+    ringGreatBell: string;
     startFireWatch: string;
     takeRifleHunt: string;
     useTelescope: string;
@@ -187,9 +194,13 @@ const CS: Translations = {
   },
   hud: {
     eyebrowInterior: 'Polička · cca 1900',
+    eyebrowBellChamber: 'Polička · Zvonové patro',
     eyebrowExterior: 'Polička · Ochoz',
     birthRoomTitle: 'Rodná světnička',
+    bellChamberTitle: 'Zvonové patro',
     backToGallery: '[E] Zpět na ochoz',
+    backToBirthRoom: '[E] Zpět do světničky',
+    bellChamberHint: 'Zvon Jakub · Hodinový stroj · Žaluzie s výhledem na Poličku',
     timeModes: {
       auto: 'Auto',
       day: 'Den',
@@ -238,6 +249,9 @@ const CS: Translations = {
     hangSignalFlag: 'Vyvěsit červený prapor',
     hangSignalLantern: 'Vyvěsit červenou lucernu',
     enterBirthRoom: 'Vstoupit do rodné světničky',
+    enterBellChamber: 'Vstoupit do zvonového patra',
+    climbToBirthRoom: 'Vystoupit do rodné světničky',
+    ringGreatBell: 'Zazvonit na zvon Jakub',
     startFireWatch: 'Spustit Požární hlídku',
     takeRifleHunt: 'Vzít pušku — Lov kavek',
     useTelescope: 'Podívat se dalekohledem',
@@ -510,9 +524,13 @@ const EN: Translations = {
   },
   hud: {
     eyebrowInterior: 'Polička · ca. 1900',
+    eyebrowBellChamber: 'Polička · Bell Chamber',
     eyebrowExterior: 'Polička · Gallery',
     birthRoomTitle: 'Birth Room',
+    bellChamberTitle: 'Bell Chamber',
     backToGallery: '[E] Back to Gallery',
+    backToBirthRoom: '[E] Climb to Birth Room',
+    bellChamberHint: 'Great Bell Jakub · Tower Clockwork · Louvered Belfry Windows',
     timeModes: {
       auto: 'Auto',
       day: 'Day',
@@ -561,6 +579,9 @@ const EN: Translations = {
     hangSignalFlag: 'Hang red signal flag',
     hangSignalLantern: 'Hang red signal lantern',
     enterBirthRoom: 'Enter the Birth Room',
+    enterBellChamber: 'Enter Bell Chamber',
+    climbToBirthRoom: 'Climb to Birth Room',
+    ringGreatBell: 'Ring the Bell',
     startFireWatch: 'Start Fire Watch',
     takeRifleHunt: 'Take Rifle — Jackdaw Hunt',
     useTelescope: 'Look through telescope',

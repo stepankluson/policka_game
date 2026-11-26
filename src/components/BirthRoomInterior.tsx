@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { BELL_CHAMBER_CONFIG } from '../game/bellChamber';
 import {
   BIRTH_ROOM_HOTSPOTS,
   createBlueFolkWallpaperTexture,
@@ -24,6 +25,8 @@ interface BirthRoomInteriorProps {
   onInteractRifle: () => void;
   onPointerLockChange: (locked: boolean) => void;
   onNearExitDoorChange: (near: boolean) => void;
+  onNearTrapdoorChange?: (near: boolean) => void;
+  onEnterBellChamber?: () => void;
   graphicsQuality?: GraphicsQuality;
 }
 
@@ -53,6 +56,7 @@ const EXIT_DOOR_RADIUS = 1.95;
 function InteriorFPSControls({
   hotspotMeshesRef,
   rifleHitMeshRef,
+  trapdoorHitMeshRef,
   modalOpen,
   onSelectHotspot,
   onAimedHotspotChange,
@@ -60,9 +64,12 @@ function InteriorFPSControls({
   onInteractRifle,
   onPointerLockChange,
   onNearExitDoorChange,
+  onNearTrapdoorChange,
+  onEnterBellChamber,
 }: {
   hotspotMeshesRef: RefObject<THREE.Object3D[]>;
   rifleHitMeshRef: RefObject<THREE.Object3D | null>;
+  trapdoorHitMeshRef: RefObject<THREE.Object3D | null>;
   modalOpen: boolean;
   onSelectHotspot: (id: BirthRoomHotspot['id']) => void;
   onAimedHotspotChange: (id: BirthRoomHotspot['id'] | null) => void;
@@ -70,6 +77,8 @@ function InteriorFPSControls({
   onInteractRifle: () => void;
   onPointerLockChange: (locked: boolean) => void;
   onNearExitDoorChange: (near: boolean) => void;
+  onNearTrapdoorChange?: (near: boolean) => void;
+  onEnterBellChamber?: () => void;
 }) {
   const { camera, gl } = useThree();
   const inputRef = useKeyboard();
@@ -86,6 +95,7 @@ function InteriorFPSControls({
   const aimedIdRef = useRef<BirthRoomHotspot['id'] | null>(null);
   const aimedRifleRef = useRef(false);
   const nearDoorRef = useRef(false);
+  const nearTrapdoorRef = useRef(false);
   const rayTargetsScratchRef = useRef<THREE.Object3D[]>([]);
 
   const forwardRef = useRef(new THREE.Vector3());
@@ -137,8 +147,12 @@ function InteriorFPSControls({
         return;
       }
 
-      // If pointer is locked and player is aiming at the wall rifle or a hotspot, Left Click interacts
+      // If pointer is locked and player is aiming at the trapdoor, wall rifle, or a hotspot, Left Click interacts
       if (document.pointerLockElement === domElement) {
+        if (nearTrapdoorRef.current && onEnterBellChamber) {
+          onEnterBellChamber();
+          return;
+        }
         if (aimedRifleRef.current) {
           onInteractRifle();
           return;
@@ -182,6 +196,7 @@ function InteriorFPSControls({
       onAimedHotspotChange(null);
       onAimedRifleChange(false);
       onNearExitDoorChange(false);
+      onNearTrapdoorChange?.(false);
 
       if (persp.isPerspectiveCamera) {
         persp.fov = 48;
@@ -198,6 +213,8 @@ function InteriorFPSControls({
     onInteractRifle,
     onPointerLockChange,
     onNearExitDoorChange,
+    onNearTrapdoorChange,
+    onEnterBellChamber,
   ]);
 
   useFrame((_, rawDelta) => {
@@ -283,27 +300,34 @@ function InteriorFPSControls({
       onNearExitDoorChange(isNearDoor);
     }
 
-    // 3. Crosshair raycast from screen center (0, 0) against 3D hotspot targets & wall-mounted hunting rifle
-    if (isLockedRef.current && !modalOpenRef.current) {
+    // 3. Crosshair raycast from screen center (0, 0) against floor trapdoor hitbox, wall rifle, and 3D hotspots
+    let nextAimed: BirthRoomHotspot['id'] | null = null;
+    let nextAimedRifle = false;
+    let nextAimedTrapdoor = false;
+
+    if (!modalOpenRef.current) {
       const targets = rayTargetsScratchRef.current;
       targets.length = 0;
-      const hsList = hotspotMeshesRef.current;
-      for (let i = 0; i < hsList.length; i++) targets.push(hsList[i]);
-      if (rifleHitMeshRef.current) targets.push(rifleHitMeshRef.current);
+      if (trapdoorHitMeshRef.current) targets.push(trapdoorHitMeshRef.current);
+      if (isLockedRef.current) {
+        const hsList = hotspotMeshesRef.current;
+        for (let i = 0; i < hsList.length; i++) targets.push(hsList[i]);
+        if (rifleHitMeshRef.current) targets.push(rifleHitMeshRef.current);
+      }
 
-      let nextAimed: BirthRoomHotspot['id'] | null = null;
-      let nextAimedRifle = false;
       if (targets.length > 0) {
         const raycaster = raycasterRef.current;
         raycaster.setFromCamera(ndcCenterRef.current, camera);
-        raycaster.near = 0.1;
+        raycaster.near = 0.08;
         raycaster.far = 5.5;
         const hits = hitsRef.current;
         hits.length = 0;
         raycaster.intersectObjects(targets, false, hits);
         if (hits.length > 0) {
           const hit = hits[0];
-          if (hit.object.userData.isHuntingRifle && hit.distance <= 3.2) {
+          if (hit.object.userData.isBellTrapdoor && hit.distance <= 3.8) {
+            nextAimedTrapdoor = true;
+          } else if (hit.object.userData.isHuntingRifle && hit.distance <= 3.2) {
             nextAimedRifle = true;
           } else {
             const id = hit.object.userData.hotspotId as BirthRoomHotspot['id'] | undefined;
@@ -311,14 +335,32 @@ function InteriorFPSControls({
           }
         }
       }
-      if (nextAimed !== aimedIdRef.current) {
-        aimedIdRef.current = nextAimed;
-        onAimedHotspotChange(nextAimed);
-      }
-      if (nextAimedRifle !== aimedRifleRef.current) {
-        aimedRifleRef.current = nextAimedRifle;
-        onAimedRifleChange(nextAimedRifle);
-      }
+    }
+
+    // Trigger trapdoor prompt when looking directly at the elevated hatch hitbox OR standing right over it
+    const [tx, , tz] = BELL_CHAMBER_CONFIG.birthRoomTrapdoorPos;
+    const trapDist = Math.hypot(posRef.current.x - tx, posRef.current.z - tz);
+    const isTrapdoorActive =
+      nextAimedTrapdoor ||
+      (trapDist < 1.9 && pitchRef.current < -0.25) ||
+      trapDist < 1.15;
+
+    if (isTrapdoorActive) {
+      nextAimed = null;
+      nextAimedRifle = false;
+    }
+
+    if (isTrapdoorActive !== nearTrapdoorRef.current) {
+      nearTrapdoorRef.current = isTrapdoorActive;
+      onNearTrapdoorChange?.(isTrapdoorActive);
+    }
+    if (nextAimed !== aimedIdRef.current) {
+      aimedIdRef.current = nextAimed;
+      onAimedHotspotChange(nextAimed);
+    }
+    if (nextAimedRifle !== aimedRifleRef.current) {
+      aimedRifleRef.current = nextAimedRifle;
+      onAimedRifleChange(nextAimedRifle);
     }
   });
 
@@ -1056,11 +1098,14 @@ export function BirthRoomInterior({
   onInteractRifle,
   onPointerLockChange,
   onNearExitDoorChange,
+  onNearTrapdoorChange,
+  onEnterBellChamber,
   graphicsQuality = 'high',
 }: BirthRoomInteriorProps) {
   const hotspotMeshesRef = useRef<THREE.Object3D[]>([]);
   const hotspotMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const rifleHitMeshRef = useRef<THREE.Object3D | null>(null);
+  const trapdoorHitMeshRef = useRef<THREE.Object3D | null>(null);
 
   const textures = useMemo(() => {
     return {
@@ -1092,6 +1137,7 @@ export function BirthRoomInterior({
       <InteriorFPSControls
         hotspotMeshesRef={hotspotMeshesRef}
         rifleHitMeshRef={rifleHitMeshRef}
+        trapdoorHitMeshRef={trapdoorHitMeshRef}
         modalOpen={activeHotspotId !== null}
         onSelectHotspot={onSelectHotspot}
         onAimedHotspotChange={onAimedHotspotChange}
@@ -1099,6 +1145,8 @@ export function BirthRoomInterior({
         onInteractRifle={onInteractRifle}
         onPointerLockChange={onPointerLockChange}
         onNearExitDoorChange={onNearExitDoorChange}
+        onNearTrapdoorChange={onNearTrapdoorChange}
+        onEnterBellChamber={onEnterBellChamber}
       />
 
       {/* === WARM 1900 INTERIOR LIGHTING === */}
@@ -1537,6 +1585,56 @@ export function BirthRoomInterior({
           }}
         >
           <boxGeometry args={[1.18, 0.34, 0.24]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      </group>
+
+      {/* === 9B. WOODEN FLOOR TRAPDOOR TO BELL CHAMBER ("ZVONOVÉ PATRO") === */}
+      <group
+        name="bell-chamber-floor-trapdoor"
+        position={[
+          BELL_CHAMBER_CONFIG.birthRoomTrapdoorPos[0],
+          0.02,
+          BELL_CHAMBER_CONFIG.birthRoomTrapdoorPos[2],
+        ]}
+        onClick={(e) => {
+          e.stopPropagation();
+          onEnterBellChamber?.();
+        }}
+      >
+        {/* Dark timber frame set flush into the floorboards */}
+        <mesh position={[0, 0.015, 0]} receiveShadow>
+          <boxGeometry args={[0.96, 0.04, 0.96]} />
+          <meshStandardMaterial color={WOOD_DARK} roughness={0.92} />
+        </mesh>
+        {/* Planked wooden hatch door */}
+        <mesh position={[0, 0.032, 0]} receiveShadow>
+          <boxGeometry args={[0.84, 0.035, 0.84]} />
+          <meshStandardMaterial color={WOOD_OAK} roughness={0.88} />
+        </mesh>
+        {/* Two wrought-iron strap hinges */}
+        <mesh position={[-0.3, 0.055, -0.34]}>
+          <boxGeometry args={[0.22, 0.012, 0.06]} />
+          <meshStandardMaterial color={IRON_BLACK} roughness={0.55} metalness={0.7} />
+        </mesh>
+        <mesh position={[0.3, 0.055, -0.34]}>
+          <boxGeometry args={[0.22, 0.012, 0.06]} />
+          <meshStandardMaterial color={IRON_BLACK} roughness={0.55} metalness={0.7} />
+        </mesh>
+        {/* Wrought-iron pull ring handle */}
+        <mesh position={[0, 0.062, 0.28]} rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.065, 0.014, 6, 14]} />
+          <meshStandardMaterial color={IRON_BLACK} roughness={0.48} metalness={0.78} />
+        </mesh>
+        {/* Generous, slightly elevated invisible hitbox so floor planks never block downward look raycast */}
+        <mesh
+          ref={(el) => {
+            trapdoorHitMeshRef.current = el;
+          }}
+          position={[0, 0.14, 0]}
+          userData={{ isBellTrapdoor: true }}
+        >
+          <boxGeometry args={[1.28, 0.24, 1.28]} />
           <meshBasicMaterial transparent opacity={0} depthWrite={false} />
         </mesh>
       </group>

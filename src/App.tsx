@@ -13,6 +13,7 @@ import { triggerJackdawStartle } from './components/PolickaJackdaws';
 import { SettingsModal } from './components/SettingsModal';
 import type { ScanState } from './components/TelescopeCamera';
 import { TelescopeOverlay } from './components/TelescopeOverlay';
+import { triggerTowerBellRing } from './game/bellChamber';
 import {
   BIRTH_ROOM_HOTSPOTS,
   type BirthRoomHotspot,
@@ -157,6 +158,9 @@ export function App() {
   const [nearbyTelescope, setNearbyTelescope] = useState<TelescopeId | null>(null);
   const [isNearDoor, setIsNearDoor] = useState(false);
   const [isNearInteriorExitDoor, setIsNearInteriorExitDoor] = useState(false);
+  const [isNearTrapdoor, setIsNearTrapdoor] = useState(false);
+  const [isNearBellChamberExit, setIsNearBellChamberExit] = useState(false);
+  const [isNearBellChamberRope, setIsNearBellChamberRope] = useState(false);
   const [activeTelescope, setActiveTelescope] = useState<TelescopeId | null>(null);
   const [scanState, setScanState] = useState<ScanState>({ poiId: null, progress: 0 });
   const [zoomLevel, setZoomLevel] = useState<number>(DEFAULT_ZOOM);
@@ -544,9 +548,8 @@ export function App() {
     if (now - lastFreeBellTollMsRef.current < 4000) return; // 4s anti-spam cooldown
     lastFreeBellTollMsRef.current = now;
     fireWatchRuntime.bellPullAnim = 1;
-    soundEngine.playChurchBellToll();
+    triggerTowerBellRing('gallery');
     soundEngine.playJackdawCaws();
-    triggerJackdawStartle();
     if (!unlockedFireWatch) {
       setUnlockedFireWatch(true);
       writeBoolFlag(UNLOCK_FIRE_WATCH_KEY, true);
@@ -664,6 +667,9 @@ export function App() {
         setActiveHotspotId(null);
         setAimedHotspotId(null);
         setIsNearInteriorExitDoor(false);
+        setIsNearTrapdoor(false);
+        setIsNearBellChamberExit(false);
+        setIsNearBellChamberRope(false);
         if (nextMode === 'interior') {
           setVisitedBirthRoom((prev) => {
             if (!prev) soundEngine.playChurchBell();
@@ -676,6 +682,21 @@ export function App() {
     },
     [isFading, viewMode, exitPointerLockIfActive],
   );
+
+  const handleEnterBellChamber = useCallback(() => {
+    transitionToMode('bellChamber');
+  }, [transitionToMode]);
+
+  const handleClimbToBirthRoom = useCallback(() => {
+    transitionToMode('interior');
+  }, [transitionToMode]);
+
+  const handleRingChamberBell = useCallback(() => {
+    if (triggerTowerBellRing('chamber')) {
+      fireWatchRuntime.bellPullAnim = 1;
+      soundEngine.playJackdawCaws();
+    }
+  }, []);
 
   const handleEnterGallery = useCallback(() => {
     setGamePhase((prev) => {
@@ -749,9 +770,25 @@ export function App() {
         return;
       }
 
+      if (viewMode === 'bellChamber') {
+        if (event.code === 'KeyE') {
+          if (isNearBellChamberRope) {
+            handleRingChamberBell();
+          } else if (isNearBellChamberExit) {
+            transitionToMode('interior');
+          }
+        } else if (event.code === 'Escape') {
+          if (document.pointerLockElement) return;
+          transitionToMode('interior');
+        }
+        return;
+      }
+
       if (viewMode === 'interior') {
         if (event.code === 'KeyE') {
-          if (aimedRifle && activeHotspotId === null) {
+          if (isNearTrapdoor && activeHotspotId === null) {
+            transitionToMode('bellChamber');
+          } else if (aimedRifle && activeHotspotId === null) {
             handleInteractBirthRoomRifle();
           } else if (aimedHotspotId !== null && activeHotspotId === null) {
             handleSelectHotspot(aimedHotspotId);
@@ -857,6 +894,10 @@ export function App() {
     nearbyTelescope,
     isNearDoor,
     isNearInteriorExitDoor,
+    isNearTrapdoor,
+    isNearBellChamberRope,
+    isNearBellChamberExit,
+    handleRingChamberBell,
     activeStoryPoiId,
     activeHotspotId,
     aimedHotspotId,
@@ -906,7 +947,7 @@ export function App() {
     isPointerLocked &&
     activeTelescope === null &&
     !jackdawHunt.active &&
-    (viewMode === 'interior' || galleryCameraMode === 'first');
+    (viewMode === 'interior' || viewMode === 'bellChamber' || galleryCameraMode === 'first');
 
   const showClickToLookHint =
     isPlaying &&
@@ -916,7 +957,7 @@ export function App() {
     activeHotspot === null &&
     !(fireWatch.active && fireWatch.step === 'summary') &&
     !(jackdawHunt.active && jackdawHunt.phase === 'summary') &&
-    (viewMode === 'interior' || galleryCameraMode === 'first');
+    (viewMode === 'interior' || viewMode === 'bellChamber' || galleryCameraMode === 'first');
 
   // Picturesque warm Golden Hour on Title Screen & fly-in; crisp afternoon/golden-hour during Lov kavek
   const targetTimeProgress =
@@ -962,6 +1003,12 @@ export function App() {
         onInteractRifle={handleInteractBirthRoomRifle}
         onPointerLockChange={setIsPointerLocked}
         onNearInteriorExitDoorChange={setIsNearInteriorExitDoor}
+        onNearTrapdoorChange={setIsNearTrapdoor}
+        onEnterBellChamber={handleEnterBellChamber}
+        onNearBellChamberExitChange={setIsNearBellChamberExit}
+        onNearBellChamberRopeChange={setIsNearBellChamberRope}
+        onRingChamberBell={handleRingChamberBell}
+        onClimbToBirthRoom={handleClimbToBirthRoom}
         fireWatch={fireWatch}
         onFireSpotted={handleFireSpotted}
         onFireMaxSpread={handleFireMaxSpread}
@@ -1129,7 +1176,7 @@ export function App() {
                   <button
                     key={poi.id}
                     type="button"
-                    disabled={!unlocked || viewMode === 'interior'}
+                    disabled={!unlocked || viewMode !== 'exterior'}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (unlocked && viewMode === 'exterior') {
@@ -1532,15 +1579,64 @@ export function App() {
           {/* Left: Eyebrow + Title */}
           <div className="leading-tight">
             <span className="block text-[9.5px] font-semibold tracking-[0.24em] text-amber-300/85 uppercase">
-              {viewMode === 'interior' ? t.hud.eyebrowInterior : t.hud.eyebrowExterior}
+              {viewMode === 'bellChamber'
+                ? t.hud.eyebrowBellChamber
+                : viewMode === 'interior'
+                  ? t.hud.eyebrowInterior
+                  : t.hud.eyebrowExterior}
             </span>
             <h1 className="whitespace-nowrap text-[15px] font-semibold tracking-wide text-amber-50">
-              {viewMode === 'interior' ? t.hud.birthRoomTitle : 'The Tower Keeper'}
+              {viewMode === 'bellChamber'
+                ? t.hud.bellChamberTitle
+                : viewMode === 'interior'
+                  ? t.hud.birthRoomTitle
+                  : 'The Tower Keeper'}
             </h1>
           </div>
 
-          {/* Middle: [E] Zpět na ochoz (inside Birth Room) OR Time-of-Day toggle (outside) */}
-          {viewMode === 'interior' ? (
+          {/* Middle: Exit button (inside Birth Room or Bell Chamber) + Time/Season toggles */}
+          {viewMode === 'bellChamber' ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  transitionToMode('interior');
+                }}
+                className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-300/35 bg-amber-400/15 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-400/25"
+              >
+                {t.hud.backToBirthRoom}
+              </button>
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCycleTimeOfDay();
+                }}
+                title={t.hud.timeToggleTitle}
+                className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
+              >
+                {t.hud.timeModes[timeOfDayMode]}
+              </button>
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsWinter((prev) => !prev);
+                }}
+                title={isWinter ? t.hud.seasonToSummerTitle : t.hud.seasonToWinterTitle}
+                className={`cursor-pointer whitespace-nowrap rounded-lg border px-2 py-1 text-xs font-medium transition ${
+                  isWinter
+                    ? 'border-sky-300/50 bg-sky-400/20 text-sky-100 hover:bg-sky-400/30'
+                    : 'border-amber-200/25 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20'
+                }`}
+              >
+                {isWinter ? t.hud.seasonWinter : t.hud.seasonSummer}
+              </button>
+            </div>
+          ) : viewMode === 'interior' ? (
             <button
               type="button"
               onClick={(e) => {
@@ -1704,6 +1800,37 @@ export function App() {
         <div className="pointer-events-none fixed top-16 left-1/2 z-40 -translate-x-1/2 px-4">
           <div className="rounded-full border border-amber-300/50 bg-stone-950/90 px-5 py-2 text-center text-xs font-semibold tracking-wider text-amber-200 shadow-2xl backdrop-blur-md sm:text-sm">
             {unlockToast}
+          </div>
+        </div>
+      )}
+
+      {/* Subtle Unobtrusive Bell Chamber Caption */}
+      {viewMode === 'bellChamber' && (
+        <div className="pointer-events-none fixed right-16 bottom-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
+          {t.hud.bellChamberHint}
+        </div>
+      )}
+
+      {/* Bell Chamber Bottom-Center Interaction Prompt (Ring Great Bell OR Climb to Birth Room) */}
+      {viewMode === 'bellChamber' && (isNearBellChamberRope || isNearBellChamberExit) && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
+          <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
+            <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
+              {t.prompts.clickOrE}
+            </span>
+            {isNearBellChamberRope ? t.prompts.ringGreatBell : t.prompts.climbToBirthRoom}
+          </div>
+        </div>
+      )}
+
+      {/* Birth Room Floor Trapdoor Prompt (Enter Bell Chamber) */}
+      {viewMode === 'interior' && activeHotspot === null && isNearTrapdoor && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
+          <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
+            <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
+              {t.prompts.clickOrE}
+            </span>
+            {t.prompts.enterBellChamber}
           </div>
         </div>
       )}

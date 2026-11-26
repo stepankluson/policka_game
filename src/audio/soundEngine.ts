@@ -1,4 +1,4 @@
-export type SoundViewMode = 'exterior' | 'interior';
+export type SoundViewMode = 'exterior' | 'interior' | 'bellChamber';
 
 const DEFAULT_MASTER_VOLUME = 0.45;
 const WHISTLE_COOLDOWN_MS = 18_000;
@@ -50,6 +50,7 @@ class PolickaSoundEngine {
   private isFireWatchActive = false;
   private viewMode: SoundViewMode = 'exterior';
   private nightFactor = 0;
+  private clockworkProximity = 0.35;
   private lastEnvUpdateMs = 0;
   private lastWhistleMs = 0;
 
@@ -325,10 +326,14 @@ class PolickaSoundEngine {
   }
 
   private startSchedulers(): void {
-    // Pendulum clock tick-tock every 1.0s (plays only when inside Birth Room)
+    // Pendulum clock tick-tock every 1.0s (wooden clock in Birth Room; brass escapement in Bell Chamber)
     this.clockIntervalId = window.setInterval(() => {
-      if (this.viewMode === 'interior' && !this.isMuted) {
+      if (this.isMuted) return;
+      if (this.viewMode === 'interior') {
         this.playClockTick(this.clockIsTick);
+        this.clockIsTick = !this.clockIsTick;
+      } else if (this.viewMode === 'bellChamber') {
+        this.playTowerClockworkTick(this.clockIsTick, this.clockworkProximity);
         this.clockIsTick = !this.clockIsTick;
       }
     }, 1000);
@@ -429,6 +434,11 @@ class PolickaSoundEngine {
     this.musicBus.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.04);
   }
 
+  /** Updates proximity [0..1] to the mechanical tower clockwork inside the Bell Chamber */
+  public setClockworkProximity(prox01: number): void {
+    this.clockworkProximity = Math.max(0.12, Math.min(1, prox01));
+  }
+
   public updateEnvironment(viewMode: SoundViewMode, nightFactor: number): void {
     const modeChanged = viewMode !== this.viewMode;
     this.viewMode = viewMode;
@@ -459,6 +469,17 @@ class PolickaSoundEngine {
           this.isFireWatchActive ? 0.0001 : 0.24,
           now + 0.85,
         );
+      }
+    } else if (this.viewMode === 'bellChamber') {
+      // Bell Chamber: airy louver-filtered tower breeze + gentle distant town murmur, no violin
+      const dayFactor = Math.max(0, 1 - this.nightFactor * 1.15);
+      this.windMuffle.frequency.setTargetAtTime(680 - this.nightFactor * 140, now, tau);
+      this.windGain.gain.setTargetAtTime(0.11 - this.nightFactor * 0.02, now, tau);
+      this.murmurGain.gain.setTargetAtTime(0.0001 + dayFactor * 0.065, now, tau);
+      if (this.violinBus) {
+        this.violinBus.gain.cancelScheduledValues(now);
+        this.violinBus.gain.setValueAtTime(Math.max(0.0001, this.violinBus.gain.value), now);
+        this.violinBus.gain.linearRampToValueAtTime(0.0001, now + 0.45);
       }
     } else {
       // Exterior gallery: crisp wind + daytime town murmur that fades to 0 at night
@@ -512,6 +533,47 @@ class PolickaSoundEngine {
     og.connect(this.sfxBus);
     osc.start(now);
     osc.stop(now + 0.04);
+  }
+
+  /** Mechanical brass-and-iron tower clockwork escapement tick-tock inside Zvonové patro */
+  private playTowerClockworkTick(isTick: boolean, proximity: number): void {
+    if (!this.ctx || !this.sfxBus || !this.whiteNoiseBuffer || this.ctx.state !== 'running') {
+      return;
+    }
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const gainScale = 0.22 + proximity * 0.78;
+
+    // Crisp brass escapement click
+    const src = ctx.createBufferSource();
+    src.buffer = this.whiteNoiseBuffer;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(isTick ? 1850 : 1420, now);
+    bp.Q.setValueAtTime(9.0, now);
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime((isTick ? 0.11 : 0.09) * gainScale, now + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.042);
+
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(this.sfxBus);
+    src.start(now, Math.random() * 1.2, 0.055);
+
+    // Subtle deep iron pendulum frame thud
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(isTick ? 390 : 320, now);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, now);
+    og.gain.linearRampToValueAtTime(0.045 * gainScale, now + 0.003);
+    og.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+    osc.connect(og);
+    og.connect(this.sfxBus);
+    osc.start(now);
+    osc.stop(now + 0.065);
   }
 
   /** Delicate distant high-pitched rhythmic cricket chirp (4.2–4.6 kHz) */
@@ -811,8 +873,8 @@ class PolickaSoundEngine {
     }
   }
 
-  /** Rich, resonant double bronze church bell toll for free-roam tower bell ringing */
-  public playChurchBellToll(): void {
+  /** Rich, resonant double bronze church bell toll (with boosted stone-chamber resonance when inside Bell Chamber) */
+  public playChurchBellToll(inBellChamber = false): void {
     if (this.isMuted) return;
     this.ensureStarted();
     if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
@@ -820,19 +882,32 @@ class PolickaSoundEngine {
     const ctx = this.ctx;
     const baseNow = ctx.currentTime;
     const f0 = 196.0; // G3 deep warm St. James tower bell fundamental
+    const decayMult = inBellChamber ? 1.32 : 1.0;
     const partials: readonly { ratio: number; amp: number; decay: number }[] = [
-      { ratio: 0.5, amp: 0.26, decay: 4.4 },
-      { ratio: 1.0, amp: 0.34, decay: 3.9 },
-      { ratio: 1.183, amp: 0.21, decay: 3.0 },
-      { ratio: 1.506, amp: 0.14, decay: 2.3 },
-      { ratio: 2.0, amp: 0.11, decay: 1.8 },
+      { ratio: 0.5, amp: inBellChamber ? 0.34 : 0.26, decay: 4.4 * decayMult },
+      { ratio: 1.0, amp: inBellChamber ? 0.42 : 0.34, decay: 3.9 * decayMult },
+      { ratio: 1.183, amp: inBellChamber ? 0.25 : 0.21, decay: 3.0 * decayMult },
+      { ratio: 1.506, amp: 0.14, decay: 2.3 * decayMult },
+      { ratio: 2.0, amp: 0.11, decay: 1.8 * decayMult },
     ];
 
-    // Two stately resonant tolls spaced 1.35s apart (boosted +65% bronze presence)
-    for (const offset of [0, 1.35]) {
-      const t0 = baseNow + offset;
+    // Two stately resonant tolls spaced 1.35s apart; add subtle stone-chamber slapback echo inside Bell Chamber
+    const strikes = inBellChamber
+      ? [
+          { offset: 0, gain: 0.92 },
+          { offset: 0.13, gain: 0.24 },
+          { offset: 1.35, gain: 0.9 },
+          { offset: 1.48, gain: 0.22 },
+        ]
+      : [
+          { offset: 0, gain: 0.72 },
+          { offset: 1.35, gain: 0.72 },
+        ];
+
+    for (const strike of strikes) {
+      const t0 = baseNow + strike.offset;
       const bus = ctx.createGain();
-      bus.gain.setValueAtTime(0.72, t0);
+      bus.gain.setValueAtTime(strike.gain, t0);
       bus.connect(this.sfxBus);
 
       for (const p of partials) {
