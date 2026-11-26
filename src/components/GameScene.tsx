@@ -214,6 +214,7 @@ interface GameSceneProps {
 }
 
 const TELESCOPE_LOOK_DOT_THRESHOLD = 0.35;
+const TELESCOPE_THIRD_PERSON_RADIUS = 1.4;
 const BELL_ROPE_FREE_ROAM_RADIUS = 1.45;
 const BELL_ROPE_FREE_ROAM_LOOK_DOT = 0.42;
 const BELL_ROPE_FIRE_WATCH_RADIUS = 1.9;
@@ -287,6 +288,8 @@ function GalleryInteractionSensor({
     let bestKind: 'door' | 'bell' | 'telescope' | null = null;
     let bestTelescopeId: TelescopeId | null = null;
     let bestScore = -Infinity;
+    let bestDistXZ = Infinity;
+    const isThirdPerson = galleryCameraMode === 'third';
 
     // 1. Evaluate Bohuslav Martinů's Birth Room Door (free-roam only)
     if (!fireWatchActive) {
@@ -307,12 +310,19 @@ function GalleryInteractionSensor({
 
         if (
           dotDoor > DOOR_INTERACTION.lookDotThreshold ||
-          (galleryCameraMode === 'third' && distDoor < 1.35)
+          (isThirdPerson && distDoor < 1.35)
         ) {
-          const score = dotDoor * 2.2 - distDoor * 0.55 + 0.18;
-          if (score > bestScore) {
-            bestScore = score;
-            bestKind = 'door';
+          if (isThirdPerson) {
+            if (distDoor < bestDistXZ) {
+              bestDistXZ = distDoor;
+              bestKind = 'door';
+            }
+          } else {
+            const score = dotDoor * 2.2 - distDoor * 0.55 + 0.18;
+            if (score > bestScore) {
+              bestScore = score;
+              bestKind = 'door';
+            }
           }
         }
       }
@@ -338,41 +348,65 @@ function GalleryInteractionSensor({
         const dotBell = (bx * camDirX + bz * camDirZ) / bLen;
 
         if (fireWatchActive || dotBell > BELL_ROPE_FREE_ROAM_LOOK_DOT) {
-          const score = fireWatchActive
-            ? dotBell * 2.0 - distBell * 0.5 + 1.0
-            : dotBell * 2.2 - distBell * 0.65;
-          if (score > bestScore) {
-            bestScore = score;
-            bestKind = 'bell';
+          if (isThirdPerson) {
+            if (distBell < bestDistXZ) {
+              bestDistXZ = distBell;
+              bestKind = 'bell';
+            }
+          } else {
+            const score = fireWatchActive
+              ? dotBell * 2.0 - distBell * 0.5 + 1.0
+              : dotBell * 2.2 - distBell * 0.65;
+            if (score > bestScore) {
+              bestScore = score;
+              bestKind = 'bell';
+            }
           }
         }
       }
     }
 
-    // 3. Evaluate Telescopes (proximity + facing toward telescope / outward railing)
-    for (const scope of TELESCOPES) {
-      const distScope = Math.hypot(
-        pLocal.x - scope.mountPosition[0],
-        pLocal.z - scope.mountPosition[2],
-      );
-      if (distScope >= TELESCOPE_CONFIG.interactionRadius) continue;
-
-      const [swx, , swz] = churchLocalToWorld(
-        scope.mountPosition[0],
-        scope.mountPosition[1] + 0.35,
-        scope.mountPosition[2],
-      );
-      const sx = swx - eyePos.x;
-      const sz = swz - eyePos.z;
-      const sLen = Math.hypot(sx, sz) || 1;
-      const dotScope = (sx * camDirX + sz * camDirZ) / sLen;
-
-      if (dotScope > TELESCOPE_LOOK_DOT_THRESHOLD) {
-        const score = dotScope * 2.0 - distScope * 0.5;
-        if (score > bestScore) {
-          bestScore = score;
+    // 3. Evaluate Telescopes:
+    //    - Third-person: pure 2D XZ proximity within 1.4m (ignoring camera orbit angle);
+    //      closest-object-wins cleanly against door & bell rope
+    //    - First-person: unchanged camera look-direction + proximity scoring
+    if (isThirdPerson) {
+      for (const scope of TELESCOPES) {
+        const distScope = Math.hypot(
+          pLocal.x - scope.mountPosition[0],
+          pLocal.z - scope.mountPosition[2],
+        );
+        if (distScope <= TELESCOPE_THIRD_PERSON_RADIUS && distScope < bestDistXZ) {
+          bestDistXZ = distScope;
           bestKind = 'telescope';
           bestTelescopeId = scope.id;
+        }
+      }
+    } else {
+      for (const scope of TELESCOPES) {
+        const distScope = Math.hypot(
+          pLocal.x - scope.mountPosition[0],
+          pLocal.z - scope.mountPosition[2],
+        );
+        if (distScope >= TELESCOPE_CONFIG.interactionRadius) continue;
+
+        const [swx, , swz] = churchLocalToWorld(
+          scope.mountPosition[0],
+          scope.mountPosition[1] + 0.35,
+          scope.mountPosition[2],
+        );
+        const sx = swx - eyePos.x;
+        const sz = swz - eyePos.z;
+        const sLen = Math.hypot(sx, sz) || 1;
+        const dotScope = (sx * camDirX + sz * camDirZ) / sLen;
+
+        if (dotScope > TELESCOPE_LOOK_DOT_THRESHOLD) {
+          const score = dotScope * 2.0 - distScope * 0.5;
+          if (score > bestScore) {
+            bestScore = score;
+            bestKind = 'telescope';
+            bestTelescopeId = scope.id;
+          }
         }
       }
     }

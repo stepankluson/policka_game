@@ -38,8 +38,8 @@ export const BIRTH_ROOM_HOTSPOTS: readonly BirthRoomHotspot[] = [
 export const DOOR_INTERACTION = {
   /** Local 3D center of Bohuslav Martinů's wooden birth room door on the South gallery wall */
   localPosition: [0, 1.35, 3.28] as const,
-  /** Proximity distance (meters) from the gallery door to allow entering */
-  radius: 2.5,
+  /** Proximity distance (meters) from the gallery door to allow entering (tight so it doesn't cross to the outer railing) */
+  radius: 1.55,
   /** Minimum 3D look-direction dot product to count as looking at the wooden door */
   lookDotThreshold: 0.45,
 } as const;
