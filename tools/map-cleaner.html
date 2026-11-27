@@ -1,0 +1,2377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Polička ~1900 OSM Building Map Cleaner</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  />
+  <style>
+    :root {
+      --bg: #0f141c;
+      --panel: #161d28;
+      --panel-2: #1d2635;
+      --border: #2a364a;
+      --text: #e6edf6;
+      --muted: #8fa1b8;
+      --accent: #f59e0b;
+      --accent-hover: #fbbf24;
+      --keep: #22c55e;
+      --keep-bg: rgba(34, 197, 94, 0.14);
+      --del: #ef4444;
+      --del-bg: rgba(239, 68, 68, 0.14);
+      --custom: #06b6d4;
+      --custom-bg: rgba(6, 182, 212, 0.16);
+      --blue: #3b82f6;
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      font-size: 13px;
+    }
+
+    .app {
+      display: flex;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 356px;
+      min-width: 320px;
+      height: 100%;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      z-index: 1000;
+    }
+
+    .sidebar-header {
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #1b2433 0%, #161d28 100%);
+    }
+
+    .sidebar-header h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(245, 158, 11, 0.18);
+      color: var(--accent-hover);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+    }
+
+    .sidebar-header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.4;
+    }
+
+    .sidebar-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 14px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar {
+      width: 6px;
+    }
+    .sidebar-scroll::-webkit-scrollbar-thumb {
+      background: #2f3c52;
+      border-radius: 3px;
+    }
+
+    .card {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 11px 12px;
+    }
+
+    .card-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: var(--muted);
+      margin: 0 0 9px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Buttons */
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: #253042;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 8px 11px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background 0.12s, border-color 0.12s, transform 0.06s;
+      user-select: none;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: #2e3c52;
+      border-color: #3d4f6b;
+    }
+
+    .btn:active:not(:disabled) {
+      transform: translateY(1px);
+    }
+
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn-block {
+      width: 100%;
+    }
+
+    .btn-primary {
+      background: #2563eb;
+      border-color: #3b82f6;
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #1d4ed8;
+      border-color: #60a5fa;
+    }
+
+    .btn-export {
+      background: linear-gradient(180deg, #d97706 0%, #b45309 100%);
+      border-color: #f59e0b;
+      color: #fff;
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+    .btn-export:hover:not(:disabled) {
+      background: linear-gradient(180deg, #f59e0b 0%, #d97706 100%);
+    }
+
+    .btn-danger-active {
+      background: rgba(239, 68, 68, 0.22);
+      border-color: var(--del);
+      color: #fecaca;
+    }
+    .btn-danger-active:hover:not(:disabled) {
+      background: rgba(239, 68, 68, 0.3);
+    }
+
+    .btn-keep-active {
+      background: rgba(34, 197, 94, 0.2);
+      border-color: var(--keep);
+      color: #bbf7d0;
+    }
+    .btn-keep-active:hover:not(:disabled) {
+      background: rgba(34, 197, 94, 0.28);
+    }
+
+    .btn-draw-active {
+      background: rgba(6, 182, 212, 0.24);
+      border-color: var(--custom);
+      color: #cffafe;
+    }
+    .btn-draw-active:hover:not(:disabled) {
+      background: rgba(6, 182, 212, 0.34);
+    }
+
+    .mode-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .draw-options {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: #141a24;
+      border: 1px solid var(--border);
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .draw-options.active {
+      border-color: rgba(6, 182, 212, 0.65);
+      background: rgba(6, 182, 212, 0.1);
+    }
+    .draw-options label {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #cbd5e1;
+      white-space: nowrap;
+    }
+    .draw-options.active label {
+      color: #a5f3fc;
+    }
+    .draw-options select {
+      flex: 1;
+      padding: 4px 7px;
+      font-size: 11.5px;
+    }
+
+    .btn-sm {
+      padding: 5px 8px;
+      font-size: 11.5px;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 6px;
+    }
+    .btn-row > .btn {
+      flex: 1;
+    }
+
+    /* Stats */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-bottom: 9px;
+    }
+
+    .stat-box {
+      background: #141a24;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 6px;
+      text-align: center;
+    }
+
+    .stat-box.kept {
+      border-color: rgba(34, 197, 94, 0.35);
+      background: var(--keep-bg);
+    }
+
+    .stat-box.deleted {
+      border-color: rgba(239, 68, 68, 0.35);
+      background: var(--del-bg);
+    }
+
+    .stat-num {
+      font-size: 17px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.15;
+    }
+
+    .stat-box.kept .stat-num { color: #4ade80; }
+    .stat-box.deleted .stat-num { color: #f87171; }
+
+    .stat-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* Controls */
+    .control-group {
+      margin-bottom: 8px;
+    }
+    .control-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .control-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 3px;
+      font-size: 12px;
+      color: #cbd5e1;
+    }
+
+    .control-val {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11.5px;
+      color: var(--accent-hover);
+      background: #121720;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      min-width: 58px;
+      text-align: right;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+      height: 5px;
+      margin: 2px 0;
+    }
+
+    select, input[type="number"] {
+      background: #121720;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 12px;
+      width: 100%;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 7px;
+      font-size: 12px;
+      color: #cbd5e1;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .checkbox-row input {
+      accent-color: var(--accent);
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+    }
+
+    .file-drop {
+      border: 1.5px dashed #3b4b66;
+      border-radius: 6px;
+      padding: 10px;
+      text-align: center;
+      background: #141a24;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      margin-bottom: 9px;
+    }
+    .file-drop:hover, .file-drop.dragover {
+      border-color: var(--accent);
+      background: rgba(245, 158, 11, 0.08);
+    }
+    .file-drop-title {
+      font-weight: 600;
+      color: #f8fafc;
+      font-size: 12.5px;
+    }
+    .file-drop-sub {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 2px;
+    }
+
+    .hint-list {
+      margin: 6px 0 0;
+      padding-left: 16px;
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+    .hint-list strong {
+      color: #e2e8f0;
+    }
+
+    .status-bar {
+      margin-top: 7px;
+      font-size: 11.5px;
+      padding: 6px 8px;
+      border-radius: 5px;
+      background: #121720;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      line-height: 1.35;
+      min-height: 28px;
+    }
+    .status-bar.ok {
+      border-color: rgba(34, 197, 94, 0.4);
+      color: #86efac;
+    }
+    .status-bar.err {
+      border-color: rgba(239, 68, 68, 0.45);
+      color: #fca5a5;
+    }
+    .status-bar.busy {
+      border-color: rgba(245, 158, 11, 0.45);
+      color: #fde68a;
+    }
+
+    .radius-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .radius-row label {
+      font-size: 12px;
+      color: #cbd5e1;
+      white-space: nowrap;
+    }
+    .radius-row input[type="number"] {
+      width: 82px;
+      text-align: right;
+    }
+
+    /* Map container */
+    .map-wrap {
+      flex: 1;
+      position: relative;
+      height: 100%;
+      background: #0b0f15;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    .map-wrap.mode-erase #map,
+    .map-wrap.mode-draw #map,
+    .map-wrap.shift-held #map {
+      cursor: crosshair !important;
+    }
+    .map-wrap.mode-restore #map {
+      cursor: cell !important;
+    }
+
+    /* Floating Map HUD */
+    .map-hud {
+      position: absolute;
+      top: 12px;
+      left: 54px;
+      z-index: 900;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      pointer-events: none;
+      flex-wrap: wrap;
+    }
+
+    .hud-pill {
+      background: rgba(15, 20, 28, 0.88);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      color: #e2e8f0;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hud-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--keep);
+    }
+    .hud-dot.erase { background: var(--del); }
+    .hud-dot.restore { background: var(--keep); }
+    .hud-dot.draw { background: var(--custom); }
+
+    .coords-hud {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      z-index: 900;
+      background: rgba(15, 20, 28, 0.88);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      color: #cbd5e1;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      pointer-events: none;
+    }
+
+    /* Selection rectangle overlay */
+    #selection-box {
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      z-index: 950;
+      border: 2px dashed #ef4444;
+      background: rgba(239, 68, 68, 0.2);
+      border-radius: 2px;
+    }
+    #selection-box.restore {
+      border-color: #22c55e;
+      background: rgba(34, 197, 94, 0.2);
+    }
+
+    /* Historical overlay image styling */
+    .historical-overlay-container {
+      position: absolute;
+      pointer-events: none !important;
+      user-select: none;
+      overflow: visible;
+    }
+    .historical-overlay-container img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      pointer-events: none !important;
+      user-select: none;
+      transform-origin: center center;
+    }
+
+    /* Leaflet tooltip tweak */
+    .leaflet-tooltip.bldg-tip {
+      background: rgba(15, 20, 28, 0.94);
+      border: 1px solid #334155;
+      color: #f1f5f9;
+      font-size: 11.5px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+    }
+    .leaflet-tooltip-top.bldg-tip::before {
+      border-top-color: #334155;
+    }
+
+    .tower-pin {
+      width: 14px;
+      height: 14px;
+      background: #f59e0b;
+      border: 2.5px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.4), 0 2px 6px rgba(0,0,0,0.6);
+    }
+
+    .hidden-input {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>Polička Map Cleaner <span class="badge">~1900</span></h1>
+        <p>Filter real OSM footprints against a historical map &amp; export local <code>[x, z]</code> meters for The Tower Keeper.</p>
+      </div>
+
+      <div class="sidebar-scroll">
+        <!-- 1. OSM Data -->
+        <section class="card">
+          <div class="card-title">
+            <span>1. OSM Buildings</span>
+            <span id="source-badge" style="color:#64748b;font-weight:600;">Not loaded</span>
+          </div>
+
+          <div class="radius-row">
+            <label for="fetch-radius">Radius around center:</label>
+            <input id="fetch-radius" type="number" min="150" max="1500" step="50" value="600" />
+            <span style="color:var(--muted);">m</span>
+          </div>
+
+          <button id="btn-load-osm" class="btn btn-primary btn-block">
+            Load Polička OSM Buildings
+          </button>
+
+          <div class="btn-row" style="margin-top:6px;">
+            <button id="btn-import-json" class="btn btn-sm" title="Resume from public/policka-data.json or a previous export">
+              Import Local JSON
+            </button>
+            <button id="btn-recenter" class="btn btn-sm" title="Re-center map on Polička">
+              Re-center Map
+            </button>
+          </div>
+          <input id="input-import-json" class="hidden-input" type="file" accept=".json,application/json" />
+
+          <div id="status-bar" class="status-bar">
+            Ready. Click <strong>Load Polička OSM Buildings</strong> to fetch footprints via Overpass API.
+          </div>
+        </section>
+
+        <!-- 2. Historical Overlay -->
+        <section class="card">
+          <div class="card-title">
+            <span>2. Historical Map Overlay</span>
+            <button id="btn-reset-overlay" class="btn btn-sm" style="padding:2px 7px;font-size:10.5px;" disabled>Reset</button>
+          </div>
+
+          <div id="overlay-drop" class="file-drop">
+            <div class="file-drop-title" id="overlay-filename">Upload Historical Map (PNG / JPG)</div>
+            <div class="file-drop-sub">Click to choose or drop image here</div>
+          </div>
+          <input id="input-overlay" class="hidden-input" type="file" accept="image/png,image/jpeg,image/webp" />
+
+          <div class="control-group">
+            <div class="control-header">
+              <span>Opacity</span>
+              <span class="control-val" id="val-opacity">65%</span>
+            </div>
+            <input id="slider-opacity" type="range" min="0" max="100" step="1" value="65" disabled />
+          </div>
+
+          <div class="control-group">
+            <div class="control-header">
+              <span>Scale</span>
+              <span class="control-val" id="val-scale">100%</span>
+            </div>
+            <input id="slider-scale" type="range" min="20" max="350" step="1" value="100" disabled />
+          </div>
+
+          <div class="control-group">
+            <div class="control-header">
+              <span>X Offset (West / East)</span>
+              <span class="control-val" id="val-offset-x">0 m</span>
+            </div>
+            <input id="slider-offset-x" type="range" min="-600" max="600" step="1" value="0" disabled />
+          </div>
+
+          <div class="control-group">
+            <div class="control-header">
+              <span>Y Offset (South / North)</span>
+              <span class="control-val" id="val-offset-y">0 m</span>
+            </div>
+            <input id="slider-offset-y" type="range" min="-600" max="600" step="1" value="0" disabled />
+          </div>
+
+          <div class="control-group">
+            <div class="control-header">
+              <span>Rotation</span>
+              <span class="control-val" id="val-rotation">0.0°</span>
+            </div>
+            <input id="slider-rotation" type="range" min="-45" max="45" step="0.2" value="0" disabled />
+          </div>
+
+          <label class="checkbox-row">
+            <input id="chk-overlay-top" type="checkbox" disabled />
+            <span>Draw historical map above buildings (click-through)</span>
+          </label>
+
+          <div style="margin-top:8px;">
+            <button id="btn-remove-overlay" class="btn btn-sm btn-block" disabled>Remove Overlay Image</button>
+          </div>
+        </section>
+
+        <!-- 3. Erase, Filter & Draw Tools -->
+        <section class="card">
+          <div class="card-title">
+            <span>3. Filter &amp; Draw Tools</span>
+            <span style="display:flex;gap:8px;align-items:center;">
+              <span id="custom-count" style="color:#22d3ee;">Custom: 0</span>
+              <span id="undo-count" style="color:#64748b;">Undo: 0</span>
+            </span>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-box">
+              <div class="stat-num" id="stat-total">0</div>
+              <div class="stat-label">Total</div>
+            </div>
+            <div class="stat-box kept">
+              <div class="stat-num" id="stat-kept">0</div>
+              <div class="stat-label">Kept</div>
+            </div>
+            <div class="stat-box deleted">
+              <div class="stat-num" id="stat-deleted">0</div>
+              <div class="stat-label">Deleted</div>
+            </div>
+          </div>
+
+          <div class="mode-grid">
+            <button id="btn-mode-toggle" class="btn btn-sm btn-keep-active" title="Pan map + click individual buildings">
+              Click Mode
+            </button>
+            <button id="btn-mode-erase" class="btn btn-sm" title="Drag box to delete all buildings inside">
+              Box Erase
+            </button>
+            <button id="btn-mode-restore" class="btn btn-sm" title="Drag box to restore deleted buildings">
+              Box Restore
+            </button>
+            <button id="btn-mode-draw" class="btn btn-sm" title="Draw a custom ~1900 building polygon directly on the map">
+              Draw Building
+            </button>
+          </div>
+
+          <div class="draw-options" id="draw-options">
+            <label for="select-draw-height">Stories / Height:</label>
+            <select id="select-draw-height" title="Height applied to newly drawn custom buildings">
+              <option value="4.5" data-levels="1">1 floor (~4.5m)</option>
+              <option value="7.5" data-levels="2" selected>2 floors (~7.5m)</option>
+              <option value="10.5" data-levels="3">3 floors (~10.5m)</option>
+              <option value="13.5" data-levels="4">4 floors (~13.5m)</option>
+            </select>
+          </div>
+
+          <div class="btn-row">
+            <button id="btn-undo" class="btn btn-sm" disabled title="Shortcut: Ctrl+Z">
+              Undo (Ctrl+Z)
+            </button>
+            <button id="btn-restore-all" class="btn btn-sm" disabled>
+              Restore All
+            </button>
+          </div>
+
+          <label class="checkbox-row">
+            <input id="chk-hide-deleted" type="checkbox" />
+            <span>Hide deleted (red) buildings completely</span>
+          </label>
+
+          <label class="checkbox-row">
+            <input id="chk-show-radius" type="checkbox" checked />
+            <span>Show fetch radius circle &amp; tower origin</span>
+          </label>
+
+          <ul class="hint-list">
+            <li><strong>Left-click</strong> a building to toggle Kept (green/cyan) / Deleted (red).</li>
+            <li><strong>Draw Building:</strong> Left-click corners; <strong>Double-click</strong>, click <strong>1st dot</strong>, or press <strong>Enter</strong> to save (<strong>Esc</strong> cancels).</li>
+            <li><strong>Shift + Drag</strong> in Click Mode to box-erase modern areas quickly.</li>
+            <li><strong>Ctrl + Z</strong> undoes the last vertex, drawn building, or erase batch.</li>
+          </ul>
+        </section>
+
+        <!-- 4. Export -->
+        <section class="card">
+          <div class="card-title">
+            <span>4. Export for 3D Game</span>
+          </div>
+
+          <div class="control-group">
+            <div class="control-header">
+              <span>Coordinate Origin (0, 0)</span>
+            </div>
+            <select id="select-origin">
+              <option value="game" selected>Game Tower Origin (49.713531, 16.263421) — matches policka-data.json</option>
+              <option value="center">Map Center (49.71464, 16.26558)</option>
+            </select>
+          </div>
+
+          <button id="btn-export" class="btn btn-export btn-block" disabled>
+            Export policka_1900_buildings.json
+          </button>
+
+          <p style="margin:7px 0 0;color:var(--muted);font-size:11px;line-height:1.4;">
+            Exports only <strong>KEPT</strong> buildings in game local meters (<code>+X = East</code>, <code>-Z = North</code>, <code>1 unit = 1m</code>) with estimated <code>height</code>, <code>area</code>, <code>kind</code>, and <code>id</code>.
+          </p>
+        </section>
+      </div>
+    </aside>
+
+    <main class="map-wrap" id="map-wrap">
+      <div id="map"></div>
+      <div id="selection-box"></div>
+
+      <div class="map-hud">
+        <div class="hud-pill" id="hud-mode">
+          <span class="hud-dot" id="hud-dot"></span>
+          <span id="hud-mode-text">Mode: Click Toggle (Hold Shift + Drag to Box Erase)</span>
+        </div>
+      </div>
+
+      <div class="coords-hud" id="coords-hud">
+        Lat/Lon: 49.71464, 16.26558 &nbsp;|&nbsp; Game [x, z]: [0.00, 0.00] m
+      </div>
+    </main>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    crossorigin=""
+  ></script>
+  <script>
+    (() => {
+      'use strict';
+
+      // =========================================================================
+      // Constants matching Polička 3D game (scripts/fetch-policka.mjs & policka-data.json)
+      // =========================================================================
+      const MAP_CENTER = { lat: 49.71464, lon: 16.26558 };
+      const GAME_ORIGIN = { lat: 49.713531, lon: 16.263420999999997 };
+
+      const OVERPASS_ENDPOINTS = [
+        'https://overpass-api.de/api/interpreter',
+        'https://overpass.kumi.systems/api/interpreter',
+        'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+      ];
+
+      const STYLE_KEPT = {
+        color: '#15803d',
+        weight: 1.4,
+        opacity: 0.95,
+        fillColor: '#22c55e',
+        fillOpacity: 0.45,
+        dashArray: null,
+      };
+
+      const STYLE_CUSTOM_KEPT = {
+        color: '#0284c7',
+        weight: 1.8,
+        opacity: 0.98,
+        fillColor: '#06b6d4',
+        fillOpacity: 0.5,
+        dashArray: null,
+      };
+
+      const STYLE_DELETED = {
+        color: '#dc2626',
+        weight: 1,
+        opacity: 0.65,
+        fillColor: '#ef4444',
+        fillOpacity: 0.18,
+        dashArray: '4 4',
+      };
+
+      const STYLE_HIDDEN = {
+        color: '#ef4444',
+        weight: 0,
+        opacity: 0,
+        fillColor: '#ef4444',
+        fillOpacity: 0,
+        dashArray: null,
+      };
+
+      const r2 = (n) => Math.round(n * 100) / 100;
+
+      // =========================================================================
+      // Coordinate Projection Helpers (identical to scripts/fetch-policka.mjs)
+      // =========================================================================
+      function getActiveOrigin() {
+        const sel = document.getElementById('select-origin').value;
+        return sel === 'center' ? MAP_CENTER : GAME_ORIGIN;
+      }
+
+      function makeProjector(origin) {
+        const mLat = 111320;
+        const mLon = 111320 * Math.cos((origin.lat * Math.PI) / 180);
+        return {
+          mLat,
+          mLon,
+          toLocal(lat, lon) {
+            return [
+              r2((lon - origin.lon) * mLon),
+              r2(-(lat - origin.lat) * mLat),
+            ];
+          },
+          toLatLon(x, z) {
+            return [
+              origin.lat - z / mLat,
+              origin.lon + x / mLon,
+            ];
+          },
+        };
+      }
+
+      /** Douglas-Peucker simplification matching scripts/fetch-policka.mjs */
+      function simplifyPoints(pts, tolerance = 0.35) {
+        if (pts.length <= 3) return pts;
+        const sqTol = tolerance * tolerance;
+
+        function sqSegDist(p, a, b) {
+          let x = a[0];
+          let y = a[1];
+          let dx = b[0] - x;
+          let dy = b[1] - y;
+          if (dx !== 0 || dy !== 0) {
+            const t = ((p[0] - x) * dx + (p[1] - y) * dy) / (dx * dx + dy * dy);
+            if (t > 1) {
+              x = b[0];
+              y = b[1];
+            } else if (t > 0) {
+              x += dx * t;
+              y += dy * t;
+            }
+          }
+          dx = p[0] - x;
+          dy = p[1] - y;
+          return dx * dx + dy * dy;
+        }
+
+        function step(points, first, last, out) {
+          let maxDist = sqTol;
+          let index = -1;
+          for (let i = first + 1; i < last; i++) {
+            const d = sqSegDist(points[i], points[first], points[last]);
+            if (d > maxDist) {
+              index = i;
+              maxDist = d;
+            }
+          }
+          if (index !== -1) {
+            if (index - first > 1) step(points, first, index, out);
+            out.push(points[index]);
+            if (last - index > 1) step(points, index, last, out);
+          }
+        }
+
+        const out = [pts[0]];
+        step(pts, 0, pts.length - 1, out);
+        out.push(pts[pts.length - 1]);
+        return out;
+      }
+
+      function polygonArea(pts) {
+        let area = 0;
+        for (let i = 0; i < pts.length; i++) {
+          const [x1, z1] = pts[i];
+          const [x2, z2] = pts[(i + 1) % pts.length];
+          area += x1 * z2 - x2 * z1;
+        }
+        return Math.abs(area) / 2;
+      }
+
+      function estimateHeight(tags, area) {
+        const levelsRaw = parseFloat(tags['building:levels'] ?? tags.levels ?? '');
+        const heightRaw = parseFloat(tags.height ?? '');
+        if (!Number.isNaN(heightRaw) && heightRaw > 2 && heightRaw < 60) {
+          return r2(heightRaw);
+        }
+        if (!Number.isNaN(levelsRaw) && levelsRaw >= 1 && levelsRaw <= 15) {
+          return r2(levelsRaw * 3.2);
+        }
+        const areaFactor = Math.min(1, Math.max(0, (area - 40) / 360));
+        return r2(6.5 + areaFactor * 3.0);
+      }
+
+      // =========================================================================
+      // Custom Geographic Historical Image Overlay (supports opacity, scale, X/Y m, rotation)
+      // =========================================================================
+      class HistoricalImageLayer extends L.Layer {
+        constructor(url, naturalWidth, naturalHeight) {
+          super();
+          this.url = url;
+          this.naturalWidth = naturalWidth || 1000;
+          this.naturalHeight = naturalHeight || 1000;
+          this.opacity = 0.65;
+          this.scale = 1.0;
+          this.offsetX = 0; // meters East
+          this.offsetY = 0; // meters North
+          this.rotation = 0; // degrees
+          this.onTop = false;
+          this.baseWidthMeters = 1100; // Initial map span ~1.1km around Polička
+          this._container = null;
+          this._img = null;
+        }
+
+        onAdd(map) {
+          this._map = map;
+          this._container = L.DomUtil.create('div', 'historical-overlay-container');
+          this._img = document.createElement('img');
+          this._img.src = this.url;
+          this._img.alt = 'Historical Map Overlay';
+          this._img.draggable = false;
+          this._container.appendChild(this._img);
+          this._attachToPane();
+
+          map.on('viewreset zoom zoomanim move', this._reset, this);
+          this._reset();
+        }
+
+        onRemove(map) {
+          map.off('viewreset zoom zoomanim move', this._reset, this);
+          if (this._container && this._container.parentNode) {
+            this._container.parentNode.removeChild(this._container);
+          }
+          this._container = null;
+          this._img = null;
+        }
+
+        _attachToPane() {
+          if (!this._map || !this._container) return;
+          const paneName = this.onTop ? 'historicalTopPane' : 'historicalUnderPane';
+          const pane = this._map.getPane(paneName);
+          if (this._container.parentNode !== pane) {
+            pane.appendChild(this._container);
+          }
+        }
+
+        setParams({ opacity, scale, offsetX, offsetY, rotation, onTop }) {
+          if (opacity !== undefined) this.opacity = opacity;
+          if (scale !== undefined) this.scale = scale;
+          if (offsetX !== undefined) this.offsetX = offsetX;
+          if (offsetY !== undefined) this.offsetY = offsetY;
+          if (rotation !== undefined) this.rotation = rotation;
+          if (onTop !== undefined && onTop !== this.onTop) {
+            this.onTop = onTop;
+            this._attachToPane();
+          }
+          this._reset();
+        }
+
+        _getBounds() {
+          const aspect = this.naturalHeight / this.naturalWidth;
+          const halfW = (this.baseWidthMeters * this.scale) * 0.5;
+          const halfH = halfW * aspect;
+
+          const mLat = 111320;
+          const mLon = 111320 * Math.cos((MAP_CENTER.lat * Math.PI) / 180);
+
+          const cLat = MAP_CENTER.lat + this.offsetY / mLat;
+          const cLon = MAP_CENTER.lon + this.offsetX / mLon;
+
+          const south = cLat - halfH / mLat;
+          const north = cLat + halfH / mLat;
+          const west = cLon - halfW / mLon;
+          const east = cLon + halfW / mLon;
+
+          return L.latLngBounds([south, west], [north, east]);
+        }
+
+        _reset() {
+          if (!this._map || !this._container || !this._img) return;
+          const bounds = this._getBounds();
+          const nw = this._map.latLngToLayerPoint(bounds.getNorthWest());
+          const se = this._map.latLngToLayerPoint(bounds.getSouthEast());
+          const width = Math.max(1, se.x - nw.x);
+          const height = Math.max(1, se.y - nw.y);
+
+          L.DomUtil.setPosition(this._container, nw);
+          this._container.style.width = `${width}px`;
+          this._container.style.height = `${height}px`;
+          this._img.style.opacity = String(this.opacity);
+          this._img.style.transform = `rotate(${this.rotation}deg)`;
+        }
+      }
+
+      // =========================================================================
+      // Initialize Leaflet Map
+      // =========================================================================
+      const map = L.map('map', {
+        center: [MAP_CENTER.lat, MAP_CENTER.lon],
+        zoom: 16,
+        maxZoom: 20,
+        minZoom: 13,
+        boxZoom: false, // Disabled so Shift+Drag performs fast box-erase!
+      });
+
+      // Custom panes for historical overlay (under buildings vs above buildings, both pointer-events: none)
+      const underPane = map.createPane('historicalUnderPane');
+      underPane.style.zIndex = '350';
+      underPane.style.pointerEvents = 'none';
+
+      const topPane = map.createPane('historicalTopPane');
+      topPane.style.zIndex = '480';
+      topPane.style.pointerEvents = 'none';
+
+      // Base layers
+      const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 20,
+        maxNativeZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+      });
+
+      const cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 20,
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
+      });
+
+      const esriSat = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 20,
+          maxNativeZoom: 19,
+          attribution: 'Tiles &copy; Esri',
+        }
+      );
+
+      osmLayer.addTo(map);
+      L.control.layers(
+        {
+          'OpenStreetMap': osmLayer,
+          'Carto Light (High Contrast)': cartoLight,
+          'Satellite (Esri)': esriSat,
+        },
+        null,
+        { position: 'topright' }
+      ).addTo(map);
+
+      // Canvas renderer for silky smooth 60 FPS with 1000+ buildings
+      const buildingsRenderer = L.canvas({ padding: 0.5, tolerance: 3 });
+
+      // Reference markers (St. Jacob's Church Tower Origin + Fetch Radius Circle)
+      const referenceGroup = L.layerGroup().addTo(map);
+
+      const towerMarker = L.marker([GAME_ORIGIN.lat, GAME_ORIGIN.lon], {
+        icon: L.divIcon({
+          className: '',
+          html: '<div class="tower-pin"></div>',
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
+        }),
+        interactive: true,
+        zIndexOffset: 500,
+      }).bindTooltip("St. Jacob's Church Tower — Game Origin (0, 0)", {
+        direction: 'top',
+        offset: [0, -8],
+        className: 'bldg-tip',
+      });
+      towerMarker.addTo(referenceGroup);
+
+      const radiusCircle = L.circle([MAP_CENTER.lat, MAP_CENTER.lon], {
+        radius: 600,
+        color: '#f59e0b',
+        weight: 1.5,
+        dashArray: '6 6',
+        fill: false,
+        interactive: false,
+      }).addTo(referenceGroup);
+
+      // =========================================================================
+      // Application State
+      // =========================================================================
+      /**
+       * @type {Array<{
+       *   id: number,
+       *   latLons: Array<[number, number]>,
+       *   tags: Record<string, string>,
+       *   presetHeight: number | null,
+       *   isCustom: boolean,
+       *   deleted: boolean,
+       *   layer: L.Polygon,
+       *   bounds: L.LatLngBounds,
+       *   centroidLatLng: L.LatLng
+       * }>}
+       */
+      let buildings = [];
+      let buildingsLayerGroup = L.layerGroup().addTo(map);
+      // Each entry: { type: 'toggle', changes: Array<{ idx: number, prevDeleted: boolean }> }
+      //          or { type: 'add-custom', idx: number }
+      let undoStack = [];
+      let toolMode = 'toggle'; // 'toggle' | 'erase' | 'restore' | 'draw'
+      let hideDeleted = false;
+      let historicalLayer = null;
+      let overlayObjectUrl = null;
+
+      // Custom building drawing state
+      const SNAP_CLOSE_PX = 12;
+      let drawVertices = []; // Array<[number, number]> of [lat, lon]
+      let drawCursorLatLng = null;
+      let drawPreviewGroup = L.layerGroup().addTo(map);
+      let nextCustomId = 19000001;
+
+      // =========================================================================
+      // UI Elements
+      // =========================================================================
+      const elMapWrap = document.getElementById('map-wrap');
+      const elSelBox = document.getElementById('selection-box');
+      const elStatus = document.getElementById('status-bar');
+      const elSourceBadge = document.getElementById('source-badge');
+      const elFetchRadius = document.getElementById('fetch-radius');
+      const elBtnLoadOsm = document.getElementById('btn-load-osm');
+      const elBtnImportJson = document.getElementById('btn-import-json');
+      const elInputImportJson = document.getElementById('input-import-json');
+      const elBtnRecenter = document.getElementById('btn-recenter');
+
+      const elOverlayDrop = document.getElementById('overlay-drop');
+      const elInputOverlay = document.getElementById('input-overlay');
+      const elOverlayFilename = document.getElementById('overlay-filename');
+      const elSliderOpacity = document.getElementById('slider-opacity');
+      const elSliderScale = document.getElementById('slider-scale');
+      const elSliderOffsetX = document.getElementById('slider-offset-x');
+      const elSliderOffsetY = document.getElementById('slider-offset-y');
+      const elSliderRotation = document.getElementById('slider-rotation');
+      const elValOpacity = document.getElementById('val-opacity');
+      const elValScale = document.getElementById('val-scale');
+      const elValOffsetX = document.getElementById('val-offset-x');
+      const elValOffsetY = document.getElementById('val-offset-y');
+      const elValRotation = document.getElementById('val-rotation');
+      const elChkOverlayTop = document.getElementById('chk-overlay-top');
+      const elBtnResetOverlay = document.getElementById('btn-reset-overlay');
+      const elBtnRemoveOverlay = document.getElementById('btn-remove-overlay');
+
+      const elStatTotal = document.getElementById('stat-total');
+      const elStatKept = document.getElementById('stat-kept');
+      const elStatDeleted = document.getElementById('stat-deleted');
+      const elCustomCount = document.getElementById('custom-count');
+      const elUndoCount = document.getElementById('undo-count');
+      const elBtnModeToggle = document.getElementById('btn-mode-toggle');
+      const elBtnModeErase = document.getElementById('btn-mode-erase');
+      const elBtnModeRestore = document.getElementById('btn-mode-restore');
+      const elBtnModeDraw = document.getElementById('btn-mode-draw');
+      const elDrawOptions = document.getElementById('draw-options');
+      const elSelectDrawHeight = document.getElementById('select-draw-height');
+      const elBtnUndo = document.getElementById('btn-undo');
+      const elBtnRestoreAll = document.getElementById('btn-restore-all');
+      const elChkHideDeleted = document.getElementById('chk-hide-deleted');
+      const elChkShowRadius = document.getElementById('chk-show-radius');
+
+      const elBtnExport = document.getElementById('btn-export');
+      const elSelectOrigin = document.getElementById('select-origin');
+      const elHudDot = document.getElementById('hud-dot');
+      const elHudModeText = document.getElementById('hud-mode-text');
+      const elCoordsHud = document.getElementById('coords-hud');
+
+      function setStatus(html, type = '') {
+        elStatus.className = 'status-bar' + (type ? ` ${type}` : '');
+        elStatus.innerHTML = html;
+      }
+
+      function updateStats() {
+        let deleted = 0;
+        let customKept = 0;
+        for (let i = 0; i < buildings.length; i++) {
+          if (buildings[i].deleted) {
+            deleted++;
+          } else if (buildings[i].isCustom) {
+            customKept++;
+          }
+        }
+        const total = buildings.length;
+        const kept = total - deleted;
+        elStatTotal.textContent = String(total);
+        elStatKept.textContent = String(kept);
+        elStatDeleted.textContent = String(deleted);
+        elCustomCount.textContent = `Custom: ${customKept}`;
+        elUndoCount.textContent = `Undo: ${undoStack.length}`;
+        elBtnUndo.disabled = undoStack.length === 0 && drawVertices.length === 0;
+        elBtnRestoreAll.disabled = deleted === 0;
+        elBtnExport.disabled = kept === 0;
+      }
+
+      function applyBuildingStyle(b) {
+        if (b.deleted) {
+          b.layer.setStyle(hideDeleted ? STYLE_HIDDEN : STYLE_DELETED);
+        } else {
+          b.layer.setStyle(b.isCustom ? STYLE_CUSTOM_KEPT : STYLE_KEPT);
+        }
+      }
+
+      function refreshAllStyles() {
+        for (let i = 0; i < buildings.length; i++) {
+          applyBuildingStyle(buildings[i]);
+        }
+      }
+
+      function updateDrawHud() {
+        elBtnUndo.disabled = undoStack.length === 0 && drawVertices.length === 0;
+        if (toolMode !== 'draw') return;
+        const n = drawVertices.length;
+        if (n === 0) {
+          elHudModeText.textContent =
+            'Mode: Draw Building — Left-click corners (Double-click / 1st dot / Enter to finish · Esc to cancel)';
+        } else if (n < 3) {
+          elHudModeText.textContent =
+            `Mode: Draw Building (${n} corner${n === 1 ? '' : 's'}) — Place at least 3 corners (Esc to cancel)`;
+        } else {
+          elHudModeText.textContent =
+            `Mode: Draw Building (${n} corners) — Click 1st dot, Double-click, or Enter to save (Esc to cancel)`;
+        }
+      }
+
+      function setToolMode(mode) {
+        if (toolMode === 'draw' && mode !== 'draw' && drawVertices.length > 0) {
+          cancelDrawing(false);
+        }
+        toolMode = mode;
+        elMapWrap.classList.remove('mode-erase', 'mode-restore', 'mode-draw', 'shift-held');
+        elBtnModeToggle.className = 'btn btn-sm';
+        elBtnModeErase.className = 'btn btn-sm';
+        elBtnModeRestore.className = 'btn btn-sm';
+        elBtnModeDraw.className = 'btn btn-sm';
+        elDrawOptions.classList.toggle('active', mode === 'draw');
+
+        if (mode === 'erase') {
+          elMapWrap.classList.add('mode-erase');
+          elBtnModeErase.classList.add('btn-danger-active');
+          elHudDot.className = 'hud-dot erase';
+          elHudModeText.textContent = 'Mode: Box Erase (Drag rectangle to delete buildings)';
+          map.dragging.disable();
+          map.doubleClickZoom.enable();
+        } else if (mode === 'restore') {
+          elMapWrap.classList.add('mode-restore');
+          elBtnModeRestore.classList.add('btn-keep-active');
+          elHudDot.className = 'hud-dot restore';
+          elHudModeText.textContent = 'Mode: Box Restore (Drag rectangle to keep buildings)';
+          map.dragging.disable();
+          map.doubleClickZoom.enable();
+        } else if (mode === 'draw') {
+          elMapWrap.classList.add('mode-draw');
+          elBtnModeDraw.classList.add('btn-draw-active');
+          elHudDot.className = 'hud-dot draw';
+          updateDrawHud();
+          map.dragging.enable();
+          map.doubleClickZoom.disable();
+        } else {
+          elBtnModeToggle.classList.add('btn-keep-active');
+          elHudDot.className = 'hud-dot';
+          elHudModeText.textContent = 'Mode: Click Toggle (Hold Shift + Drag to Box Erase)';
+          map.dragging.enable();
+          map.doubleClickZoom.enable();
+        }
+      }
+
+      // =========================================================================
+      // Building Ingestion (Overpass API, Local JSON & Custom Drawn)
+      // =========================================================================
+      function clearBuildings() {
+        cancelDrawing(false);
+        buildingsLayerGroup.clearLayers();
+        buildings = [];
+        undoStack = [];
+        updateStats();
+      }
+
+      function buildTooltipHtml(b, idx) {
+        const proj = makeProjector(getActiveOrigin());
+        const pts = b.latLons.map(([lat, lon]) => proj.toLocal(lat, lon));
+        const area = r2(polygonArea(pts));
+        const h = b.presetHeight != null ? b.presetHeight : estimateHeight(b.tags, area);
+        const kind = b.tags.building || 'yes';
+        const nameLine = b.tags.name ? `<div><strong>${escapeHtml(b.tags.name)}</strong></div>` : '';
+        const levelsLine = b.tags['building:levels'] ? ` · ${b.tags['building:levels']} lvls` : '';
+        const stateLabel = b.deleted
+          ? '<span style="color:#f87171;font-weight:700;">DELETED</span>'
+          : b.isCustom
+            ? '<span style="color:#22d3ee;font-weight:700;">KEPT (CUSTOM)</span>'
+            : '<span style="color:#4ade80;font-weight:700;">KEPT</span>';
+        const idPrefix = b.isCustom ? 'Custom' : 'OSM';
+        return (
+          `${nameLine}` +
+          `<div>${idPrefix} #${b.id} (${escapeHtml(kind)}) — ${stateLabel}</div>` +
+          `<div style="color:#94a3b8;">Height: ${h}m${levelsLine} · Area: ${area} m²</div>`
+        );
+      }
+
+      function escapeHtml(str) {
+        return String(str).replace(/[&<>"']/g, (ch) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        }[ch]));
+      }
+
+      function addSingleBuilding(item) {
+        const latLons = item.latLons;
+        if (!latLons || latLons.length < 3) return null;
+
+        // Compute centroid
+        let sumLat = 0;
+        let sumLon = 0;
+        for (let j = 0; j < latLons.length; j++) {
+          sumLat += latLons[j][0];
+          sumLon += latLons[j][1];
+        }
+        const centroidLatLng = L.latLng(sumLat / latLons.length, sumLon / latLons.length);
+        const isCustom = Boolean(item.isCustom);
+
+        const poly = L.polygon(latLons, {
+          ...(isCustom ? STYLE_CUSTOM_KEPT : STYLE_KEPT),
+          renderer: buildingsRenderer,
+        });
+
+        const idx = buildings.length;
+        const record = {
+          id: item.id,
+          latLons,
+          tags: item.tags || {},
+          presetHeight: item.presetHeight ?? null,
+          isCustom,
+          deleted: Boolean(item.deleted),
+          layer: poly,
+          bounds: poly.getBounds(),
+          centroidLatLng,
+        };
+
+        poly.on('click', (ev) => {
+          // In Draw Building mode, let clicks pass through to the map so polygons can be drawn freely
+          if (toolMode === 'draw') return;
+          if (toolMode === 'erase' || toolMode === 'restore') return;
+          L.DomEvent.stopPropagation(ev);
+          if (isDraggingBox) return;
+          const prev = record.deleted;
+          record.deleted = !prev;
+          undoStack.push({ type: 'toggle', changes: [{ idx, prevDeleted: prev }] });
+          applyBuildingStyle(record);
+          updateStats();
+          if (poly.isTooltipOpen()) {
+            poly.setTooltipContent(buildTooltipHtml(record, idx));
+          }
+        });
+
+        poly.on('mouseover', () => {
+          if (isDraggingBox || toolMode === 'draw') return;
+          poly.bindTooltip(buildTooltipHtml(record, idx), {
+            sticky: true,
+            direction: 'top',
+            offset: [0, -6],
+            className: 'bldg-tip',
+          }).openTooltip();
+          if (!(record.deleted && hideDeleted)) {
+            poly.setStyle({ weight: 2.6, opacity: 1 });
+          }
+        });
+
+        poly.on('mouseout', () => {
+          poly.unbindTooltip();
+          applyBuildingStyle(record);
+        });
+
+        buildings.push(record);
+        applyBuildingStyle(record);
+        poly.addTo(buildingsLayerGroup);
+        return { record, idx };
+      }
+
+      function addBuildingsToMap(rawItems) {
+        clearBuildings();
+        for (let i = 0; i < rawItems.length; i++) {
+          addSingleBuilding(rawItems[i]);
+        }
+        updateStats();
+      }
+
+      /** Assemble outer way rings from OSM building multipolygon relations */
+      function assembleRelationRings(rel, waysById, nodesById) {
+        const outerSegments = [];
+        for (const member of rel.members || []) {
+          if (member.type === 'way' && (member.role === 'outer' || member.role === '')) {
+            const w = waysById.get(member.ref);
+            if (w && w.nodes && w.nodes.length >= 2) {
+              outerSegments.push([...w.nodes]);
+            }
+          }
+        }
+        const rings = [];
+        while (outerSegments.length > 0) {
+          const ring = outerSegments.shift();
+          let changed = true;
+          while (changed && ring[0] !== ring[ring.length - 1]) {
+            changed = false;
+            const tail = ring[ring.length - 1];
+            for (let i = 0; i < outerSegments.length; i++) {
+              const seg = outerSegments[i];
+              if (seg[0] === tail) {
+                ring.push(...seg.slice(1));
+                outerSegments.splice(i, 1);
+                changed = true;
+                break;
+              } else if (seg[seg.length - 1] === tail) {
+                ring.push(...seg.slice(0, -1).reverse());
+                outerSegments.splice(i, 1);
+                changed = true;
+                break;
+              }
+            }
+          }
+          const coords = ring
+            .map((id) => nodesById.get(id))
+            .filter(Boolean)
+            .map((n) => [n.lat, n.lon]);
+          if (coords.length >= 3) rings.push(coords);
+        }
+        return rings;
+      }
+
+      async function fetchPolickaBuildings() {
+        const radius = Math.max(150, Math.min(1500, Number(elFetchRadius.value) || 600));
+        elFetchRadius.value = String(radius);
+        radiusCircle.setRadius(radius);
+
+        const query = `
+[out:json][timeout:35];
+(
+  way["building"](around:${radius},${MAP_CENTER.lat},${MAP_CENTER.lon});
+  relation["building"](around:${radius},${MAP_CENTER.lat},${MAP_CENTER.lon});
+);
+(._;>;);
+out body;
+        `.trim();
+
+        elBtnLoadOsm.disabled = true;
+        setStatus(`Fetching OSM buildings within ${radius}m of Polička via Overpass API...`, 'busy');
+
+        let data = null;
+        let usedEndpoint = '';
+        let lastErr = null;
+
+        for (const endpoint of OVERPASS_ENDPOINTS) {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 30000);
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              },
+              body: `data=${encodeURIComponent(query)}`,
+              signal: controller.signal,
+            });
+            clearTimeout(timer);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const json = await res.json();
+            if (!json.elements || !json.elements.length) throw new Error('Empty response');
+            data = json;
+            usedEndpoint = new URL(endpoint).hostname;
+            break;
+          } catch (err) {
+            lastErr = err;
+          }
+        }
+
+        elBtnLoadOsm.disabled = false;
+
+        if (!data) {
+          setStatus(
+            `Overpass API failed (${escapeHtml(lastErr?.message || 'network error')}). Try again in a few seconds or use <strong>Import Local JSON</strong>.`,
+            'err'
+          );
+          return;
+        }
+
+        const nodesById = new Map();
+        const waysById = new Map();
+        const ways = [];
+        const relations = [];
+
+        for (const el of data.elements) {
+          if (el.type === 'node') nodesById.set(el.id, el);
+          else if (el.type === 'way') {
+            waysById.set(el.id, el);
+            ways.push(el);
+          } else if (el.type === 'relation') {
+            relations.push(el);
+          }
+        }
+
+        const parsed = [];
+        const seenIds = new Set();
+
+        for (const w of ways) {
+          const t = w.tags || {};
+          if (!t.building) continue;
+          const coords = (w.nodes || [])
+            .map((nid) => nodesById.get(nid))
+            .filter(Boolean)
+            .map((n) => [n.lat, n.lon]);
+          if (coords.length > 1) {
+            const first = coords[0];
+            const last = coords[coords.length - 1];
+            if (first[0] === last[0] && first[1] === last[1]) coords.pop();
+          }
+          if (coords.length < 3) continue;
+          seenIds.add(w.id);
+          parsed.push({ id: w.id, latLons: coords, tags: t, deleted: false });
+        }
+
+        for (const rel of relations) {
+          const t = rel.tags || {};
+          if (!t.building) continue;
+          const rings = assembleRelationRings(rel, waysById, nodesById);
+          for (const ring of rings) {
+            if (ring.length > 1) {
+              const first = ring[0];
+              const last = ring[ring.length - 1];
+              if (first[0] === last[0] && first[1] === last[1]) ring.pop();
+            }
+            if (ring.length < 3) continue;
+            if (!seenIds.has(rel.id)) {
+              parsed.push({ id: rel.id, latLons: ring, tags: t, deleted: false });
+            }
+          }
+        }
+
+        addBuildingsToMap(parsed);
+        elSourceBadge.textContent = `OSM (${usedEndpoint})`;
+        elSourceBadge.style.color = '#4ade80';
+        setStatus(
+          `Loaded <strong>${buildings.length}</strong> building footprints from ${escapeHtml(usedEndpoint)}. Click to toggle or Shift+Drag to box-erase.`,
+          'ok'
+        );
+      }
+
+      /** Import local policka-data.json or previously exported policka_1900_buildings.json */
+      function importLocalJson(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const json = JSON.parse(String(reader.result));
+            const list = Array.isArray(json) ? json : json.buildings;
+            if (!Array.isArray(list) || list.length === 0) {
+              throw new Error('No "buildings" array found in JSON.');
+            }
+
+            const origin = json.meta && typeof json.meta.originLat === 'number' && typeof json.meta.originLon === 'number'
+              ? { lat: json.meta.originLat, lon: json.meta.originLon }
+              : GAME_ORIGIN;
+            const proj = makeProjector(origin);
+
+            // Sync origin selector if imported JSON matches a known origin
+            if (Math.abs(origin.lat - MAP_CENTER.lat) < 1e-5 && Math.abs(origin.lon - MAP_CENTER.lon) < 1e-5) {
+              elSelectOrigin.value = 'center';
+            } else {
+              elSelectOrigin.value = 'game';
+            }
+
+            const parsed = [];
+            let customImported = 0;
+            for (const b of list) {
+              if (!Array.isArray(b.points) || b.points.length < 3) continue;
+              const latLons = b.points.map(([x, z]) => proj.toLatLon(x, z));
+              const tags = { building: b.kind || 'yes' };
+              if (b.name) tags.name = b.name;
+              const isCustom = b.source === 'custom';
+              if (isCustom) {
+                customImported++;
+                if (typeof b.id === 'number' && b.id >= nextCustomId) {
+                  nextCustomId = b.id + 1;
+                }
+              }
+              parsed.push({
+                id: b.id,
+                latLons,
+                tags,
+                presetHeight: typeof b.height === 'number' ? b.height : null,
+                isCustom,
+                deleted: false,
+              });
+            }
+
+            addBuildingsToMap(parsed);
+            elSourceBadge.textContent = file.name;
+            elSourceBadge.style.color = '#60a5fa';
+            const customNote = customImported > 0 ? ` (including <strong>${customImported}</strong> custom)` : '';
+            setStatus(`Imported <strong>${buildings.length}</strong> buildings${customNote} from <strong>${escapeHtml(file.name)}</strong>.`, 'ok');
+          } catch (err) {
+            setStatus(`Import failed: ${escapeHtml(err.message)}`, 'err');
+          }
+        };
+        reader.readAsText(file);
+      }
+
+      // =========================================================================
+      // Custom Building Polygon Drawing Mode
+      // =========================================================================
+      function generateCustomId() {
+        const usedIds = new Set(buildings.map((b) => b.id));
+        while (usedIds.has(nextCustomId)) {
+          nextCustomId++;
+        }
+        return nextCustomId++;
+      }
+
+      function renderDrawPreview() {
+        drawPreviewGroup.clearLayers();
+        if (toolMode !== 'draw' || drawVertices.length === 0) return;
+
+        let snappingToFirst = false;
+        let previewTip = drawCursorLatLng ? [drawCursorLatLng.lat, drawCursorLatLng.lng] : null;
+
+        if (previewTip && drawVertices.length >= 3) {
+          const firstPt = map.latLngToContainerPoint(drawVertices[0]);
+          const curPt = map.latLngToContainerPoint(previewTip);
+          if (firstPt.distanceTo(curPt) <= SNAP_CLOSE_PX) {
+            snappingToFirst = true;
+            previewTip = drawVertices[0];
+          }
+        }
+
+        // Translucent fill preview when 2+ vertices + cursor (or 3+ vertices)
+        const fillRing = previewTip && !snappingToFirst
+          ? [...drawVertices, previewTip]
+          : [...drawVertices];
+        if (fillRing.length >= 3) {
+          L.polygon(fillRing, {
+            color: '#22d3ee',
+            weight: 0,
+            fillColor: '#06b6d4',
+            fillOpacity: 0.22,
+            interactive: false,
+          }).addTo(drawPreviewGroup);
+        }
+
+        // Solid edges already placed
+        if (drawVertices.length >= 2) {
+          L.polyline(drawVertices, {
+            color: '#22d3ee',
+            weight: 2.2,
+            opacity: 0.95,
+            interactive: false,
+          }).addTo(drawPreviewGroup);
+        }
+
+        // Live dashed rubber-band segment from last vertex to cursor (and faint closing edge to 1st vertex)
+        if (previewTip) {
+          const lastV = drawVertices[drawVertices.length - 1];
+          L.polyline([lastV, previewTip], {
+            color: snappingToFirst ? '#fde047' : '#67e8f9',
+            weight: 2,
+            opacity: 0.95,
+            dashArray: '6 5',
+            interactive: false,
+          }).addTo(drawPreviewGroup);
+
+          if (!snappingToFirst && drawVertices.length >= 2) {
+            L.polyline([previewTip, drawVertices[0]], {
+              color: '#22d3ee',
+              weight: 1.4,
+              opacity: 0.6,
+              dashArray: '4 6',
+              interactive: false,
+            }).addTo(drawPreviewGroup);
+          }
+        }
+
+        // Vertex dots (1st vertex highlighted when ready to close)
+        for (let i = 0; i < drawVertices.length; i++) {
+          const isFirst = i === 0;
+          const canClose = isFirst && drawVertices.length >= 3;
+          L.circleMarker(drawVertices[i], {
+            radius: canClose ? (snappingToFirst ? 8 : 6.5) : 4,
+            color: snappingToFirst && isFirst ? '#fde047' : '#ffffff',
+            weight: canClose ? 2.2 : 1.5,
+            fillColor: snappingToFirst && isFirst ? '#22c55e' : (canClose ? '#f59e0b' : '#06b6d4'),
+            fillOpacity: 1,
+            interactive: false,
+          }).addTo(drawPreviewGroup);
+        }
+      }
+
+      function cancelDrawing(notify = false) {
+        const hadVertices = drawVertices.length > 0;
+        drawVertices = [];
+        drawCursorLatLng = null;
+        drawPreviewGroup.clearLayers();
+        updateDrawHud();
+        if (notify && hadVertices) {
+          setStatus('Cancelled unfinished building drawing.');
+        }
+      }
+
+      function undoLastDrawVertex() {
+        if (drawVertices.length === 0) return;
+        drawVertices.pop();
+        renderDrawPreview();
+        updateDrawHud();
+        if (drawVertices.length === 0) {
+          setStatus('Removed last corner (drawing cleared).');
+        }
+      }
+
+      function finishDrawing() {
+        if (drawVertices.length < 3) {
+          setStatus(`Place at least 3 corners before closing a building (currently ${drawVertices.length}).`, 'busy');
+          return;
+        }
+
+        const latLons = drawVertices.map(([lat, lon]) => [lat, lon]);
+        const proj = makeProjector(getActiveOrigin());
+        const localPts = latLons.map(([lat, lon]) => proj.toLocal(lat, lon));
+        const area = polygonArea(localPts);
+
+        if (area < 1) {
+          cancelDrawing(false);
+          setStatus(`Drawn building was too small (${r2(area)} m²) and was discarded. Draw a larger footprint.`, 'err');
+          return;
+        }
+
+        const opt = elSelectDrawHeight.options[elSelectDrawHeight.selectedIndex];
+        const height = parseFloat(opt?.value || '7.5') || 7.5;
+        const levels = opt?.dataset?.levels || '2';
+        const id = generateCustomId();
+
+        const added = addSingleBuilding({
+          id,
+          latLons,
+          tags: {
+            building: 'house',
+            'building:levels': levels,
+          },
+          presetHeight: height,
+          isCustom: true,
+          deleted: false,
+        });
+
+        drawVertices = [];
+        drawCursorLatLng = null;
+        drawPreviewGroup.clearLayers();
+        updateDrawHud();
+
+        if (added) {
+          undoStack.push({ type: 'add-custom', idx: added.idx });
+          updateStats();
+          setStatus(
+            `Added custom building <strong>#${id}</strong> (${levels} floor${levels === '1' ? '' : 's'}, ${height}m, ${r2(area)} m²). Click to draw another or switch to Click Mode.`,
+            'ok'
+          );
+        }
+      }
+
+      // =========================================================================
+      // Fast Box Erase / Box Restore (Shift+Drag OR Box Mode)
+      // =========================================================================
+      let isDraggingBox = false;
+      let boxStartPt = null; // { x, y } relative to #map-wrap
+      let activeBoxAction = 'erase'; // 'erase' | 'restore'
+      let dragMoved = false;
+
+      const mapContainer = map.getContainer();
+
+      function shouldStartBoxSelect(ev) {
+        if (ev.button !== 0) return false;
+        // Ignore clicks on Leaflet controls (zoom buttons, layer switcher)
+        if (ev.target.closest('.leaflet-control')) return false;
+        if (toolMode === 'erase' || toolMode === 'restore') return true;
+        if (toolMode === 'toggle' && ev.shiftKey) return true;
+        return false;
+      }
+
+      mapContainer.addEventListener('mousedown', (ev) => {
+        if (!shouldStartBoxSelect(ev)) return;
+
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        isDraggingBox = true;
+        dragMoved = false;
+        activeBoxAction = toolMode === 'restore' ? 'restore' : 'erase';
+
+        const rect = mapContainer.getBoundingClientRect();
+        boxStartPt = {
+          x: ev.clientX - rect.left,
+          y: ev.clientY - rect.top,
+        };
+
+        map.dragging.disable();
+        elSelBox.className = activeBoxAction === 'restore' ? 'restore' : '';
+        elSelBox.style.left = `${boxStartPt.x}px`;
+        elSelBox.style.top = `${boxStartPt.y}px`;
+        elSelBox.style.width = '0px';
+        elSelBox.style.height = '0px';
+        elSelBox.style.display = 'block';
+      }, true);
+
+      window.addEventListener('mousemove', (ev) => {
+        if (!isDraggingBox || !boxStartPt) return;
+
+        const rect = mapContainer.getBoundingClientRect();
+        const curX = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+        const curY = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+
+        const left = Math.min(boxStartPt.x, curX);
+        const top = Math.min(boxStartPt.y, curY);
+        const width = Math.abs(curX - boxStartPt.x);
+        const height = Math.abs(curY - boxStartPt.y);
+
+        if (width > 4 || height > 4) dragMoved = true;
+
+        elSelBox.style.left = `${left}px`;
+        elSelBox.style.top = `${top}px`;
+        elSelBox.style.width = `${width}px`;
+        elSelBox.style.height = `${height}px`;
+      });
+
+      window.addEventListener('mouseup', (ev) => {
+        if (!isDraggingBox || !boxStartPt) return;
+
+        elSelBox.style.display = 'none';
+        const rect = mapContainer.getBoundingClientRect();
+        const curX = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+        const curY = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+
+        const left = Math.min(boxStartPt.x, curX);
+        const right = Math.max(boxStartPt.x, curX);
+        const top = Math.min(boxStartPt.y, curY);
+        const bottom = Math.max(boxStartPt.y, curY);
+
+        if (dragMoved && (right - left) >= 5 && (bottom - top) >= 5) {
+          const nw = map.containerPointToLatLng([left, top]);
+          const se = map.containerPointToLatLng([right, bottom]);
+          const selBounds = L.latLngBounds(
+            [se.lat, nw.lng],
+            [nw.lat, se.lng]
+          );
+
+          const targetDeleted = activeBoxAction === 'erase';
+          const changes = [];
+
+          for (let i = 0; i < buildings.length; i++) {
+            const b = buildings[i];
+            if (b.deleted === targetDeleted) continue;
+
+            // Match if centroid is inside box OR polygon bounding box intersects selection box
+            if (selBounds.contains(b.centroidLatLng) || selBounds.intersects(b.bounds)) {
+              changes.push({ idx: i, prevDeleted: b.deleted });
+              b.deleted = targetDeleted;
+              applyBuildingStyle(b);
+            }
+          }
+
+          if (changes.length > 0) {
+            undoStack.push({ type: 'toggle', changes });
+            updateStats();
+            setStatus(
+              `${targetDeleted ? 'Erased' : 'Restored'} <strong>${changes.length}</strong> building${changes.length === 1 ? '' : 's'} in box selection.`,
+              'ok'
+            );
+          }
+        }
+
+        // Brief timeout prevents the synthetic click event immediately after drag from toggling a building
+        setTimeout(() => {
+          isDraggingBox = false;
+          boxStartPt = null;
+          if (toolMode === 'toggle' || toolMode === 'draw') {
+            map.dragging.enable();
+          }
+        }, 20);
+      });
+
+      // Shift key cursor feedback, Draw Building keys (Enter / Esc / Backspace) & Ctrl+Z undo
+      window.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Shift' && toolMode === 'toggle') {
+          elMapWrap.classList.add('shift-held');
+        }
+        const activeTag = document.activeElement ? document.activeElement.tagName : '';
+        const isTyping = activeTag === 'INPUT' || activeTag === 'TEXTAREA';
+
+        if (!isTyping && toolMode === 'draw' && drawVertices.length > 0) {
+          if (ev.key === 'Escape') {
+            ev.preventDefault();
+            cancelDrawing(true);
+            return;
+          }
+          if (ev.key === 'Enter') {
+            ev.preventDefault();
+            finishDrawing();
+            return;
+          }
+          if (ev.key === 'Backspace') {
+            ev.preventDefault();
+            undoLastDrawVertex();
+            return;
+          }
+        }
+
+        if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') {
+          if (isTyping) return;
+          ev.preventDefault();
+          if (toolMode === 'draw' && drawVertices.length > 0) {
+            undoLastDrawVertex();
+          } else {
+            performUndo();
+          }
+        }
+      });
+
+      window.addEventListener('keyup', (ev) => {
+        if (ev.key === 'Shift') {
+          elMapWrap.classList.remove('shift-held');
+        }
+      });
+
+      function performUndo() {
+        if (undoStack.length === 0) return;
+        const action = undoStack.pop();
+        if (action.type === 'add-custom') {
+          const b = buildings[action.idx];
+          if (b) {
+            buildingsLayerGroup.removeLayer(b.layer);
+            if (action.idx === buildings.length - 1) {
+              buildings.pop();
+            } else {
+              b.deleted = true;
+            }
+            updateStats();
+            setStatus(`Undid custom building <strong>#${b.id}</strong>.`);
+          }
+          return;
+        }
+        const batch = action.changes || [];
+        for (let i = 0; i < batch.length; i++) {
+          const { idx, prevDeleted } = batch[i];
+          const b = buildings[idx];
+          if (b) {
+            b.deleted = prevDeleted;
+            applyBuildingStyle(b);
+          }
+        }
+        updateStats();
+        setStatus(`Undid last action (${batch.length} building${batch.length === 1 ? '' : 's'} reverted).`);
+      }
+
+      function restoreAll() {
+        const changes = [];
+        for (let i = 0; i < buildings.length; i++) {
+          if (buildings[i].deleted) {
+            changes.push({ idx: i, prevDeleted: true });
+            buildings[i].deleted = false;
+            applyBuildingStyle(buildings[i]);
+          }
+        }
+        if (changes.length > 0) {
+          undoStack.push({ type: 'toggle', changes });
+          updateStats();
+          setStatus(`Restored all <strong>${changes.length}</strong> deleted buildings.`, 'ok');
+        }
+      }
+
+      // =========================================================================
+      // Historical Map Overlay Controls
+      // =========================================================================
+      function setOverlayControlsEnabled(enabled) {
+        elSliderOpacity.disabled = !enabled;
+        elSliderScale.disabled = !enabled;
+        elSliderOffsetX.disabled = !enabled;
+        elSliderOffsetY.disabled = !enabled;
+        elSliderRotation.disabled = !enabled;
+        elChkOverlayTop.disabled = !enabled;
+        elBtnResetOverlay.disabled = !enabled;
+        elBtnRemoveOverlay.disabled = !enabled;
+      }
+
+      function syncOverlayFromSliders() {
+        const opacity = Number(elSliderOpacity.value) / 100;
+        const scale = Number(elSliderScale.value) / 100;
+        const offsetX = Number(elSliderOffsetX.value);
+        const offsetY = Number(elSliderOffsetY.value);
+        const rotation = Number(elSliderRotation.value);
+        const onTop = elChkOverlayTop.checked;
+
+        elValOpacity.textContent = `${elSliderOpacity.value}%`;
+        elValScale.textContent = `${elSliderScale.value}%`;
+        elValOffsetX.textContent = `${offsetX > 0 ? '+' : ''}${offsetX} m`;
+        elValOffsetY.textContent = `${offsetY > 0 ? '+' : ''}${offsetY} m`;
+        elValRotation.textContent = `${rotation.toFixed(1)}°`;
+
+        if (historicalLayer) {
+          historicalLayer.setParams({ opacity, scale, offsetX, offsetY, rotation, onTop });
+        }
+      }
+
+      function resetOverlaySliders() {
+        elSliderOpacity.value = '65';
+        elSliderScale.value = '100';
+        elSliderOffsetX.value = '0';
+        elSliderOffsetY.value = '0';
+        elSliderRotation.value = '0';
+        syncOverlayFromSliders();
+      }
+
+      function loadHistoricalImage(file) {
+        if (!file || !file.type.startsWith('image/')) {
+          setStatus('Please select a valid PNG, JPG, or WebP historical map image.', 'err');
+          return;
+        }
+
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          if (historicalLayer) {
+            map.removeLayer(historicalLayer);
+          }
+          if (overlayObjectUrl) {
+            URL.revokeObjectURL(overlayObjectUrl);
+          }
+          overlayObjectUrl = url;
+          historicalLayer = new HistoricalImageLayer(url, img.naturalWidth, img.naturalHeight);
+          historicalLayer.addTo(map);
+          elOverlayFilename.textContent = file.name;
+          setOverlayControlsEnabled(true);
+          syncOverlayFromSliders();
+          setStatus(`Loaded historical overlay <strong>${escapeHtml(file.name)}</strong> (${img.naturalWidth}×${img.naturalHeight}px). Use sliders to align with St. Jacob's Tower &amp; town walls.`, 'ok');
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          setStatus('Could not decode image file.', 'err');
+        };
+        img.src = url;
+      }
+
+      function removeHistoricalImage() {
+        if (historicalLayer) {
+          map.removeLayer(historicalLayer);
+          historicalLayer = null;
+        }
+        if (overlayObjectUrl) {
+          URL.revokeObjectURL(overlayObjectUrl);
+          overlayObjectUrl = null;
+        }
+        elOverlayFilename.textContent = 'Upload Historical Map (PNG / JPG)';
+        elInputOverlay.value = '';
+        setOverlayControlsEnabled(false);
+        setStatus('Removed historical map overlay.');
+      }
+
+      // =========================================================================
+      // Export policka_1900_buildings.json (exact game coordinate format)
+      // =========================================================================
+      function exportKeptBuildingsJson() {
+        const origin = getActiveOrigin();
+        const proj = makeProjector(origin);
+        const exported = [];
+
+        for (let i = 0; i < buildings.length; i++) {
+          const b = buildings[i];
+          if (b.deleted) continue;
+
+          let pts = b.latLons.map(([lat, lon]) => proj.toLocal(lat, lon));
+          if (
+            pts.length > 1 &&
+            pts[0][0] === pts[pts.length - 1][0] &&
+            pts[0][1] === pts[pts.length - 1][1]
+          ) {
+            pts.pop();
+          }
+          if (pts.length < 3) continue;
+
+          if (!b.isCustom) {
+            pts = simplifyPoints(pts, 0.35);
+          }
+          if (pts.length < 3) continue;
+
+          const area = polygonArea(pts);
+          if (area < (b.isCustom ? 1 : 4)) continue;
+
+          const height = b.presetHeight != null ? r2(b.presetHeight) : estimateHeight(b.tags, area);
+          const name = b.tags.name ? String(b.tags.name).trim() : '';
+          const isTownHall =
+            b.id === 66888562 ||
+            b.tags.amenity === 'townhall' ||
+            /radnice/i.test(name);
+
+          const entry = {
+            id: b.id,
+            points: pts,
+            height,
+            area: r2(area),
+            kind: isTownHall ? 'townhall' : (b.tags.building || 'yes'),
+          };
+          if (name) entry.name = name;
+          if (b.isCustom) entry.source = 'custom';
+          exported.push(entry);
+        }
+
+        const customKeptCount = exported.filter((e) => e.source === 'custom').length;
+        const payload = {
+          meta: {
+            originLat: origin.lat,
+            originLon: origin.lon,
+            mapCenterLat: MAP_CENTER.lat,
+            mapCenterLon: MAP_CENTER.lon,
+            coordinateSystem: '+X = East (m), -Z = North (m), 1 unit = 1 meter',
+            exportedAt: new Date().toISOString(),
+            keptCount: exported.length,
+            customCount: customKeptCount,
+            deletedCount: buildings.length - exported.length,
+            totalFetched: buildings.length,
+          },
+          buildings: exported,
+        };
+
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+          type: 'application/json;charset=utf-8',
+        });
+        const dlUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = dlUrl;
+        a.download = 'policka_1900_buildings.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(dlUrl), 1500);
+
+        const customNote = customKeptCount > 0 ? ` (including <strong>${customKeptCount}</strong> custom)` : '';
+        setStatus(
+          `Exported <strong>${exported.length}</strong> kept buildings${customNote} to <strong>policka_1900_buildings.json</strong> (origin: ${origin.lat.toFixed(6)}, ${origin.lon.toFixed(6)}).`,
+          'ok'
+        );
+      }
+
+      // =========================================================================
+      // Wire Up Event Listeners
+      // =========================================================================
+      elBtnLoadOsm.addEventListener('click', fetchPolickaBuildings);
+      elBtnImportJson.addEventListener('click', () => elInputImportJson.click());
+      elInputImportJson.addEventListener('change', (ev) => {
+        const file = ev.target.files?.[0];
+        if (file) importLocalJson(file);
+        elInputImportJson.value = '';
+      });
+
+      elBtnRecenter.addEventListener('click', () => {
+        map.setView([MAP_CENTER.lat, MAP_CENTER.lon], 16);
+      });
+
+      elFetchRadius.addEventListener('change', () => {
+        const r = Math.max(150, Math.min(1500, Number(elFetchRadius.value) || 600));
+        elFetchRadius.value = String(r);
+        radiusCircle.setRadius(r);
+      });
+
+      // Overlay upload & drag-drop
+      elOverlayDrop.addEventListener('click', () => elInputOverlay.click());
+      elInputOverlay.addEventListener('change', (ev) => {
+        const file = ev.target.files?.[0];
+        if (file) loadHistoricalImage(file);
+      });
+      elOverlayDrop.addEventListener('dragover', (ev) => {
+        ev.preventDefault();
+        elOverlayDrop.classList.add('dragover');
+      });
+      elOverlayDrop.addEventListener('dragleave', () => {
+        elOverlayDrop.classList.remove('dragover');
+      });
+      elOverlayDrop.addEventListener('drop', (ev) => {
+        ev.preventDefault();
+        elOverlayDrop.classList.remove('dragover');
+        const file = ev.dataTransfer?.files?.[0];
+        if (file) loadHistoricalImage(file);
+      });
+
+      elSliderOpacity.addEventListener('input', syncOverlayFromSliders);
+      elSliderScale.addEventListener('input', syncOverlayFromSliders);
+      elSliderOffsetX.addEventListener('input', syncOverlayFromSliders);
+      elSliderOffsetY.addEventListener('input', syncOverlayFromSliders);
+      elSliderRotation.addEventListener('input', syncOverlayFromSliders);
+      elChkOverlayTop.addEventListener('change', syncOverlayFromSliders);
+      elBtnResetOverlay.addEventListener('click', resetOverlaySliders);
+      elBtnRemoveOverlay.addEventListener('click', removeHistoricalImage);
+
+      // Tools & Undo
+      elBtnModeToggle.addEventListener('click', () => setToolMode('toggle'));
+      elBtnModeErase.addEventListener('click', () => setToolMode('erase'));
+      elBtnModeRestore.addEventListener('click', () => setToolMode('restore'));
+      elBtnModeDraw.addEventListener('click', () => setToolMode('draw'));
+      elSelectDrawHeight.addEventListener('change', () => {
+        elSelectDrawHeight.blur();
+      });
+      elBtnUndo.addEventListener('click', () => {
+        if (toolMode === 'draw' && drawVertices.length > 0) {
+          undoLastDrawVertex();
+        } else {
+          performUndo();
+        }
+      });
+      elBtnRestoreAll.addEventListener('click', restoreAll);
+
+      // Draw Building map interactions (click to place vertex / close on 1st dot, double-click to finish)
+      map.on('click', (ev) => {
+        if (toolMode !== 'draw' || isDraggingBox) return;
+        if (ev.originalEvent) {
+          if (ev.originalEvent._drawHandled) return;
+          if (ev.originalEvent.target && ev.originalEvent.target.closest('.leaflet-control')) {
+            return;
+          }
+          ev.originalEvent._drawHandled = true;
+        }
+        const clickPt = map.latLngToContainerPoint(ev.latlng);
+
+        // Clicking near the 1st vertex closes and saves the polygon
+        if (drawVertices.length >= 3) {
+          const firstPt = map.latLngToContainerPoint(drawVertices[0]);
+          if (firstPt.distanceTo(clickPt) <= SNAP_CLOSE_PX) {
+            finishDrawing();
+            return;
+          }
+        }
+
+        // Guard against duplicate vertices (especially from the 2nd click of a double-click)
+        if (drawVertices.length > 0) {
+          const lastPt = map.latLngToContainerPoint(drawVertices[drawVertices.length - 1]);
+          if (lastPt.distanceTo(clickPt) <= 4) {
+            return;
+          }
+        }
+
+        drawVertices.push([ev.latlng.lat, ev.latlng.lng]);
+        drawCursorLatLng = ev.latlng;
+        renderDrawPreview();
+        updateDrawHud();
+      });
+
+      map.on('dblclick', (ev) => {
+        if (toolMode !== 'draw') return;
+        if (ev.originalEvent) {
+          if (ev.originalEvent._drawDblHandled) return;
+          ev.originalEvent._drawDblHandled = true;
+        }
+        L.DomEvent.stop(ev);
+        if (drawVertices.length >= 3) {
+          finishDrawing();
+        }
+      });
+
+      map.on('zoomend', () => {
+        if (toolMode === 'draw' && drawVertices.length > 0) {
+          renderDrawPreview();
+        }
+      });
+
+      elChkHideDeleted.addEventListener('change', () => {
+        hideDeleted = elChkHideDeleted.checked;
+        refreshAllStyles();
+      });
+
+      elChkShowRadius.addEventListener('change', () => {
+        if (elChkShowRadius.checked) {
+          referenceGroup.addTo(map);
+        } else {
+          map.removeLayer(referenceGroup);
+        }
+      });
+
+      elBtnExport.addEventListener('click', exportKeptBuildingsJson);
+
+      // Live cursor Lat/Lon + Game [x, z] meter readout & live draw preview line
+      map.on('mousemove', (ev) => {
+        const proj = makeProjector(getActiveOrigin());
+        const [gx, gz] = proj.toLocal(ev.latlng.lat, ev.latlng.lng);
+        elCoordsHud.textContent =
+          `Lat/Lon: ${ev.latlng.lat.toFixed(5)}, ${ev.latlng.lng.toFixed(5)}  |  Game [x, z]: [${gx.toFixed(1)}, ${gz.toFixed(1)}] m`;
+
+        if (toolMode === 'draw' && drawVertices.length > 0) {
+          drawCursorLatLng = ev.latlng;
+          renderDrawPreview();
+        }
+      });
+
+      // Initialize default UI state
+      setToolMode('toggle');
+      updateStats();
+    })();
+  </script>
+</body>
+</html>

@@ -1005,13 +1005,15 @@ export function App() {
 
       if (viewMode === 'interior') {
         if (event.code === 'KeyE') {
-          if (isNearTrapdoor && activeHotspotId === null) {
+          if (activeHotspotId !== null) {
+            setActiveHotspotId(null);
+          } else if (isNearTrapdoor) {
             transitionToMode('bellChamber');
-          } else if (aimedRifle && activeHotspotId === null) {
+          } else if (aimedRifle) {
             handleInteractBirthRoomRifle();
-          } else if (aimedHotspotId !== null && activeHotspotId === null) {
+          } else if (aimedHotspotId !== null) {
             handleSelectHotspot(aimedHotspotId);
-          } else if (isNearInteriorExitDoor || activeHotspotId === null) {
+          } else if (isNearInteriorExitDoor) {
             transitionToMode('exterior');
           }
         } else if (event.code === 'Escape') {
@@ -1383,6 +1385,7 @@ export function App() {
             className={`rounded-full transition-all duration-150 ${
               aimedHotspot ||
               aimedRifle ||
+              (viewMode === 'interior' && (isNearTrapdoor || isNearInteriorExitDoor)) ||
               (viewMode === 'exterior' &&
                 (isNearDoor || nearBellRope || nearGalleryRifle || nearbyTelescope !== null))
                 ? 'h-3 w-3 border border-amber-200 bg-amber-300/90 shadow-[0_0_10px_rgba(252,211,77,0.9)]'
@@ -2279,18 +2282,6 @@ export function App() {
           </aside>
         )}
 
-      {/* Birth Room Floor Trapdoor Prompt (Enter Bell Chamber — [E]-only) */}
-      {viewMode === 'interior' && activeHotspot === null && isNearTrapdoor && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
-          <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
-            <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
-              [E]
-            </span>
-            {t.prompts.enterBellChamber}
-          </div>
-        </div>
-      )}
-
       {/* Subtle Unobtrusive Birth Room Caption for Young Bohuslav Martinů (shifted left of gear button) */}
       {viewMode === 'interior' && activeHotspot === null && (
         <div className="pointer-events-none fixed right-16 bottom-4 z-20 rounded-full border border-amber-200/20 bg-stone-950/60 px-3.5 py-1.5 text-xs tracking-wide text-amber-100/90 shadow-md backdrop-blur-md">
@@ -2298,23 +2289,27 @@ export function App() {
         </div>
       )}
 
-      {/* Interior Bottom-Center Aimed Rifle or Hotspot Prompt */}
-      {viewMode === 'interior' && activeHotspot === null && (aimedRifle || aimedHotspot) && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
-          <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
-            <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
-              {t.prompts.clickOrE}
-            </span>
-            {aimedRifle
-              ? unlockedJackdawHunt
-                ? t.prompts.startJackdawHunt
-                : t.prompts.takeRifle
-              : aimedHotspot
-                ? t.birthRoom.hotspots[aimedHotspot.id].title
-                : null}
+      {/* Birth Room Bottom-Center Interaction Prompt (synced 1:1 with the interior [E] handler priority) */}
+      {viewMode === 'interior' &&
+        activeHotspot === null &&
+        (isNearTrapdoor || aimedRifle || aimedHotspot || isNearInteriorExitDoor) && (
+          <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
+            <div className="max-w-full rounded-full border border-amber-300/50 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
+              <span className="mr-2 rounded bg-amber-300/20 px-1.5 py-0.5 font-semibold text-amber-300">
+                {!isNearTrapdoor && (aimedRifle || aimedHotspot) ? t.prompts.clickOrE : '[E]'}
+              </span>
+              {isNearTrapdoor
+                ? t.prompts.enterBellChamber
+                : aimedRifle
+                  ? unlockedJackdawHunt
+                    ? t.prompts.startJackdawHunt
+                    : t.prompts.takeRifle
+                  : aimedHotspot
+                    ? t.birthRoom.hotspots[aimedHotspot.id].title
+                    : t.prompts.exitToGallery}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* Birth Room Interior Historical Story Card */}
       {viewMode === 'interior' && activeHotspot && (

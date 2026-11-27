@@ -69,6 +69,7 @@ function InteriorFPSControls({
   hotspotMeshesRef,
   rifleHitMeshRef,
   trapdoorHitMeshRef,
+  exitDoorHitMeshRef,
   modalOpen,
   onSelectHotspot,
   onAimedHotspotChange,
@@ -82,6 +83,7 @@ function InteriorFPSControls({
   hotspotMeshesRef: RefObject<THREE.Object3D[]>;
   rifleHitMeshRef: RefObject<THREE.Object3D | null>;
   trapdoorHitMeshRef: RefObject<THREE.Object3D | null>;
+  exitDoorHitMeshRef: RefObject<THREE.Object3D | null>;
   modalOpen: boolean;
   onSelectHotspot: (id: BirthRoomHotspot['id']) => void;
   onAimedHotspotChange: (id: BirthRoomHotspot['id'] | null) => void;
@@ -344,26 +346,17 @@ function InteriorFPSControls({
     camera.rotation.x = pitchRef.current;
     camera.rotation.z = 0;
 
-    // 2. Check proximity to the wooden entrance door on the East wall
-    const doorDist = Math.hypot(
-      posRef.current.x - EXIT_DOOR_POS[0],
-      posRef.current.z - EXIT_DOOR_POS[1],
-    );
-    const isNearDoor = doorDist < EXIT_DOOR_RADIUS;
-    if (isNearDoor !== nearDoorRef.current) {
-      nearDoorRef.current = isNearDoor;
-      onNearExitDoorChange(isNearDoor);
-    }
-
-    // 3. Crosshair raycast from screen center (0, 0) against floor trapdoor hitbox, wall rifle, and 3D hotspots
+    // 2. Crosshair raycast from screen center (0, 0) against exit door, floor trapdoor, wall rifle, and 3D hotspots
     let nextAimed: BirthRoomHotspot['id'] | null = null;
     let nextAimedRifle = false;
     let nextAimedTrapdoor = false;
+    let nextAimedExitDoor = false;
 
     if (!modalOpenRef.current) {
       const targets = rayTargetsScratchRef.current;
       targets.length = 0;
       if (trapdoorHitMeshRef.current) targets.push(trapdoorHitMeshRef.current);
+      if (exitDoorHitMeshRef.current) targets.push(exitDoorHitMeshRef.current);
       if (isLockedRef.current) {
         const hsList = hotspotMeshesRef.current;
         for (let i = 0; i < hsList.length; i++) targets.push(hsList[i]);
@@ -382,6 +375,8 @@ function InteriorFPSControls({
           const hit = hits[0];
           if (hit.object.userData.isBellTrapdoor && hit.distance <= 3.8) {
             nextAimedTrapdoor = true;
+          } else if (hit.object.userData.isExitDoor && hit.distance <= 3.8) {
+            nextAimedExitDoor = true;
           } else if (hit.object.userData.isHuntingRifle && hit.distance <= 3.2) {
             nextAimedRifle = true;
           } else {
@@ -390,6 +385,17 @@ function InteriorFPSControls({
           }
         }
       }
+    }
+
+    // 3. Check proximity OR crosshair aim toward the wooden exit door on the East wall
+    const doorDist = Math.hypot(
+      posRef.current.x - EXIT_DOOR_POS[0],
+      posRef.current.z - EXIT_DOOR_POS[1],
+    );
+    const isNearDoor = nextAimedExitDoor || doorDist < EXIT_DOOR_RADIUS;
+    if (isNearDoor !== nearDoorRef.current) {
+      nearDoorRef.current = isNearDoor;
+      onNearExitDoorChange(isNearDoor);
     }
 
     // Trigger trapdoor prompt when looking directly at the elevated hatch hitbox OR standing right over it
@@ -1258,6 +1264,7 @@ export function BirthRoomInterior({
   const hotspotMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const rifleHitMeshRef = useRef<THREE.Object3D | null>(null);
   const trapdoorHitMeshRef = useRef<THREE.Object3D | null>(null);
+  const exitDoorHitMeshRef = useRef<THREE.Object3D | null>(null);
   const hemiLightRef = useRef<THREE.HemisphereLight>(null);
   const sunLight1Ref = useRef<THREE.DirectionalLight>(null);
   const sunLight2Ref = useRef<THREE.DirectionalLight>(null);
@@ -1325,6 +1332,7 @@ export function BirthRoomInterior({
         hotspotMeshesRef={hotspotMeshesRef}
         rifleHitMeshRef={rifleHitMeshRef}
         trapdoorHitMeshRef={trapdoorHitMeshRef}
+        exitDoorHitMeshRef={exitDoorHitMeshRef}
         modalOpen={activeHotspotId !== null}
         onSelectHotspot={onSelectHotspot}
         onAimedHotspotChange={onAimedHotspotChange}
@@ -1693,6 +1701,17 @@ export function BirthRoomInterior({
         <mesh position={[0.32, 0.98, 0.07]}>
           <sphereGeometry args={[0.035, 8, 8]} />
           <meshStandardMaterial color="#d9ab4e" roughness={0.32} metalness={0.8} />
+        </mesh>
+        {/* Invisible hitbox for crosshair raycast toward the gallery exit door */}
+        <mesh
+          ref={(el) => {
+            exitDoorHitMeshRef.current = el;
+          }}
+          position={[0, 1.05, 0.06]}
+          userData={{ isExitDoor: true }}
+        >
+          <boxGeometry args={[1.08, 2.12, 0.16]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
         </mesh>
       </group>
 

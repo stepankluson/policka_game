@@ -56,6 +56,7 @@ export interface Translations {
     hangSignalFlag: string;
     hangSignalLantern: string;
     enterBirthRoom: string;
+    exitToGallery: string;
     enterBellChamber: string;
     climbToBirthRoom: string;
     ringGreatBell: string;
@@ -291,6 +292,7 @@ const CS: Translations = {
     hangSignalFlag: 'Vyvěsit červený prapor',
     hangSignalLantern: 'Vyvěsit červenou lucernu',
     enterBirthRoom: 'Vstoupit do rodné světničky',
+    exitToGallery: 'Vstoupit na ochoz',
     enterBellChamber: 'Vstoupit do zvonového patra',
     climbToBirthRoom: 'Vystoupit do rodné světničky',
     ringGreatBell: 'Zazvonit na zvon Jakub',
@@ -684,6 +686,7 @@ const EN: Translations = {
     hangSignalFlag: 'Hang red signal flag',
     hangSignalLantern: 'Hang red signal lantern',
     enterBirthRoom: 'Enter the Birth Room',
+    exitToGallery: 'Step Out to Gallery',
     enterBellChamber: 'Enter Bell Chamber',
     climbToBirthRoom: 'Climb to Birth Room',
     ringGreatBell: 'Ring the Bell',
