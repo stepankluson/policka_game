@@ -33,9 +33,33 @@ async function copyUrlToClipboard(url: string): Promise<boolean> {
   }
 }
 
+const RESTRICTED_IN_APP_UA =
+  /\b(Instagram|FBAN|FBAV|FB_IAB|Messenger|FBIOS|FB4A|Line\/|TikTok|BytedanceWebview|Musical_ly|Snapchat|LinkedInApp|MicroMessenger|Twitter)\b/i;
+
+function detectNativeShareSupported(): boolean {
+  if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
+    return false;
+  }
+  const ua = navigator.userAgent || '';
+  if (RESTRICTED_IN_APP_UA.test(ua)) {
+    return false;
+  }
+  if (typeof navigator.canShare === 'function') {
+    try {
+      if (!navigator.canShare({ url: window.location.href })) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function MobilePcBanner({ t }: MobilePcBannerProps) {
   const [minimized, setMinimized] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [shareSupported, setShareSupported] = useState<boolean>(() => detectNativeShareSupported());
   const copiedTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -76,8 +100,11 @@ export function MobilePcBanner({ t }: MobilePcBannerProps) {
         if ((err as { name?: string } | null)?.name === 'AbortError') {
           return;
         }
-        // Fall through to copy on unsupported / blocked share sheets
+        // Web Share failed/blocked in this WebView — hide the Share button and copy cleanly instead
+        setShareSupported(false);
       }
+    } else {
+      setShareSupported(false);
     }
     await handleCopy();
   }, [handleCopy, t.shareText]);
@@ -170,40 +197,44 @@ export function MobilePcBanner({ t }: MobilePcBannerProps) {
           {t.gestureHint}
         </p>
 
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={handleShare}
-            className="flex min-h-[42px] cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-amber-300/55 bg-amber-400/20 px-3 py-2 text-xs font-semibold tracking-wide text-amber-50 shadow-sm transition hover:bg-amber-400/30 active:scale-[0.98]"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              className="shrink-0 text-amber-200"
+        <div className={shareSupported ? 'mt-3 grid grid-cols-2 gap-2' : 'mt-3'}>
+          {shareSupported && (
+            <button
+              type="button"
+              onClick={handleShare}
+              className="flex min-h-[42px] cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-amber-300/55 bg-amber-400/20 px-3 py-2 text-xs font-semibold tracking-wide text-amber-50 shadow-sm transition hover:bg-amber-400/30 active:scale-[0.98]"
             >
-              <circle cx="18" cy="5" r="3" />
-              <circle cx="6" cy="12" r="3" />
-              <circle cx="18" cy="19" r="3" />
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-            </svg>
-            <span>{t.shareLink}</span>
-          </button>
+              <svg
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                className="shrink-0 text-amber-200"
+              >
+                <circle cx="18" cy="5" r="3" />
+                <circle cx="6" cy="12" r="3" />
+                <circle cx="18" cy="19" r="3" />
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+              </svg>
+              <span>{t.shareLink}</span>
+            </button>
+          )}
 
           <button
             type="button"
             onClick={handleCopy}
-            className={`flex min-h-[42px] cursor-pointer items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold tracking-wide shadow-sm transition active:scale-[0.98] ${
+            className={`flex min-h-[42px] w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold tracking-wide shadow-sm transition active:scale-[0.98] ${
               copied
                 ? 'border-emerald-300/55 bg-emerald-400/20 text-emerald-100'
-                : 'border-amber-200/30 bg-stone-900/80 text-amber-100 hover:border-amber-200/50 hover:bg-stone-800/85'
+                : shareSupported
+                  ? 'border-amber-200/30 bg-stone-900/80 text-amber-100 hover:border-amber-200/50 hover:bg-stone-800/85'
+                  : 'border-amber-300/55 bg-amber-400/20 text-amber-50 hover:bg-amber-400/30'
             }`}
           >
             {copied ? (
@@ -232,7 +263,7 @@ export function MobilePcBanner({ t }: MobilePcBannerProps) {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 aria-hidden="true"
-                className="shrink-0 text-amber-300/90"
+                className={`shrink-0 ${shareSupported ? 'text-amber-300/90' : 'text-amber-200'}`}
               >
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
