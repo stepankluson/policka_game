@@ -39,6 +39,7 @@ import { FireWatchGalleryProps } from './FireWatchGalleryProps';
 import { FirstPersonGalleryCamera } from './FirstPersonGalleryCamera';
 import { FollowCamera } from './FollowCamera';
 import { JackdawHuntWorld } from './JackdawHuntWorld';
+import { MobileLookoutCamera } from './MobileLookoutCamera';
 import { Player } from './Player';
 import { TelescopeCamera, type ScanState } from './TelescopeCamera';
 import { Telescopes } from './Telescopes';
@@ -360,6 +361,7 @@ interface GameSceneProps {
   graphicsQuality: GraphicsQuality;
   showFps: boolean;
   settingsOpen: boolean;
+  isMobileLookout?: boolean;
   onSceneReady?: () => void;
 }
 
@@ -927,6 +929,7 @@ export function GameScene({
   graphicsQuality,
   showFps,
   settingsOpen,
+  isMobileLookout = false,
   onSceneReady,
 }: GameSceneProps) {
   const [townReady, setTownReady] = useState(false);
@@ -960,14 +963,22 @@ export function GameScene({
   const isAnyInterior = isInterior || isBellChamber || isChurchAttic || isChurchNave;
   const isInTelescope = isPlaying && !isAnyInterior && activeTelescope !== null;
   const isExteriorFirstPerson =
-    isPlaying && !isAnyInterior && !isInTelescope && galleryCameraMode === 'first';
+    isPlaying && !isMobileLookout && !isAnyInterior && !isInTelescope && galleryCameraMode === 'first';
   const isExteriorThirdPerson =
-    isPlaying && !isAnyInterior && !isInTelescope && galleryCameraMode === 'third';
+    isPlaying && !isMobileLookout && !isAnyInterior && !isInTelescope && galleryCameraMode === 'third';
 
   return (
     <Canvas
       shadows="percentage"
-      dpr={graphicsQuality === 'high' ? [1, 2] : 0.75}
+      dpr={
+        isMobileLookout
+          ? graphicsQuality === 'high'
+            ? [1, 1.5]
+            : 1
+          : graphicsQuality === 'high'
+            ? [1, 2]
+            : 0.75
+      }
       camera={{
         position: INITIAL_CANVAS_CAMERA_POS as [number, number, number],
         fov: TELESCOPE_CONFIG.normalFov,
@@ -980,7 +991,7 @@ export function GameScene({
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.05,
       }}
-      className="h-full w-full"
+      className={isMobileLookout ? 'h-full w-full touch-none' : 'h-full w-full'}
     >
       <GraphicsQualityDriver graphicsQuality={graphicsQuality} />
       <SceneReadyDriver townReady={townReady} onSceneReady={onSceneReady} />
@@ -1000,8 +1011,8 @@ export function GameScene({
         onTransitionComplete={onTitleTransitionComplete}
       />
 
-      {/* Zero-Re-Render Top-Center Compass Driver (active only while playing outdoors) */}
-      <CompassDriver active={isPlaying && !isAnyInterior} />
+      {/* Zero-Re-Render Top-Center Compass Driver (active only while playing outdoors on desktop) */}
+      <CompassDriver active={isPlaying && !isAnyInterior && !isMobileLookout} />
 
       {/* Fire Watch Frame Driver (spotting ray, 22-28s spread timer, direct DOM HUD refs, proximity) */}
       <FireWatchDriver
@@ -1047,7 +1058,12 @@ export function GameScene({
             playerWorldPosRef={playerWorldPosRef}
             galleryCameraMode={galleryCameraMode}
             active={
-              isPlaying && !isAnyInterior && !isInTelescope && !jackdawHunt.active && !settingsOpen
+              isPlaying &&
+              !isMobileLookout &&
+              !isAnyInterior &&
+              !isInTelescope &&
+              !jackdawHunt.active &&
+              !settingsOpen
             }
             fireWatchActive={fireWatch.active}
             fireWatchStep={fireWatch.step}
@@ -1059,7 +1075,7 @@ export function GameScene({
           <Player
             playerPosRef={playerLocalPosRef}
             playerWorldPosRef={playerWorldPosRef}
-            disabled={!isPlaying || isInTelescope || isAnyInterior || settingsOpen}
+            disabled={!isPlaying || isMobileLookout || isInTelescope || isAnyInterior || settingsOpen}
             visible={!isExteriorFirstPerson && !isBellChamber && !isInterior}
             isLanternOut={isLanternOut}
             innerLimit={
@@ -1084,7 +1100,8 @@ export function GameScene({
         />
       </group>
 
-      {/* Exterior Cameras: Third-Person Orbit OR First-Person Pointer Lock OR Telescope */}
+      {/* Exterior Cameras: Mobile Touch Lookout OR Third-Person Orbit OR First-Person Pointer Lock OR Telescope */}
+      <MobileLookoutCamera active={isPlaying && isMobileLookout} />
       <FollowCamera
         playerPosRef={playerWorldPosRef}
         cameraCollidersRef={cameraCollidersRef}
@@ -1103,9 +1120,9 @@ export function GameScene({
         onHuntFinished={onJackdawHuntFinished}
       />
       <TelescopeCamera
-        activeTelescope={!isPlaying || isAnyInterior ? null : activeTelescope}
+        activeTelescope={!isPlaying || isMobileLookout || isAnyInterior ? null : activeTelescope}
         unlockedPois={unlockedPois}
-        disabled={!isPlaying || isAnyInterior}
+        disabled={!isPlaying || isMobileLookout || isAnyInterior}
         onScanChange={onScanChange}
         onZoomChange={onZoomChange}
         onPoiUnlocked={onPoiUnlocked}

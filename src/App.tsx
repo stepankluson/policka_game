@@ -10,6 +10,7 @@ import {
   type ViewMode,
 } from './components/GameScene';
 import { triggerJackdawStartle } from './components/PolickaJackdaws';
+import { MobilePcBanner } from './components/MobilePcBanner';
 import { SettingsModal } from './components/SettingsModal';
 import type { ScanState } from './components/TelescopeCamera';
 import { TelescopeOverlay } from './components/TelescopeOverlay';
@@ -82,6 +83,13 @@ function writeBoolFlag(key: string, value: boolean): void {
   }
 }
 
+function detectMobileLookout(): boolean {
+  if (typeof window === 'undefined') return false;
+  const isCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  const hasTouch = (navigator.maxTouchPoints ?? 0) > 0;
+  return (isCoarsePointer || hasTouch) && window.innerWidth < 900;
+}
+
 /** Precomputed 3-cycle (-360°..+720°) compass tick geometry at 15° intervals */
 const COMPASS_TICK_SPECS: readonly { key: number; norm: number; leftPx: number; isMajor: boolean }[] = (() => {
   const ticks = [];
@@ -123,8 +131,31 @@ export function App() {
     setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  const [gamePhase, setGamePhase] = useState<GamePhase>('title');
+  const [isMobileLookout, setIsMobileLookout] = useState<boolean>(() => detectMobileLookout());
+  const [gamePhase, setGamePhase] = useState<GamePhase>(() =>
+    detectMobileLookout() ? 'playing' : 'title',
+  );
   const [viewMode, setViewMode] = useState<ViewMode>('exterior');
+
+  useEffect(() => {
+    const syncMobile = () => {
+      setIsMobileLookout(detectMobileLookout());
+    };
+    window.addEventListener('resize', syncMobile);
+    window.addEventListener('orientationchange', syncMobile);
+    return () => {
+      window.removeEventListener('resize', syncMobile);
+      window.removeEventListener('orientationchange', syncMobile);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLookout) return;
+    setGamePhase('playing');
+    setViewMode('exterior');
+    setActiveTelescope(null);
+    setControlsOpen(false);
+  }, [isMobileLookout]);
   const [atticSpawnFrom, setAtticSpawnFrom] = useState<AtticSpawnPoint>('fromBellChamber');
   const [galleryCameraMode, setGalleryCameraMode] = useState<GalleryCameraMode>('third');
   const [timeOfDayMode, setTimeOfDayMode] = useState<TimeOfDayMode>('auto');
@@ -724,6 +755,7 @@ export function App() {
   // Smooth 300ms fade-to-black transition between playable areas with interaction reset & cooldown
   const transitionToMode = useCallback(
     (nextMode: ViewMode) => {
+      if (isMobileLookout) return;
       const now = performance.now();
       if (isFading || viewMode === nextMode || now < transitionCooldownUntilRef.current) return;
       transitionCooldownUntilRef.current = now + 480;
@@ -793,7 +825,7 @@ export function App() {
         fadeTimerRef.current = null;
       }, 160);
     },
-    [isFading, viewMode, exitPointerLockIfActive],
+    [isFading, isMobileLookout, viewMode, exitPointerLockIfActive],
   );
 
   const handleEnterBellChamber = useCallback(() => {
@@ -908,6 +940,8 @@ export function App() {
         }
         return;
       }
+
+      if (isMobileLookout) return;
 
       if (gamePhase === 'title') {
         if (event.code === 'Enter' || event.code === 'Space') {
@@ -1161,6 +1195,7 @@ export function App() {
     handleToggleMute,
     exitPointerLockIfActive,
     transitionToMode,
+    isMobileLookout,
   ]);
 
   const activeStoryPoi = activeStoryPoiId
@@ -1187,6 +1222,7 @@ export function App() {
 
   const showFpsCrosshair =
     isPlaying &&
+    !isMobileLookout &&
     isPointerLocked &&
     activeTelescope === null &&
     !jackdawHunt.active &&
@@ -1198,6 +1234,7 @@ export function App() {
 
   const showClickToLookHint =
     isPlaying &&
+    !isMobileLookout &&
     !settingsOpen &&
     !isPointerLocked &&
     activeTelescope === null &&
@@ -1305,6 +1342,7 @@ export function App() {
         graphicsQuality={settings.graphicsQuality}
         showFps={settings.showFps}
         settingsOpen={settingsOpen}
+        isMobileLookout={isMobileLookout}
         onSceneReady={handleSceneReady}
       />
 
@@ -1402,7 +1440,8 @@ export function App() {
         </div>
       )}
 
-      {/* Top-Right Collapsible Shrink-Wrapped "Objevené památky" / "Discovered Landmarks" Card */}
+      {/* Top-Right Collapsible Shrink-Wrapped "Objevené památky" / "Discovered Landmarks" Card (desktop only) */}
+      {!isMobileLookout && (
       <section
         onPointerDown={(e) => e.stopPropagation()}
         className="fixed top-4 right-4 z-30 w-fit"
@@ -1536,9 +1575,10 @@ export function App() {
           )}
         </div>
       </section>
+      )}
 
-      {/* Top-Center Stack: Sleek Compass Bar (exterior) + Fire Watch Objective Bar cleanly below it */}
-      {viewMode === 'exterior' && (
+      {/* Top-Center Stack: Sleek Compass Bar (exterior desktop) + Fire Watch Objective Bar cleanly below it */}
+      {viewMode === 'exterior' && !isMobileLookout && (
         <div className="pointer-events-none fixed top-4 left-1/2 z-30 flex w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 flex-col items-center gap-2">
           {/* Sleek Minimal Compass Tape (updated directly via DOM ref — zero React re-renders) */}
           <div
@@ -1838,8 +1878,8 @@ export function App() {
         </>
       )}
 
-      {/* Exterior Bottom-Center Contextual Interaction Prompts Only (no permanent controls bar) */}
-      {viewMode === 'exterior' && activeTelescope === null && !jackdawHunt.active && (
+      {/* Exterior Bottom-Center Contextual Interaction Prompts Only (desktop only; no permanent controls bar) */}
+      {viewMode === 'exterior' && !isMobileLookout && activeTelescope === null && !jackdawHunt.active && (
         <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex flex-col items-center gap-2 px-4">
           {fireWatch.active && fireWatch.step === 'spot' && aimingAtFire ? (
             <div className="max-w-full rounded-full border border-orange-400/55 bg-stone-950/85 px-5 py-2 text-center text-sm font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-md">
@@ -1900,12 +1940,18 @@ export function App() {
       {/* Top-Left Unified Compact Horizontal Main Panel (no Mute button; [M] shortcut stays active) */}
       {activeTelescope === null && (
         <header
+          data-mobile-ui="true"
           onPointerDown={(e) => e.stopPropagation()}
-          className="fixed top-4 left-4 z-30 flex w-fit items-center gap-3 rounded-xl border border-amber-200/25 bg-stone-950/65 px-3.5 py-2 shadow-lg backdrop-blur-md"
+          onTouchStart={(e) => e.stopPropagation()}
+          className={`fixed top-4 left-4 z-30 flex w-fit items-center rounded-xl border border-amber-200/25 bg-stone-950/65 shadow-lg backdrop-blur-md ${
+            isMobileLookout
+              ? 'max-w-[calc(100vw-4.75rem)] gap-2 px-3 py-2'
+              : 'gap-3 px-3.5 py-2'
+          }`}
         >
           {/* Left: Eyebrow + Title */}
-          <div className="leading-tight">
-            <span className="block text-[9.5px] font-semibold tracking-[0.24em] text-amber-300/85 uppercase">
+          <div className="min-w-0 leading-tight">
+            <span className="block truncate text-[9.5px] font-semibold tracking-[0.24em] text-amber-300/85 uppercase">
               {viewMode === 'churchNave'
                 ? t.hud.eyebrowChurchNave
                 : viewMode === 'churchAttic'
@@ -1916,7 +1962,11 @@ export function App() {
                       ? t.hud.eyebrowInterior
                       : t.hud.eyebrowExterior}
             </span>
-            <h1 className="whitespace-nowrap text-[15px] font-semibold tracking-wide text-amber-50">
+            <h1
+              className={`whitespace-nowrap font-semibold tracking-wide text-amber-50 ${
+                isMobileLookout ? 'text-[13px]' : 'text-[15px]'
+              }`}
+            >
               {viewMode === 'churchNave'
                 ? t.hud.churchNaveTitle
                 : viewMode === 'churchAttic'
@@ -1976,29 +2026,35 @@ export function App() {
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5">
+            <div className="flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
                 onPointerDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
                   handleCycleTimeOfDay();
                 }}
                 title={t.hud.timeToggleTitle}
-                className="cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 px-2.5 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20"
+                className={`cursor-pointer whitespace-nowrap rounded-lg border border-amber-200/25 bg-amber-300/10 text-xs font-medium text-amber-200 transition hover:bg-amber-300/20 ${
+                  isMobileLookout ? 'min-h-[32px] px-2.5 py-1.5' : 'px-2.5 py-1'
+                }`}
               >
                 {t.hud.timeModes[timeOfDayMode]}
               </button>
               <button
                 type="button"
                 onPointerDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsWinter((prev) => !prev);
                 }}
                 aria-pressed={isWinter}
                 title={isWinter ? t.hud.seasonToSummerTitle : t.hud.seasonToWinterTitle}
-                className={`cursor-pointer whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+                className={`cursor-pointer whitespace-nowrap rounded-lg border text-xs font-medium transition ${
+                  isMobileLookout ? 'min-h-[32px] px-2.5 py-1.5' : 'px-2.5 py-1'
+                } ${
                   isWinter
                     ? 'border-sky-200/60 bg-sky-300/25 text-sky-50 shadow-[0_0_12px_rgba(186,230,253,0.28)] hover:bg-sky-300/35'
                     : 'border-amber-200/25 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20'
@@ -2047,8 +2103,8 @@ export function App() {
         </header>
       )}
 
-      {/* Bottom-Left Collapsible "Ovládání" / "Controls" Popover (expands upward, left-aligned) */}
-      {activeTelescope === null && (
+      {/* Bottom-Left Collapsible "Ovládání" / "Controls" Popover (desktop only; expands upward, left-aligned) */}
+      {activeTelescope === null && !isMobileLookout && (
         <div
           onPointerDown={(e) => e.stopPropagation()}
           className="fixed bottom-4 left-4 z-30 flex flex-col items-start"
@@ -2567,14 +2623,21 @@ export function App() {
           }
         />
       )}
+      {/* Mobile Lookout Mode: Prominent PC Banner at Bottom of Screen */}
+      {isMobileLookout && <MobilePcBanner t={t.mobile} />}
+
           </>
         )}
       </div>
 
-      {/* Bottom-Right Minimal Inline SVG Settings Gear Button + Optional Throttled FPS Counter */}
+      {/* Minimal Inline SVG Settings Gear Button + Optional Throttled FPS Counter (top-right on mobile so bottom banner stays clear) */}
       <div
+        data-mobile-ui="true"
         onPointerDown={(e) => e.stopPropagation()}
-        className="fixed right-4 bottom-4 z-40 flex items-center gap-2"
+        onTouchStart={(e) => e.stopPropagation()}
+        className={`fixed right-4 z-40 flex items-center gap-2 ${
+          isMobileLookout ? 'top-4' : 'bottom-4'
+        }`}
       >
         {settings.showFps && (
           <span

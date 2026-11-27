@@ -219,6 +219,17 @@ export interface Translations {
     resetConfirm: string;
     resetDesc: string;
   };
+  mobile: {
+    bannerBadge: string;
+    bannerTitle: string;
+    bannerSubtitle: string;
+    gestureHint: string;
+    shareLink: string;
+    shareText: string;
+    copyLink: string;
+    copied: string;
+    dismissBanner: string;
+  };
 }
 
 const CS: Translations = {
@@ -613,6 +624,18 @@ const CS: Translations = {
     resetConfirm: 'Opravdu resetovat?',
     resetDesc: 'Vymaže objevené památky (0 / 8) a návštěvu rodné světničky.',
   },
+  mobile: {
+    bannerBadge: 'Mobilní vyhlídkový režim',
+    bannerTitle: 'Plná hra je pro počítač',
+    bannerSubtitle:
+      'Procházka ulicemi, rodná světnička i interiér kostela vyžadují klávesnici a myš. Tady na mobilu se můžete alespoň rozhlédnout z věže.',
+    gestureHint: 'Tažením prstu se rozhlédněte 360° · Stažením prstů přibližte',
+    shareLink: 'Poslat si odkaz',
+    shareText: 'Prohlédněte si historickou Poličku z roku 1900 z věže kostela sv. Jakuba (plná hra pro PC):',
+    copyLink: 'Zkopírovat odkaz',
+    copied: 'Zkopírováno!',
+    dismissBanner: 'Skrýt lištu',
+  },
 };
 
 const EN: Translations = {
@@ -1006,6 +1029,18 @@ const EN: Translations = {
     resetProgress: 'Reset Progress',
     resetConfirm: 'Confirm reset?',
     resetDesc: 'Clears discovered landmarks (0 / 8) and Birth Room progress.',
+  },
+  mobile: {
+    bannerBadge: 'Mobile Lookout Mode',
+    bannerTitle: 'Full Game Available on PC',
+    bannerSubtitle:
+      'Walking the streets, Birth Room, and church interior require a keyboard & mouse. Enjoy the panoramic tower view here on mobile.',
+    gestureHint: 'Drag with 1 finger to look 360° · Pinch to zoom',
+    shareLink: 'Share Link',
+    shareText: 'Explore historic 1900 Polička from St. Jacob’s Church Tower (full game on PC):',
+    copyLink: 'Copy Link',
+    copied: 'Copied!',
+    dismissBanner: 'Minimize banner',
   },
 };
 
