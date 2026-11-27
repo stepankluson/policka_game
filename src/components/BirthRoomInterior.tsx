@@ -97,8 +97,8 @@ function InteriorFPSControls({
   const { camera, gl } = useThree();
   const inputRef = useKeyboard();
 
-  const posRef = useRef(new THREE.Vector3(0.05, EYE_HEIGHT, 1.52));
-  const yawRef = useRef(0.12);
+  const posRef = useRef(new THREE.Vector3(1.82, EYE_HEIGHT, -0.58));
+  const yawRef = useRef(1.62);
   const pitchRef = useRef(-0.06);
   const walkPhaseRef = useRef(0);
   const lastStepCountRef = useRef(0);
@@ -277,7 +277,7 @@ function InteriorFPSControls({
         nz += dirZ * subStep;
 
         // Clamp strictly inside room wall margins
-        nx = Math.max(-1.74, Math.min(1.74, nx));
+        nx = Math.max(-1.74, Math.min(2.05, nx));
         nz = Math.max(-1.38, Math.min(1.85, nz));
 
         // Central round table + chairs circular collision (center [0.05, 0.08], radius 1.12m)
@@ -298,16 +298,16 @@ function InteriorFPSControls({
           else nz = -0.15;
         }
 
-        // East daybed collision push-out (x > 1.32 && z > 0.22)
-        if (nx > 1.32 && nz > 0.22) {
-          const penX = nx - 1.32;
-          const penZ = nz - 0.22;
-          if (penX < penZ) nx = 1.32;
-          else nz = 0.22;
+        // SE blue daybed corner collision push-out (bed tucked into East/South corner: x 1.77..2.59, z 0.57..2.29)
+        if (nx > 1.5 && nz > 0.32) {
+          const penX = nx - 1.5;
+          const penZ = nz - 0.32;
+          if (penX < penZ) nx = 1.5;
+          else nz = 0.32;
         }
 
         // Re-clamp inside room bounds after furniture push-outs
-        nx = Math.max(-1.74, Math.min(1.74, nx));
+        nx = Math.max(-1.74, Math.min(2.05, nx));
         nz = Math.max(-1.38, Math.min(1.85, nz));
       }
       posRef.current.x = nx;
@@ -1754,7 +1754,7 @@ export function BirthRoomInterior({
         </mesh>
       </group>
 
-      <group position={[hw - 0.48, 0, 1.15]}>
+      <group position={[hw - 0.42, 0, hd - 0.87]}>
         <mesh position={[0, 0.28, 0]} castShadow receiveShadow>
           <boxGeometry args={[0.82, 0.36, 1.72]} />
           <meshStandardMaterial color="#34507a" roughness={0.9} />
